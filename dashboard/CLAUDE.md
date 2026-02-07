@@ -319,6 +319,342 @@ streamlit run dashboard/app.py --server.headless true 2>&1 | tee .context/termin
 
 ---
 
+## KIS 브로커 통합 (US-001~US-010)
+
+### 개요
+
+한국투자증권 API를 통해 미국 주식의 실시간 시세를 조회하고 대시보드에 표시합니다.
+
+**지원 기능**:
+- 실시간 주식 시세 조회 (현재가, 시가, 고가, 저가, 거래량)
+- OHLCV 차트 시각화 (캔들스틱 + 거래량)
+- 자동 새로고침 (60초 간격)
+- Live Monitor 탭 통합
+- 에러 처리 및 사용자 친화적 메시지
+
+---
+
+### Real-time Quotes 탭 사용법
+
+#### 1. 환경 변수 설정
+
+`.env` 파일에 한국투자증권 API 인증 정보를 설정합니다:
+
+```bash
+# Korea Investment Securities API
+KIS_APPKEY=your_app_key_here
+KIS_APPSECRET=your_app_secret_here
+KIS_ACCOUNT=12345678-01
+KIS_USER_ID=user123  # 선택, 미입력 시 KIS_ACCOUNT 사용
+KIS_MOCK=true  # 모의투자: true, 실전투자: false
+```
+
+**설정 방법**:
+1. [한국투자증권 홈페이지](https://securities.koreainvestment.com)에서 API 신청
+2. 발급받은 APPKEY와 APPSECRET을 `.env` 파일에 입력
+3. 모의투자와 실전투자의 키가 다르므로 `KIS_MOCK` 설정 확인
+4. 자세한 내용은 [README.md의 API Setup 섹션](../README.md#korea-investment-securities-api-setup) 참조
+
+#### 2. 종목 선택
+
+**기능**:
+- 33개 인기 미국 주식 지원 (AAPL, MSFT, GOOGL, TSLA 등)
+- 검색 가능한 드롭다운 (심볼 또는 회사명으로 검색)
+- 섹터/산업 정보 표시
+
+**사용법**:
+```python
+# 종목 선택 UI (app.py 내부)
+selected_option = st.selectbox(
+    get_text('stock_symbol', lang),
+    stock_options,  # "AAPL - Apple Inc." 형식
+    help=get_text('select_stock_help', lang)
+)
+```
+
+#### 3. 실시간 시세 표시
+
+**표시 항목**:
+- **현재가**: 등락률과 함께 표시 (🔴 상승, 🔵 하락)
+- **시가**: 당일 첫 거래가
+- **고가**: 당일 최고가
+- **저가**: 당일 최저가
+- **거래량**: 당일 누적 거래량
+
+**데이터 갱신**:
+- 수동: "Refresh Now" 버튼 클릭
+- 자동: Auto-refresh 체크박스 활성화 (60초 간격)
+
+#### 4. Auto-refresh 기능
+
+**사용법**:
+1. "Enable Auto-refresh" 체크박스를 활성화
+2. 60초마다 자동으로 시세 갱신
+3. 카운트다운 타이머 표시 ("Next refresh in 45s")
+4. "Refresh Now" 버튼으로 즉시 갱신 가능
+5. 체크박스 비활성화로 자동 갱신 중지
+
+**구현 패턴**:
+```python
+# Auto-refresh 상태 관리
+if 'auto_refresh_enabled' not in st.session_state:
+    st.session_state.auto_refresh_enabled = False
+
+if 'last_refresh_time' not in st.session_state:
+    st.session_state.last_refresh_time = None
+
+# 자동 갱신 로직
+if st.session_state.auto_refresh_enabled:
+    elapsed = time.time() - st.session_state.last_refresh_time
+    if elapsed >= 60:
+        st.session_state.last_refresh_time = time.time()
+        st.rerun()
+```
+
+#### 5. OHLCV 차트
+
+**기능**:
+- 캔들스틱 차트 (가격)
+- 거래량 차트 (서브플롯)
+- 기간 선택: 30일, 90일, 180일
+
+**차트 특징**:
+- 상승일: 초록색 캔들/거래량
+- 하락일: 빨간색 캔들/거래량
+- 인터랙티브 줌/패닝
+- 통합 호버모드
+
+---
+
+### Live Monitor 탭 통합
+
+**기능**:
+- 실시간 시세와 백테스팅 결과를 함께 표시
+- 시뮬레이션 모드 vs 실시간 모드 UI 구분
+- 데이터 소스 표시 (KIS 브로커/거래소/시뮬레이션)
+
+**Current Market Price 섹션**:
+- Live Monitor 탭 상단에 표시
+- 주식 마켓 + 비시뮬레이션 모드에서만 활성화
+- 현재가, 시가, 고가, 저가, 거래량 표시
+- 마지막 업데이트 시간 표시
+
+**조건부 표시**:
+```python
+if st.session_state.market_type == 'stock' and not st.session_state.use_simulation:
+    # Current Market Price 섹션 표시
+    # KIS 브로커로 실시간 시세 조회
+    pass
+else:
+    # 시뮬레이션 모드 또는 암호화폐 마켓
+    # 전략 신호만 표시
+    pass
+```
+
+---
+
+### 에러 처리 및 트러블슈팅
+
+#### 중앙 집중식 에러 핸들러
+
+**모듈**: `dashboard/error_handler.py`
+
+**기능**:
+- 자동 에러 타입 감지
+- 사용자 친화적 메시지 생성
+- 해결 방법 제시
+
+**에러 타입**:
+
+##### 1. Rate Limit 에러
+```
+⏱️ API 호출 제한 초과
+API 요청을 너무 많이 했습니다. 잠시 후 다시 시도해주세요.
+
+해결 방법:
+- ⏰ 1-2분 후 재시도
+- API 호출 제한 초과 (1분 대기)
+```
+
+##### 2. 네트워크 에러
+```
+🌐 네트워크 연결 오류
+API 서버에 연결할 수 없습니다. 인터넷 연결을 확인해주세요.
+
+해결 방법:
+- 네트워크 연결 문제
+- VPN을 사용 중이라면 비활성화해보세요
+- 방화벽 설정을 확인하세요
+```
+
+##### 3. 인증 에러
+```
+🔐 인증 실패
+API 인증 정보가 올바르지 않습니다. API 키를 확인해주세요.
+
+해결 방법:
+- .env 파일에서 API 인증 정보를 확인하세요
+- 📖 README에서 API 설정 방법 보기
+- API 키가 만료되었는지 확인하세요
+```
+
+##### 4. 잘못된 종목 코드
+```
+❓ 잘못된 종목 코드
+입력한 종목 코드가 존재하지 않거나 지원되지 않습니다.
+
+해결 방법:
+- 잘못된 종목 코드 또는 장 마감
+- 지원되는 종목 코드 목록을 확인하세요
+- 종목 코드 철자를 확인하세요
+```
+
+##### 5. 장 마감 에러
+```
+🕐 장 마감
+현재 시장이 마감되었습니다. 실시간 시세를 조회할 수 없습니다.
+
+해결 방법:
+- 미국 시장 정규장: 23:30-06:00 (KST)
+- 프리마켓/애프터아워 시간대에는 시세가 제한적일 수 있습니다
+```
+
+#### 에러 핸들러 사용법
+
+```python
+from dashboard.error_handler import handle_kis_broker_error
+
+try:
+    ticker = broker.fetch_ticker(symbol, overseas=True)
+except Exception as e:
+    handle_kis_broker_error(e, lang=lang, symbol=symbol)
+```
+
+#### 환경 변수 누락 시
+
+KIS 브로커 초기화 실패 시 자동으로 표시:
+- 누락된 환경 변수 목록
+- 설정 방법 안내
+- README 링크
+- 한국투자증권 API 신청 링크
+
+---
+
+### 코딩 패턴
+
+#### KIS 브로커 초기화
+
+```python
+from dashboard.kis_broker import get_kis_broker
+
+# 브로커 가져오기 (환경 변수에서 자동 초기화)
+broker = get_kis_broker()
+
+if broker is None:
+    # 초기화 실패 (에러 메시지는 get_kis_broker가 이미 표시)
+    st.warning(get_text('kis_not_available', lang))
+    return
+
+# 브로커 사용
+ticker = broker.fetch_ticker('AAPL', overseas=True, market='NASDAQ')
+```
+
+#### 미국 주식 시세 조회
+
+```python
+# 실시간 시세
+ticker = broker.fetch_ticker(
+    symbol='AAPL',
+    overseas=True,
+    market='NASDAQ'  # 또는 'NYSE', 'AMEX'
+)
+
+# ticker 구조:
+# {
+#     'symbol': 'AAPL',
+#     'last': 150.25,
+#     'open': 149.50,
+#     'high': 151.00,
+#     'low': 149.00,
+#     'volume': 50000000,
+#     'change': 0.75,
+#     'rate': 0.50,
+#     'timestamp': '2024-01-01 10:30:00'
+# }
+```
+
+#### OHLCV 데이터 조회
+
+```python
+# 일봉 데이터
+df = broker.fetch_ohlcv(
+    symbol='AAPL',
+    timeframe='1d',
+    limit=90,  # 90일
+    overseas=True,
+    market='NASDAQ'
+)
+
+# DataFrame 구조:
+# timestamp | open | high | low | close | volume
+```
+
+---
+
+### 성능 및 제한 사항
+
+#### API Rate Limit
+
+- 한국투자증권 API는 호출 제한이 있습니다
+- 제한 초과 시 자동으로 에러 핸들러가 안내 표시
+- Auto-refresh는 60초 간격으로 설정 (제한 회피)
+
+#### 캐싱 전략
+
+현재는 캐싱 미사용 (실시간 데이터이므로):
+```python
+# 향후 개선: 단기 캐싱으로 중복 호출 방지
+@st.cache_data(ttl=60)  # 60초 캐시
+def fetch_ticker_cached(symbol):
+    broker = get_kis_broker()
+    return broker.fetch_ticker(symbol, overseas=True)
+```
+
+#### 지원 종목
+
+현재 33개 미국 주식 지원:
+- 테크: AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA 등
+- 금융: JPM, BAC, WFC, GS 등
+- 소비재: KO, PEP, NKE, MCD 등
+- 헬스케어: JNJ, PFE, UNH 등
+
+목록은 `dashboard/stock_symbols.py`에서 관리
+
+---
+
+### 테스트
+
+#### 수동 테스트 체크리스트
+
+**Real-time Quotes 탭**:
+- [ ] 종목 선택 UI가 정상 작동하는가?
+- [ ] 실시간 시세가 정확하게 표시되는가?
+- [ ] Auto-refresh가 60초마다 갱신되는가?
+- [ ] OHLCV 차트가 올바르게 표시되는가?
+- [ ] 기간 선택이 차트에 반영되는가?
+
+**Live Monitor 탭**:
+- [ ] Current Market Price 섹션이 표시되는가?
+- [ ] 시뮬레이션 모드에서 적절히 숨겨지는가?
+- [ ] 실시간 시세와 백테스팅 결과가 함께 보이는가?
+
+**에러 처리**:
+- [ ] 환경 변수 누락 시 안내 메시지가 표시되는가?
+- [ ] Rate Limit 에러 시 적절한 안내가 표시되는가?
+- [ ] 네트워크 에러 시 해결 방법이 제시되는가?
+
+---
+
 ## 관련 문서
 
 - [../trading_bot/CLAUDE.md](../trading_bot/CLAUDE.md): 백테스팅 엔진
