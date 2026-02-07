@@ -966,9 +966,108 @@ def realtime_quotes_tab():
             f"{get_text('try_again', lang)}"
         )
 
-    # Placeholder for US-006 onwards (charts)
+    # OHLCV Chart (US-006)
     st.divider()
-    st.info("OHLCV charts - Coming in next iteration!")
+    st.subheader(get_text('historical_chart', lang))
+
+    # Period selection
+    col1, col2 = st.columns([1, 3])
+
+    with col1:
+        # Period selector
+        period_options = {
+            get_text('days_30', lang): 30,
+            get_text('days_90', lang): 90,
+            get_text('days_180', lang): 180
+        }
+
+        selected_period_label = st.selectbox(
+            get_text('select_period', lang),
+            list(period_options.keys()),
+            index=0
+        )
+
+        selected_period = period_options[selected_period_label]
+
+    try:
+        # Fetch OHLCV data
+        with st.spinner(get_text('loading_chart', lang)):
+            ohlcv_df = broker.fetch_ohlcv(
+                selected_symbol,
+                timeframe='1d',
+                limit=selected_period,
+                overseas=True,
+                market='NASDAQ'
+            )
+
+        # Create candlestick chart with volume subplot
+        from plotly.subplots import make_subplots
+        import plotly.graph_objects as go
+
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            row_heights=[0.7, 0.3],
+            subplot_titles=(f'{selected_symbol} - Price', 'Volume')
+        )
+
+        # Candlestick chart
+        fig.add_trace(
+            go.Candlestick(
+                x=ohlcv_df.index,
+                open=ohlcv_df['open'],
+                high=ohlcv_df['high'],
+                low=ohlcv_df['low'],
+                close=ohlcv_df['close'],
+                name='Price',
+                increasing_line_color='#00c853',  # Green for up
+                decreasing_line_color='#ff1744'   # Red for down
+            ),
+            row=1, col=1
+        )
+
+        # Volume bars with color based on price direction
+        colors = ['#00c853' if close >= open_price else '#ff1744'
+                 for close, open_price in zip(ohlcv_df['close'], ohlcv_df['open'])]
+
+        fig.add_trace(
+            go.Bar(
+                x=ohlcv_df.index,
+                y=ohlcv_df['volume'],
+                name='Volume',
+                marker_color=colors,
+                opacity=0.5
+            ),
+            row=2, col=1
+        )
+
+        # Update layout
+        fig.update_layout(
+            height=600,
+            showlegend=False,
+            xaxis_rangeslider_visible=False,
+            hovermode='x unified'
+        )
+
+        fig.update_xaxes(title_text="Date", row=2, col=1)
+        fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+        fig.update_yaxes(title_text="Volume", row=2, col=1)
+
+        # Display chart
+        st.plotly_chart(fig, use_container_width=True)
+
+    except Exception as e:
+        # Chart loading error
+        st.error(
+            f"**{get_text('chart_error', lang)}**\n\n"
+            f"{str(e)}\n\n"
+            f"**{get_text('possible_causes', lang)}:**\n"
+            f"- {get_text('cause_network', lang)}\n"
+            f"- {get_text('cause_rate_limit', lang)}\n"
+            f"- {get_text('cause_invalid_symbol', lang)}\n\n"
+            f"{get_text('try_again', lang)}"
+        )
 
 
 def display_strategy_indicators(info: Dict):

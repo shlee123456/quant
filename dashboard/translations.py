@@ -167,7 +167,16 @@ TRANSLATIONS = {
         'cause_network': 'Network connection issue',
         'cause_rate_limit': 'API rate limit exceeded (wait 1 minute)',
         'cause_invalid_symbol': 'Invalid symbol or market closed',
-        'try_again': 'Please try again in a moment.'
+        'try_again': 'Please try again in a moment.',
+
+        # OHLCV chart (US-006)
+        'historical_chart': 'Historical Price Chart',
+        'select_period': 'Select Period',
+        'days_30': '30 Days',
+        'days_90': '90 Days',
+        'days_180': '180 Days',
+        'loading_chart': 'Loading chart data...',
+        'chart_error': 'Failed to load chart data'
     },
     'ko': {
         # Page title
@@ -333,7 +342,16 @@ TRANSLATIONS = {
         'cause_network': '네트워크 연결 문제',
         'cause_rate_limit': 'API 호출 제한 초과 (1분 대기)',
         'cause_invalid_symbol': '잘못된 종목 코드 또는 장 마감',
-        'try_again': '잠시 후 다시 시도해주세요.'
+        'try_again': '잠시 후 다시 시도해주세요.',
+
+        # OHLCV chart (US-006)
+        'historical_chart': '과거 가격 차트',
+        'select_period': '기간 선택',
+        'days_30': '30일',
+        'days_90': '90일',
+        'days_180': '180일',
+        'loading_chart': '차트 데이터 로딩 중...',
+        'chart_error': '차트 데이터 로드 실패'
     }
 }
 
