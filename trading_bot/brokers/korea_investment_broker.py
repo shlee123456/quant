@@ -54,6 +54,7 @@ class KoreaInvestmentBroker(BaseBroker):
 
     def __init__(
         self,
+        user_id: str,
         appkey: str,
         appsecret: str,
         account: str,
@@ -63,6 +64,7 @@ class KoreaInvestmentBroker(BaseBroker):
         한국투자증권 브로커 초기화.
 
         Args:
+            user_id: 한국투자증권 사용자 ID
             appkey: 한국투자증권 AppKey
             appsecret: 한국투자증권 AppSecret
             account: 계좌번호 (예: '12345678-01')
@@ -75,12 +77,14 @@ class KoreaInvestmentBroker(BaseBroker):
         Example:
             >>> # 실전 계좌
             >>> broker = KoreaInvestmentBroker(
+            ...     user_id='@1234567',
             ...     appkey='YOUR_APPKEY',
             ...     appsecret='YOUR_APPSECRET',
             ...     account='12345678-01'
             ... )
             >>> # 모의투자 계좌
             >>> broker = KoreaInvestmentBroker(
+            ...     user_id='@1234567',
             ...     appkey='YOUR_APPKEY',
             ...     appsecret='YOUR_APPSECRET',
             ...     account='12345678-01',
@@ -89,6 +93,7 @@ class KoreaInvestmentBroker(BaseBroker):
         """
         super().__init__(name='KoreaInvestment', market_type='stock_global')
 
+        self.user_id = user_id
         self.appkey = appkey
         self.appsecret = appsecret
         self.account = account
@@ -96,17 +101,18 @@ class KoreaInvestmentBroker(BaseBroker):
 
         try:
             # python-kis 라이브러리 임포트 (지연 로딩)
-            # TODO: 실제 구현 시 python-kis 설치 및 임포트
-            # from pykis import KoreaInvestment
-            # self.api = KoreaInvestment(
-            #     appkey=appkey,
-            #     appsecret=appsecret,
-            #     account=account,
-            #     mock=mock
-            # )
+            from pykis import PyKis
 
-            # 현재는 스켈레톤이므로 None으로 설정
-            self.api = None
+            # PyKis 객체 생성 (실전과 모의투자 설정 모두 제공)
+            self.api = PyKis(
+                id=user_id,
+                appkey=appkey,
+                secretkey=appsecret,
+                virtual_id=user_id,
+                virtual_appkey=appkey,
+                virtual_secretkey=appsecret,
+                account=account
+            )
 
             # Rate Limiter 초기화 (1초당 15회)
             self._rate_limiter = RateLimiter(max_calls=15, period=1.0)
@@ -125,7 +131,8 @@ class KoreaInvestmentBroker(BaseBroker):
         timeframe: str = '1d',
         since: Optional[int] = None,
         limit: int = 100,
-        overseas: bool = False
+        overseas: bool = False,
+        market: str = 'NASDAQ'
     ) -> pd.DataFrame:
         """
         OHLCV 데이터 조회.
@@ -140,6 +147,7 @@ class KoreaInvestmentBroker(BaseBroker):
             since: 시작 타임스탬프 (밀리초, 현재 미사용)
             limit: 조회할 최대 개수
             overseas: 해외주식 여부 (기본: False)
+            market: 해외주식 마켓 (NASDAQ, NYSE, AMEX 등)
 
         Returns:
             OHLCV DataFrame.
@@ -153,23 +161,26 @@ class KoreaInvestmentBroker(BaseBroker):
         self._rate_limiter.wait()
 
         try:
-            # TODO: 실제 구현
-            # if overseas:
-            #     data = self.api.stock_overseas.ohlcv(
-            #         symbol=symbol,
-            #         interval=timeframe,
-            #         count=limit
-            #     )
-            # else:
-            #     data = self.api.stock.ohlcv(
-            #         symbol=symbol,
-            #         interval=timeframe,
-            #         count=limit
-            #     )
-            # return self._format_ohlcv(data)
+            # timeframe 변환 (CCXT 형식 -> PyKis 형식)
+            period_map = {
+                '1d': 'D',
+                'D': 'D',
+                '1m': '1',
+                '1': '1'
+            }
+            period = period_map.get(timeframe, 'D')
 
-            # 스켈레톤: 빈 DataFrame 반환
-            raise NotImplementedError("fetch_ohlcv는 아직 구현되지 않았습니다.")
+            # 주식 객체 생성
+            if overseas:
+                stock = self.api.stock(symbol, market=market)
+            else:
+                stock = self.api.stock(symbol)
+
+            # OHLCV 데이터 조회
+            chart = stock.chart(period=period, count=limit)
+
+            # DataFrame으로 변환
+            return self._format_ohlcv(chart)
 
         except Exception as e:
             raise BrokerError(f"OHLCV 조회 실패: {str(e)}")
@@ -188,16 +199,21 @@ class KoreaInvestmentBroker(BaseBroker):
         self._rate_limiter.wait()
 
         try:
-            # TODO: 실제 구현
-            # balance = self.api.account.balance()
-            # return {
-            #     'free': {'KRW': balance.cash},
-            #     'used': {'KRW': balance.total_value - balance.cash},
-            #     'total': {'KRW': balance.total_value}
-            # }
+            # 계좌 정보 조회
+            account = self.api.account(self.account)
+            balance = account.balance()
 
-            # 스켈레톤: 빈 딕셔너리 반환
-            raise NotImplementedError("fetch_balance는 아직 구현되지 않았습니다.")
+            # 표준 포맷으로 변환
+            # balance 객체의 속성: cash (현금), total_value (총 평가금액) 등
+            cash = float(getattr(balance, 'cash', 0))
+            total_value = float(getattr(balance, 'total_value', 0))
+            used = total_value - cash
+
+            return {
+                'free': {'KRW': cash, 'USD': 0.0},
+                'used': {'KRW': used, 'USD': 0.0},
+                'total': {'KRW': total_value, 'USD': 0.0}
+            }
 
         except Exception as e:
             raise BrokerError(f"잔고 조회 실패: {str(e)}")
@@ -209,7 +225,8 @@ class KoreaInvestmentBroker(BaseBroker):
         side: str,
         amount: float,
         price: Optional[float] = None,
-        overseas: bool = False
+        overseas: bool = False,
+        market: str = 'NASDAQ'
     ) -> Dict[str, Any]:
         """
         주문 생성.
@@ -221,6 +238,7 @@ class KoreaInvestmentBroker(BaseBroker):
             amount: 주문 수량
             price: 주문 가격 (limit 주문 시 필수)
             overseas: 해외주식 여부
+            market: 해외주식 마켓 (NASDAQ, NYSE, AMEX 등)
 
         Returns:
             주문 정보 딕셔너리.
@@ -234,24 +252,37 @@ class KoreaInvestmentBroker(BaseBroker):
         self._rate_limiter.wait()
 
         try:
-            # TODO: 실제 구현
-            # api_instance = self.api.stock_overseas if overseas else self.api.stock
-            #
-            # if side == 'buy':
-            #     if order_type == 'market':
-            #         result = api_instance.buy(symbol, qty=int(amount))
-            #     else:
-            #         result = api_instance.buy(symbol, price=price, qty=int(amount))
-            # else:
-            #     if order_type == 'market':
-            #         result = api_instance.sell(symbol, qty=int(amount))
-            #     else:
-            #         result = api_instance.sell(symbol, price=price, qty=int(amount))
-            #
-            # return self._format_order(result)
+            # 주식 객체 생성
+            if overseas:
+                stock = self.api.stock(symbol, market=market)
+            else:
+                stock = self.api.stock(symbol)
 
-            # 스켈레톤: 에러 발생
-            raise NotImplementedError("create_order는 아직 구현되지 않았습니다.")
+            # 주문 수량 (정수로 변환)
+            qty = int(amount)
+
+            # 주문 실행
+            if side == 'buy':
+                if order_type == 'market':
+                    # 시장가 매수
+                    result = stock.buy(qty=qty, price=None)
+                else:
+                    # 지정가 매수
+                    if price is None:
+                        raise BrokerError("limit 주문 시 price는 필수입니다.")
+                    result = stock.buy(qty=qty, price=price)
+            else:  # sell
+                if order_type == 'market':
+                    # 시장가 매도
+                    result = stock.sell(qty=qty, price=None)
+                else:
+                    # 지정가 매도
+                    if price is None:
+                        raise BrokerError("limit 주문 시 price는 필수입니다.")
+                    result = stock.sell(qty=qty, price=price)
+
+            # 표준 포맷으로 변환
+            return self._format_order(result, symbol, order_type, side, amount, price)
 
         except Exception as e:
             # 잔고 부족 에러 감지
@@ -259,13 +290,21 @@ class KoreaInvestmentBroker(BaseBroker):
                 raise InsufficientFunds(f"잔고 부족: {str(e)}")
             raise BrokerError(f"주문 생성 실패: {str(e)}")
 
-    def cancel_order(self, order_id: str, symbol: Optional[str] = None) -> Dict[str, Any]:
+    def cancel_order(
+        self,
+        order_id: str,
+        symbol: Optional[str] = None,
+        overseas: bool = False,
+        market: str = 'NASDAQ'
+    ) -> Dict[str, Any]:
         """
         주문 취소.
 
         Args:
             order_id: 주문 번호
             symbol: 종목 코드 (필수)
+            overseas: 해외주식 여부
+            market: 해외주식 마켓
 
         Returns:
             취소된 주문 정보.
@@ -275,26 +314,40 @@ class KoreaInvestmentBroker(BaseBroker):
         """
         self._rate_limiter.wait()
 
-        try:
-            # TODO: 실제 구현
-            # result = self.api.stock.cancel(order_id)
-            # return result
+        if symbol is None:
+            raise BrokerError("cancel_order에서 symbol은 필수입니다.")
 
-            # 스켈레톤: 에러 발생
-            raise NotImplementedError("cancel_order는 아직 구현되지 않았습니다.")
+        try:
+            # 주식 객체 생성
+            if overseas:
+                stock = self.api.stock(symbol, market=market)
+            else:
+                stock = self.api.stock(symbol)
+
+            # 주문 취소
+            result = stock.cancel(order_id)
+
+            return {
+                'id': order_id,
+                'symbol': symbol,
+                'status': 'canceled',
+                'timestamp': int(datetime.now().timestamp() * 1000),
+                'info': result
+            }
 
         except Exception as e:
             if '주문번호' in str(e) or 'not found' in str(e).lower():
                 raise OrderNotFound(f"주문을 찾을 수 없음: {order_id}")
             raise BrokerError(f"주문 취소 실패: {str(e)}")
 
-    def fetch_ticker(self, symbol: str, overseas: bool = False) -> Dict[str, Any]:
+    def fetch_ticker(self, symbol: str, overseas: bool = False, market: str = 'NASDAQ') -> Dict[str, Any]:
         """
         현재가 정보 조회.
 
         Args:
             symbol: 종목 코드
             overseas: 해외주식 여부
+            market: 해외주식 마켓 (NASDAQ, NYSE, AMEX 등)
 
         Returns:
             현재가 딕셔너리.
@@ -302,35 +355,50 @@ class KoreaInvestmentBroker(BaseBroker):
         Example:
             >>> ticker = broker.fetch_ticker('005930')
             >>> print(ticker['last'])
+            >>> ticker = broker.fetch_ticker('AAPL', overseas=True, market='NASDAQ')
         """
         self._rate_limiter.wait()
 
         try:
-            # TODO: 실제 구현
-            # api_instance = self.api.stock_overseas if overseas else self.api.stock
-            # quote = api_instance.quote(symbol)
-            # return {
-            #     'symbol': symbol,
-            #     'last': quote.price,
-            #     'bid': quote.bid,
-            #     'ask': quote.ask,
-            #     'volume': quote.volume,
-            #     'timestamp': int(datetime.now().timestamp() * 1000)
-            # }
+            # 해외주식인 경우
+            if overseas:
+                stock = self.api.stock(symbol, market=market)
+            else:
+                # 국내주식
+                stock = self.api.stock(symbol)
 
-            # 스켈레톤: 에러 발생
-            raise NotImplementedError("fetch_ticker는 아직 구현되지 않았습니다.")
+            quote = stock.quote()
+
+            return {
+                'symbol': symbol,
+                'last': float(quote.price),
+                'open': float(quote.open),
+                'high': float(quote.high),
+                'low': float(quote.low),
+                'volume': float(quote.volume),
+                'change': float(quote.change),
+                'rate': float(quote.rate),
+                'timestamp': int(datetime.now().timestamp() * 1000)
+            }
 
         except Exception as e:
             raise BrokerError(f"현재가 조회 실패: {str(e)}")
 
-    def fetch_order(self, order_id: str, symbol: Optional[str] = None) -> Dict[str, Any]:
+    def fetch_order(
+        self,
+        order_id: str,
+        symbol: Optional[str] = None,
+        overseas: bool = False,
+        market: str = 'NASDAQ'
+    ) -> Dict[str, Any]:
         """
         주문 상태 조회.
 
         Args:
             order_id: 주문 번호
             symbol: 종목 코드
+            overseas: 해외주식 여부
+            market: 해외주식 마켓
 
         Returns:
             주문 정보.
@@ -340,13 +408,31 @@ class KoreaInvestmentBroker(BaseBroker):
         """
         self._rate_limiter.wait()
 
-        try:
-            # TODO: 실제 구현
-            # order = self.api.stock.order(order_id)
-            # return self._format_order(order)
+        if symbol is None:
+            raise BrokerError("fetch_order에서 symbol은 필수입니다.")
 
-            # 스켈레톤: 에러 발생
-            raise NotImplementedError("fetch_order는 아직 구현되지 않았습니다.")
+        try:
+            # 주식 객체 생성
+            if overseas:
+                stock = self.api.stock(symbol, market=market)
+            else:
+                stock = self.api.stock(symbol)
+
+            # 주문 조회
+            order = stock.order(order_id)
+
+            # 표준 포맷으로 변환
+            return {
+                'id': order_id,
+                'symbol': symbol,
+                'type': getattr(order, 'order_type', 'unknown'),
+                'side': getattr(order, 'side', 'unknown'),
+                'amount': float(getattr(order, 'qty', 0)),
+                'price': float(getattr(order, 'price', 0)),
+                'status': getattr(order, 'status', 'unknown'),
+                'timestamp': int(datetime.now().timestamp() * 1000),
+                'info': order
+            }
 
         except Exception as e:
             if '주문번호' in str(e) or 'not found' in str(e).lower():
@@ -358,26 +444,114 @@ class KoreaInvestmentBroker(BaseBroker):
         한국투자증권 API 응답을 표준 OHLCV DataFrame으로 변환.
 
         Args:
-            data: 한국투자증권 API 응답 데이터
+            data: 한국투자증권 API 응답 데이터 (DataFrame 또는 list)
 
         Returns:
             표준 포맷의 OHLCV DataFrame.
         """
-        # TODO: 실제 API 응답 구조에 맞게 구현
-        pass
+        if data is None or (isinstance(data, pd.DataFrame) and data.empty):
+            # 빈 DataFrame 반환
+            return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 
-    def _format_order(self, data: Any) -> Dict[str, Any]:
+        # DataFrame으로 변환 (이미 DataFrame이면 그대로 사용)
+        if not isinstance(data, pd.DataFrame):
+            df = pd.DataFrame(data)
+        else:
+            df = data.copy()
+
+        # 컬럼 매핑 (PyKis 컬럼명 -> 표준 컬럼명)
+        # PyKis는 일반적으로 'date', 'open', 'high', 'low', 'close', 'volume' 컬럼 사용
+        column_map = {
+            'date': 'timestamp',
+            'stck_bsop_date': 'timestamp',  # 국내주식 일자
+            'stck_clpr': 'close',            # 국내주식 종가
+            'stck_oprc': 'open',             # 국내주식 시가
+            'stck_hgpr': 'high',             # 국내주식 고가
+            'stck_lwpr': 'low',              # 국내주식 저가
+            'acml_vol': 'volume'             # 국내주식 거래량
+        }
+
+        # 컬럼 이름 변경
+        for old_col, new_col in column_map.items():
+            if old_col in df.columns:
+                df = df.rename(columns={old_col: new_col})
+
+        # 필수 컬럼 확인
+        required_cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+
+        if missing_cols:
+            # 컬럼이 없으면 기본값 추가 (단, timestamp는 필수)
+            if 'timestamp' in missing_cols:
+                raise BrokerError(f"OHLCV 데이터에 timestamp 컬럼이 없습니다. 컬럼: {df.columns.tolist()}")
+
+            for col in missing_cols:
+                if col in ['open', 'high', 'low', 'close']:
+                    df[col] = 0.0
+                elif col == 'volume':
+                    df[col] = 0
+
+        # timestamp 변환 (문자열 -> Unix timestamp in milliseconds)
+        if df['timestamp'].dtype == 'object' or df['timestamp'].dtype == 'string':
+            # 날짜 문자열을 datetime으로 변환
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+        if df['timestamp'].dtype == 'datetime64[ns]':
+            # datetime -> Unix timestamp (milliseconds)
+            df['timestamp'] = (df['timestamp'].astype(int) // 10**6).astype(int)
+
+        # 데이터 타입 변환
+        df['open'] = df['open'].astype(float)
+        df['high'] = df['high'].astype(float)
+        df['low'] = df['low'].astype(float)
+        df['close'] = df['close'].astype(float)
+        df['volume'] = df['volume'].astype(float)
+
+        # 필수 컬럼만 선택
+        df = df[required_cols]
+
+        # 인덱스 리셋
+        df = df.reset_index(drop=True)
+
+        return df
+
+    def _format_order(
+        self,
+        data: Any,
+        symbol: str,
+        order_type: str,
+        side: str,
+        amount: float,
+        price: Optional[float]
+    ) -> Dict[str, Any]:
         """
         한국투자증권 API 주문 응답을 표준 포맷으로 변환.
 
         Args:
             data: 한국투자증권 API 주문 응답
+            symbol: 종목 코드
+            order_type: 주문 타입
+            side: 주문 방향
+            amount: 주문 수량
+            price: 주문 가격
 
         Returns:
             표준 포맷의 주문 딕셔너리.
         """
-        # TODO: 실제 API 응답 구조에 맞게 구현
-        pass
+        # PyKis 주문 응답에서 주문 번호 추출
+        order_id = getattr(data, 'order_id', None) or getattr(data, 'odno', None) or 'unknown'
+
+        return {
+            'id': str(order_id),
+            'symbol': symbol,
+            'type': order_type,
+            'side': side,
+            'amount': amount,
+            'price': price,
+            'status': 'open',  # 기본값: open
+            'timestamp': int(datetime.now().timestamp() * 1000),
+            'info': data  # 원본 데이터 보존
+        }
 
 
 class RateLimiter:

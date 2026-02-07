@@ -4,7 +4,7 @@ numpy>=1.24.0
 
 # Broker connectivity (optional - not needed for simulation)
 ccxt>=4.0.0           # Cryptocurrency exchanges
-python-kis>=1.0.0     # Korea Investment Securities (stocks)
+python-kis>=2.1.6     # Korea Investment Securities (stocks)
 
 # Web dashboard
 streamlit>=1.28.0
