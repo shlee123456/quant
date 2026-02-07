@@ -79,6 +79,61 @@ pip install ccxt
 pip install python-kis
 ```
 
+## API Setup
+
+### Korea Investment Securities API Setup (한국투자증권)
+
+To use real-time quotes and trading for domestic and international stocks, you need to set up Korea Investment Securities API credentials.
+
+#### 1. Sign up and get API credentials
+
+**For Mock Trading (모의투자) - Recommended for testing:**
+1. Visit [KIS API Portal](https://apiportal.koreainvestment.com/intro)
+2. Register for a mock trading account
+3. Navigate to [API신청] menu and create a new app
+4. You will receive:
+   - APPKEY (앱키)
+   - APPSECRET (앱시크릿)
+   - Mock account number (모의투자 계좌번호)
+
+**For Real Trading (실전투자) - Use with caution:**
+1. Visit [KIS API Portal](https://apiportal.koreainvestment.com/intro)
+2. Link your real trading account
+3. Create a new app in [API신청] menu
+4. You will receive different APPKEY and APPSECRET for real trading
+
+#### 2. Configure environment variables
+
+Copy `.env.example` to `.env` and fill in your credentials:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` file:
+```bash
+# Korea Investment Securities
+KIS_APPKEY=your_actual_appkey_here
+KIS_APPSECRET=your_actual_appsecret_here
+KIS_ACCOUNT=12345678-01  # Your account number
+KIS_MOCK=true  # Set to false for real trading
+```
+
+**⚠️ Important:**
+- Mock trading (KIS_MOCK=true): Uses virtual funds, no real trades executed
+- Real trading (KIS_MOCK=false): Uses real funds, actual trades will be executed!
+- Mock and real trading require different APPKEY/APPSECRET
+- Never commit `.env` file to Git (it's in `.gitignore`)
+
+#### 3. Verify setup
+
+You can verify your setup in the dashboard:
+```bash
+streamlit run dashboard/app.py
+```
+
+Navigate to the "📊 Real-time Quotes" tab. If credentials are set correctly, you should be able to fetch live stock quotes.
+
 ## Quick Start
 
 ### 1. Using Brokers
