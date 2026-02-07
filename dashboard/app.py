@@ -19,6 +19,7 @@ from trading_bot.paper_trader import PaperTrader
 from trading_bot.simulation_data import SimulationDataGenerator
 from dashboard.charts import ChartGenerator
 from dashboard.translations import get_text, get_strategy_name, get_strategy_desc
+from dashboard.market_hours import MarketHours
 import time
 from datetime import datetime
 from typing import Dict, Any
@@ -26,8 +27,8 @@ from typing import Dict, Any
 
 # Page configuration
 st.set_page_config(
-    page_title="Crypto Trading Bot Dashboard",
-    page_icon="📈",
+    page_title="Multi-Asset Trading Bot (Focus: Foreign Stocks)",
+    page_icon="🌍",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -131,6 +132,8 @@ def init_session_state():
         st.session_state.use_simulation = False
     if 'language' not in st.session_state:
         st.session_state.language = 'ko'  # Default to Korean
+    if 'market_type' not in st.session_state:
+        st.session_state.market_type = 'stock'  # Default to Foreign Stocks
 
 
 def create_strategy(strategy_name: str, params: Dict[str, Any]):
@@ -159,6 +162,22 @@ def sidebar_config():
 
     st.sidebar.markdown("---")
 
+    # Market Type Selection
+    st.sidebar.subheader(get_text('market_type', lang))
+    market_options = {
+        get_text('stock_market', lang): 'stock',
+        get_text('crypto_market', lang): 'crypto'
+    }
+    selected_market_display = st.sidebar.radio(
+        "",
+        options=list(market_options.keys()),
+        index=0,  # Default to stocks
+        label_visibility="collapsed"
+    )
+    st.session_state.market_type = market_options[selected_market_display]
+
+    st.sidebar.markdown("---")
+
     # Data Source Selection
     st.sidebar.subheader(get_text('data_source', lang))
     use_simulation = st.sidebar.checkbox(
@@ -171,12 +190,60 @@ def sidebar_config():
     # Market Settings (only for real data)
     if not use_simulation:
         st.sidebar.subheader(get_text('market_settings', lang))
-        symbol = st.sidebar.text_input(get_text('symbol', lang), value=st.session_state.config['symbol'])
-        timeframe = st.sidebar.selectbox(
-            get_text('timeframe', lang),
-            ['1m', '5m', '15m', '1h', '4h', '1d'],
-            index=3
-        )
+
+        if st.session_state.market_type == 'stock':
+            # Display market status for stocks
+            market_hours = MarketHours()
+            status_text, status_color = market_hours.format_status_message(lang)
+            st.sidebar.info(status_text)
+
+            # Show market hours in expander
+            with st.sidebar.expander(get_text('market_hours', lang)):
+                hours_display = market_hours.get_market_hours_display()
+                st.markdown(f"**{get_text('pre_market', lang)}**")
+                st.markdown(f"🇺🇸 {hours_display['pre_market_est']}")
+                st.markdown(f"🇰🇷 {hours_display['pre_market_kst']}")
+                st.markdown("---")
+                st.markdown(f"**{get_text('regular_hours', lang)}**")
+                st.markdown(f"🇺🇸 {hours_display['regular_est']}")
+                st.markdown(f"🇰🇷 {hours_display['regular_kst']}")
+                st.markdown("---")
+                st.markdown(f"**{get_text('after_hours', lang)}**")
+                st.markdown(f"🇺🇸 {hours_display['after_hours_est']}")
+                st.markdown(f"🇰🇷 {hours_display['after_hours_kst']}")
+
+            # Stock market settings
+            symbol = st.sidebar.text_input(
+                get_text('stock_symbol', lang),
+                value='AAPL',
+                placeholder='AAPL, TSLA, NVDA...'
+            )
+
+            # Popular stocks
+            with st.sidebar.expander(get_text('popular_stocks', lang)):
+                popular = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META']
+                cols = st.columns(2)
+                for idx, stock in enumerate(popular):
+                    if cols[idx % 2].button(stock, key=f"pop_{stock}"):
+                        symbol = stock
+
+            timeframe = st.sidebar.selectbox(
+                get_text('timeframe', lang),
+                ['1m', '5m', '15m', '1h', '1d'],
+                index=3
+            )
+        else:
+            # Crypto market settings
+            symbol = st.sidebar.text_input(
+                get_text('symbol', lang),
+                value=st.session_state.config.get('symbol', 'BTC/USDT')
+            )
+            timeframe = st.sidebar.selectbox(
+                get_text('timeframe', lang),
+                ['1m', '5m', '15m', '1h', '4h', '1d'],
+                index=3
+            )
+
         st.session_state.config['symbol'] = symbol
         st.session_state.config['timeframe'] = timeframe
 

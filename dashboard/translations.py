@@ -5,8 +5,8 @@ Multi-language support for Trading Dashboard
 TRANSLATIONS = {
     'en': {
         # Page title
-        'page_title': 'Cryptocurrency Trading Bot Dashboard',
-        'page_subtitle': 'Enhanced Multi-Strategy Backtesting & Trading Platform',
+        'page_title': 'Multi-Asset Trading Bot Dashboard (Focus: Foreign Stocks)',
+        'page_subtitle': 'Advanced Backtesting & Automated Trading Platform for US Stocks & Crypto',
 
         # Sidebar
         'configuration': '⚙️ Configuration',
@@ -126,12 +126,33 @@ TRANSLATIONS = {
         'recent_data': 'Recent Data',
 
         # Footer
-        'footer': 'Built with Streamlit | Crypto Trading Bot v2.0'
+        'footer': 'Built with Streamlit | Multi-Asset Trading Bot v2.0',
+
+        # Market selection
+        'market_type': 'Market Type',
+        'crypto_market': 'Cryptocurrency',
+        'stock_market': 'Foreign Stocks (US)',
+        'select_market': 'Select Market',
+
+        # Stock specific
+        'stock_symbol': 'Stock Symbol (e.g., AAPL, TSLA)',
+        'stock_search': 'Search Stock',
+        'sector': 'Sector',
+        'industry': 'Industry',
+        'market_hours': 'Market Hours',
+        'pre_market': 'Pre-Market',
+        'regular_hours': 'Regular Hours',
+        'after_hours': 'After Hours',
+        'market_closed': 'Market Closed',
+        'market_status': 'Market Status',
+        'popular_stocks': 'Popular Stocks',
+        'us_market_hours': 'US Market Hours (EST)',
+        'korea_time': 'Korea Time (KST)'
     },
     'ko': {
         # Page title
-        'page_title': '암호화폐 트레이딩 봇 대시보드',
-        'page_subtitle': '향상된 다중 전략 백테스팅 & 트레이딩 플랫폼',
+        'page_title': '다중 자산 트레이딩 봇 대시보드 (주력: 해외주식)',
+        'page_subtitle': '미국 주식 & 암호화폐를 위한 고급 백테스팅 & 자동 트레이딩 플랫폼',
 
         # Sidebar
         'configuration': '⚙️ 설정',
@@ -251,7 +272,28 @@ TRANSLATIONS = {
         'recent_data': '최근 데이터',
 
         # Footer
-        'footer': 'Streamlit으로 제작 | 암호화폐 트레이딩 봇 v2.0'
+        'footer': 'Streamlit으로 제작 | 다중 자산 트레이딩 봇 v2.0',
+
+        # Market selection
+        'market_type': '마켓 종류',
+        'crypto_market': '암호화폐',
+        'stock_market': '해외주식 (미국)',
+        'select_market': '마켓 선택',
+
+        # Stock specific
+        'stock_symbol': '주식 심볼 (예: AAPL, TSLA)',
+        'stock_search': '주식 검색',
+        'sector': '섹터',
+        'industry': '산업',
+        'market_hours': '장 시간',
+        'pre_market': '프리마켓',
+        'regular_hours': '정규장',
+        'after_hours': '애프터아워',
+        'market_closed': '장 마감',
+        'market_status': '시장 상태',
+        'popular_stocks': '인기 종목',
+        'us_market_hours': '미국 시장 시간 (EST)',
+        'korea_time': '한국 시간 (KST)'
     }
 }
 
