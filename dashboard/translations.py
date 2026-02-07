@@ -176,7 +176,14 @@ TRANSLATIONS = {
         'days_90': '90 Days',
         'days_180': '180 Days',
         'loading_chart': 'Loading chart data...',
-        'chart_error': 'Failed to load chart data'
+        'chart_error': 'Failed to load chart data',
+
+        # Auto-refresh (US-007)
+        'enable_auto_refresh': 'Enable Auto-refresh',
+        'auto_refresh_help': 'Automatically update quotes every 60 seconds',
+        'next_refresh_in': 'Next refresh in',
+        'refreshing_now': 'Refreshing now...',
+        'auto_refresh_disabled': 'Auto-refresh disabled - Click Refresh to update'
     },
     'ko': {
         # Page title
@@ -351,7 +358,14 @@ TRANSLATIONS = {
         'days_90': '90일',
         'days_180': '180일',
         'loading_chart': '차트 데이터 로딩 중...',
-        'chart_error': '차트 데이터 로드 실패'
+        'chart_error': '차트 데이터 로드 실패',
+
+        # Auto-refresh (US-007)
+        'enable_auto_refresh': '자동 새로고침 활성화',
+        'auto_refresh_help': '60초마다 자동으로 시세 업데이트',
+        'next_refresh_in': '다음 새로고침',
+        'refreshing_now': '새로고침 중...',
+        'auto_refresh_disabled': '자동 새로고침 비활성화 - 새로고침 버튼을 클릭하여 업데이트하세요'
     }
 }
 

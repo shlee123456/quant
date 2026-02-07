@@ -844,6 +844,13 @@ def realtime_quotes_tab():
     if 'selected_quote_symbol' not in st.session_state:
         st.session_state.selected_quote_symbol = 'AAPL'  # Default to Apple
 
+    # Initialize session state for auto-refresh
+    if 'auto_refresh_enabled' not in st.session_state:
+        st.session_state.auto_refresh_enabled = False
+
+    if 'last_refresh_time' not in st.session_state:
+        st.session_state.last_refresh_time = None
+
     # Stock selection UI
     st.subheader(get_text('select_stock', lang))
 
@@ -886,6 +893,69 @@ def realtime_quotes_tab():
 
     # Display selected symbol
     st.success(f"{get_text('selected_symbol', lang)}: **{selected_symbol}** - {stock_info['name'] if stock_info else ''}")
+
+    # Auto-refresh controls (US-007)
+    st.divider()
+
+    col1, col2, col3 = st.columns([1, 1, 2])
+
+    with col1:
+        # Auto-refresh toggle checkbox
+        auto_refresh = st.checkbox(
+            get_text('enable_auto_refresh', lang),
+            value=st.session_state.auto_refresh_enabled,
+            help=get_text('auto_refresh_help', lang),
+            key='auto_refresh_checkbox'
+        )
+        st.session_state.auto_refresh_enabled = auto_refresh
+
+    with col2:
+        # Manual refresh button
+        manual_refresh = st.button(
+            get_text('refresh_now', lang),
+            type='primary',
+            use_container_width=True
+        )
+
+    with col3:
+        # Display auto-refresh status and countdown
+        if st.session_state.auto_refresh_enabled:
+            import time
+            import datetime
+
+            current_time = time.time()
+
+            # Initialize last refresh time if needed
+            if st.session_state.last_refresh_time is None or manual_refresh:
+                st.session_state.last_refresh_time = current_time
+
+            # Calculate elapsed time since last refresh
+            elapsed = current_time - st.session_state.last_refresh_time
+            refresh_interval = 60  # 60 seconds
+            remaining = max(0, refresh_interval - int(elapsed))
+
+            # Display countdown
+            if remaining > 0:
+                st.info(f"{get_text('next_refresh_in', lang)} **{remaining}s**")
+            else:
+                st.info(get_text('refreshing_now', lang))
+
+            # Auto-refresh logic
+            if elapsed >= refresh_interval:
+                st.session_state.last_refresh_time = current_time
+                time.sleep(0.5)  # Brief pause for visual feedback
+                st.rerun()
+
+            # Schedule next update
+            time.sleep(1)
+            st.rerun()
+        else:
+            st.info(get_text('auto_refresh_disabled', lang))
+
+    # Reset last refresh time if manually refreshed
+    if manual_refresh:
+        import time
+        st.session_state.last_refresh_time = time.time()
 
     # Real-time quote display (US-005)
     st.divider()
