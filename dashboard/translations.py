@@ -151,7 +151,23 @@ TRANSLATIONS = {
         'korea_time': 'Korea Time (KST)',
         'select_stock': 'Select Stock',
         'select_stock_help': 'Choose a US stock to view real-time quotes',
-        'selected_symbol': 'Selected Symbol'
+        'selected_symbol': 'Selected Symbol',
+
+        # Real-time quotes (US-005)
+        'current_price': 'Current Price',
+        'open_price': 'Open',
+        'high_price': 'High',
+        'low_price': 'Low',
+        'volume': 'Volume',
+        'change_amount': 'Change',
+        'fetching_quote': 'Fetching real-time quote...',
+        'kis_not_available': 'KIS broker is not available. Please configure API credentials.',
+        'quote_fetch_error': 'Failed to fetch quote',
+        'possible_causes': 'Possible causes',
+        'cause_network': 'Network connection issue',
+        'cause_rate_limit': 'API rate limit exceeded (wait 1 minute)',
+        'cause_invalid_symbol': 'Invalid symbol or market closed',
+        'try_again': 'Please try again in a moment.'
     },
     'ko': {
         # Page title
@@ -301,7 +317,23 @@ TRANSLATIONS = {
         'korea_time': '한국 시간 (KST)',
         'select_stock': '종목 선택',
         'select_stock_help': '실시간 시세를 볼 미국 주식을 선택하세요',
-        'selected_symbol': '선택된 종목'
+        'selected_symbol': '선택된 종목',
+
+        # Real-time quotes (US-005)
+        'current_price': '현재가',
+        'open_price': '시가',
+        'high_price': '고가',
+        'low_price': '저가',
+        'volume': '거래량',
+        'change_amount': '등락',
+        'fetching_quote': '실시간 시세 조회 중...',
+        'kis_not_available': 'KIS 브로커를 사용할 수 없습니다. API 인증 정보를 설정해주세요.',
+        'quote_fetch_error': '시세 조회 실패',
+        'possible_causes': '가능한 원인',
+        'cause_network': '네트워크 연결 문제',
+        'cause_rate_limit': 'API 호출 제한 초과 (1분 대기)',
+        'cause_invalid_symbol': '잘못된 종목 코드 또는 장 마감',
+        'try_again': '잠시 후 다시 시도해주세요.'
     }
 }
 

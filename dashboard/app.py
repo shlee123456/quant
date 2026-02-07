@@ -887,9 +887,88 @@ def realtime_quotes_tab():
     # Display selected symbol
     st.success(f"{get_text('selected_symbol', lang)}: **{selected_symbol}** - {stock_info['name'] if stock_info else ''}")
 
-    # Placeholder for US-005 onwards
+    # Real-time quote display (US-005)
     st.divider()
-    st.info("Price quotes and charts - Coming in next iteration!")
+    st.subheader(get_text('current_price', lang))
+
+    # Import KIS broker helper
+    from dashboard.kis_broker import get_kis_broker
+
+    # Initialize KIS broker
+    broker = get_kis_broker()
+
+    if broker is None:
+        # Broker initialization failed (error already shown by get_kis_broker)
+        st.warning(get_text('kis_not_available', lang))
+        return
+
+    try:
+        # Fetch current ticker data
+        with st.spinner(get_text('fetching_quote', lang)):
+            ticker = broker.fetch_ticker(selected_symbol, overseas=True, market='NASDAQ')
+
+        # Display metrics in columns
+        col1, col2, col3, col4, col5 = st.columns(5)
+
+        with col1:
+            # Current price with change rate
+            change_rate = ticker.get('rate', 0.0)
+            delta_color = "normal" if change_rate >= 0 else "inverse"
+            st.metric(
+                label=get_text('current_price', lang),
+                value=f"${ticker['last']:.2f}",
+                delta=f"{change_rate:+.2f}%",
+                delta_color=delta_color
+            )
+
+        with col2:
+            st.metric(
+                label=get_text('open_price', lang),
+                value=f"${ticker['open']:.2f}"
+            )
+
+        with col3:
+            st.metric(
+                label=get_text('high_price', lang),
+                value=f"${ticker['high']:.2f}"
+            )
+
+        with col4:
+            st.metric(
+                label=get_text('low_price', lang),
+                value=f"${ticker['low']:.2f}"
+            )
+
+        with col5:
+            # Format volume with commas
+            volume = ticker.get('volume', 0)
+            st.metric(
+                label=get_text('volume', lang),
+                value=f"{int(volume):,}"
+            )
+
+        # Additional info: Change amount
+        change_amount = ticker.get('change', 0.0)
+        change_sign = "+" if change_amount >= 0 else ""
+        change_color = "🔴" if change_amount >= 0 else "🔵"
+
+        st.info(f"{change_color} {get_text('change_amount', lang)}: {change_sign}${change_amount:.2f} ({change_rate:+.2f}%)")
+
+    except Exception as e:
+        # User-friendly error message
+        st.error(
+            f"**{get_text('quote_fetch_error', lang)}**\n\n"
+            f"{str(e)}\n\n"
+            f"**{get_text('possible_causes', lang)}:**\n"
+            f"- {get_text('cause_network', lang)}\n"
+            f"- {get_text('cause_rate_limit', lang)}\n"
+            f"- {get_text('cause_invalid_symbol', lang)}\n\n"
+            f"{get_text('try_again', lang)}"
+        )
+
+    # Placeholder for US-006 onwards (charts)
+    st.divider()
+    st.info("OHLCV charts - Coming in next iteration!")
 
 
 def display_strategy_indicators(info: Dict):
