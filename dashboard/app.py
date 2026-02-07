@@ -837,15 +837,59 @@ def realtime_quotes_tab():
 
     st.header(get_text('tab_quotes', lang))
 
-    # Placeholder for US-004 onwards
-    st.info("Real-time Quotes tab - Coming soon!")
-    st.markdown("""
-    This tab will display:
-    - Stock symbol selection
-    - Real-time price quotes
-    - OHLCV candlestick charts
-    - Auto-refresh functionality
-    """)
+    # Initialize stock symbol database
+    stock_db = StockSymbolDB()
+
+    # Initialize session state for selected symbol
+    if 'selected_quote_symbol' not in st.session_state:
+        st.session_state.selected_quote_symbol = 'AAPL'  # Default to Apple
+
+    # Stock selection UI
+    st.subheader(get_text('select_stock', lang))
+
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        # Get all stocks for dropdown
+        all_stocks = stock_db.stocks
+
+        # Create display format: "SYMBOL - Company Name"
+        stock_options = [f"{stock['symbol']} - {stock['name']}" for stock in all_stocks]
+        stock_symbols = [stock['symbol'] for stock in all_stocks]
+
+        # Find current selection index
+        try:
+            default_idx = stock_symbols.index(st.session_state.selected_quote_symbol)
+        except ValueError:
+            default_idx = 0
+
+        # Stock selectbox
+        selected_option = st.selectbox(
+            get_text('stock_symbol', lang),
+            stock_options,
+            index=default_idx,
+            help=get_text('select_stock_help', lang)
+        )
+
+        # Extract symbol from selection
+        selected_symbol = selected_option.split(' - ')[0]
+
+        # Update session state
+        st.session_state.selected_quote_symbol = selected_symbol
+
+    with col2:
+        # Display selected stock info
+        stock_info = stock_db.get_by_symbol(selected_symbol)
+        if stock_info:
+            st.info(f"**{get_text('sector', lang)}:** {stock_info['sector']}\n\n"
+                   f"**{get_text('industry', lang)}:** {stock_info['industry']}")
+
+    # Display selected symbol
+    st.success(f"{get_text('selected_symbol', lang)}: **{selected_symbol}** - {stock_info['name'] if stock_info else ''}")
+
+    # Placeholder for US-005 onwards
+    st.divider()
+    st.info("Price quotes and charts - Coming in next iteration!")
 
 
 def display_strategy_indicators(info: Dict):

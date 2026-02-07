@@ -136,7 +136,7 @@ TRANSLATIONS = {
         'select_market': 'Select Market',
 
         # Stock specific
-        'stock_symbol': 'Stock Symbol (e.g., AAPL, TSLA)',
+        'stock_symbol': 'Stock Symbol',
         'stock_search': 'Search Stock',
         'sector': 'Sector',
         'industry': 'Industry',
@@ -148,7 +148,10 @@ TRANSLATIONS = {
         'market_status': 'Market Status',
         'popular_stocks': 'Popular Stocks',
         'us_market_hours': 'US Market Hours (EST)',
-        'korea_time': 'Korea Time (KST)'
+        'korea_time': 'Korea Time (KST)',
+        'select_stock': 'Select Stock',
+        'select_stock_help': 'Choose a US stock to view real-time quotes',
+        'selected_symbol': 'Selected Symbol'
     },
     'ko': {
         # Page title
@@ -283,7 +286,7 @@ TRANSLATIONS = {
         'select_market': '마켓 선택',
 
         # Stock specific
-        'stock_symbol': '주식 심볼 (예: AAPL, TSLA)',
+        'stock_symbol': '주식 심볼',
         'stock_search': '주식 검색',
         'sector': '섹터',
         'industry': '산업',
@@ -295,7 +298,10 @@ TRANSLATIONS = {
         'market_status': '시장 상태',
         'popular_stocks': '인기 종목',
         'us_market_hours': '미국 시장 시간 (EST)',
-        'korea_time': '한국 시간 (KST)'
+        'korea_time': '한국 시간 (KST)',
+        'select_stock': '종목 선택',
+        'select_stock_help': '실시간 시세를 볼 미국 주식을 선택하세요',
+        'selected_symbol': '선택된 종목'
     }
 }
 
