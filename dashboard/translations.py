@@ -5,8 +5,8 @@ Multi-language support for Trading Dashboard
 TRANSLATIONS = {
     'en': {
         # Page title
-        'page_title': 'Multi-Asset Trading Bot Dashboard (Focus: Foreign Stocks)',
-        'page_subtitle': 'Advanced Backtesting & Automated Trading Platform for US Stocks & Crypto',
+        'page_title': 'Quant Trading Lab',
+        'page_subtitle': 'Algorithmic Trading for Global Markets',
 
         # Sidebar
         'configuration': '⚙️ Configuration',
@@ -126,7 +126,7 @@ TRANSLATIONS = {
         'recent_data': 'Recent Data',
 
         # Footer
-        'footer': 'Built with Streamlit | Multi-Asset Trading Bot v2.0',
+        'footer': 'Built with Streamlit | Quant Trading Lab v2.0',
 
         # Market selection
         'market_type': 'Market Type',
@@ -151,8 +151,8 @@ TRANSLATIONS = {
     },
     'ko': {
         # Page title
-        'page_title': '다중 자산 트레이딩 봇 대시보드 (주력: 해외주식)',
-        'page_subtitle': '미국 주식 & 암호화폐를 위한 고급 백테스팅 & 자동 트레이딩 플랫폼',
+        'page_title': 'Quant Trading Lab',
+        'page_subtitle': '글로벌 시장을 위한 알고리즘 트레이딩',
 
         # Sidebar
         'configuration': '⚙️ 설정',
@@ -272,7 +272,7 @@ TRANSLATIONS = {
         'recent_data': '최근 데이터',
 
         # Footer
-        'footer': 'Streamlit으로 제작 | 다중 자산 트레이딩 봇 v2.0',
+        'footer': 'Streamlit으로 제작 | Quant Trading Lab v2.0',
 
         # Market selection
         'market_type': '마켓 종류',

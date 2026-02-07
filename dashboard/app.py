@@ -28,8 +28,8 @@ from typing import Dict, Any
 
 # Page configuration
 st.set_page_config(
-    page_title="Multi-Asset Trading Bot (Focus: Foreign Stocks)",
-    page_icon="🌍",
+    page_title="Quant Trading Lab",
+    page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded"
 )
