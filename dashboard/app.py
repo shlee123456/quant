@@ -20,6 +20,7 @@ from trading_bot.simulation_data import SimulationDataGenerator
 from dashboard.charts import ChartGenerator
 from dashboard.translations import get_text, get_strategy_name, get_strategy_desc
 from dashboard.market_hours import MarketHours
+from dashboard.stock_symbols import StockSymbolDB
 import time
 from datetime import datetime
 from typing import Dict, Any
@@ -212,20 +213,69 @@ def sidebar_config():
                 st.markdown(f"🇺🇸 {hours_display['after_hours_est']}")
                 st.markdown(f"🇰🇷 {hours_display['after_hours_kst']}")
 
-            # Stock market settings
+            # Initialize stock database
+            if 'stock_db' not in st.session_state:
+                st.session_state.stock_db = StockSymbolDB()
+
+            stock_db = st.session_state.stock_db
+
+            # Stock search
+            search_query = st.sidebar.text_input(
+                get_text('stock_search', lang),
+                placeholder='AAPL, Apple, Tesla...',
+                key='stock_search_input'
+            )
+
+            # Show search results
+            if search_query:
+                matches = stock_db.search(search_query)
+                if matches:
+                    st.sidebar.markdown(f"**{len(matches)} {get_text('popular_stocks', lang)}**")
+                    for match in matches[:5]:  # Limit to 5 results
+                        if st.sidebar.button(
+                            f"{match['symbol']} - {match['name'][:30]}",
+                            key=f"search_{match['symbol']}"
+                        ):
+                            symbol = match['symbol']
+                            st.session_state.selected_stock = match
+                else:
+                    st.sidebar.info("No matches found")
+
+            # Symbol input
             symbol = st.sidebar.text_input(
                 get_text('stock_symbol', lang),
-                value='AAPL',
+                value=st.session_state.get('selected_stock', {}).get('symbol', 'AAPL'),
                 placeholder='AAPL, TSLA, NVDA...'
             )
 
-            # Popular stocks
-            with st.sidebar.expander(get_text('popular_stocks', lang)):
-                popular = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META']
+            # Show stock info if available
+            if symbol:
+                stock_info = stock_db.get_by_symbol(symbol)
+                if stock_info:
+                    st.sidebar.info(
+                        f"**{stock_info['name']}**\n\n"
+                        f"{get_text('sector', lang)}: {stock_info['sector']}\n\n"
+                        f"{get_text('industry', lang)}: {stock_info['industry']}"
+                    )
+
+            # Popular stocks by sector
+            with st.sidebar.expander(f"{get_text('popular_stocks', lang)} ({get_text('sector', lang)})"):
+                sectors = stock_db.get_all_sectors()
+                selected_sector = st.selectbox(
+                    get_text('sector', lang),
+                    sectors,
+                    key='sector_filter',
+                    label_visibility="collapsed"
+                )
+                sector_stocks = stock_db.get_by_sector(selected_sector)
                 cols = st.columns(2)
-                for idx, stock in enumerate(popular):
-                    if cols[idx % 2].button(stock, key=f"pop_{stock}"):
-                        symbol = stock
+                for idx, stock in enumerate(sector_stocks[:10]):
+                    if cols[idx % 2].button(
+                        stock['symbol'],
+                        key=f"sector_{stock['symbol']}"
+                    ):
+                        symbol = stock['symbol']
+                        st.session_state.selected_stock = stock
 
             timeframe = st.sidebar.selectbox(
                 get_text('timeframe', lang),
