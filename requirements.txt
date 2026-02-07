@@ -1,0 +1,22 @@
+# Core dependencies
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Broker connectivity (optional - not needed for simulation)
+ccxt>=4.0.0           # Cryptocurrency exchanges
+python-kis>=1.0.0     # Korea Investment Securities (stocks)
+
+# Web dashboard
+streamlit>=1.28.0
+plotly>=5.17.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Visualization (optional)
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Utilities
+python-dateutil>=2.8.0

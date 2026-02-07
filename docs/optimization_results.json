@@ -1,0 +1,726 @@
+[
+  {
+    "strategy": "Moving Average Crossover",
+    "market_type": "trending_up",
+    "best_params": {
+      "fast_period": "10",
+      "slow_period": "20"
+    },
+    "best_sharpe": 0.7359797217972994,
+    "best_return": 31.22737583742228,
+    "top_3_results": [
+      {
+        "fast_period": 10,
+        "slow_period": 20,
+        "total_return": 31.22737583742228,
+        "sharpe_ratio": 0.7359797217972994,
+        "max_drawdown": -19.018821467840343
+      },
+      {
+        "fast_period": 5,
+        "slow_period": 50,
+        "total_return": 16.142852626558067,
+        "sharpe_ratio": 0.45853134506285453,
+        "max_drawdown": -26.200998113986486
+      },
+      {
+        "fast_period": 5,
+        "slow_period": 30,
+        "total_return": 15.392645090348669,
+        "sharpe_ratio": 0.431810830900667,
+        "max_drawdown": -31.55913096748948
+      }
+    ]
+  },
+  {
+    "strategy": "RSI",
+    "market_type": "trending_up",
+    "best_params": {
+      "period": "7",
+      "overbought": "70",
+      "oversold": "30"
+    },
+    "best_sharpe": 1.2300891025248064,
+    "best_return": 63.85153694685054,
+    "top_3_results": [
+      {
+        "period": 7,
+        "overbought": 70,
+        "oversold": 30,
+        "total_return": 63.85153694685054,
+        "sharpe_ratio": 1.2300891025248064,
+        "max_drawdown": -25.392181207294268
+      },
+      {
+        "period": 7,
+        "overbought": 75,
+        "oversold": 30,
+        "total_return": 49.374140351203735,
+        "sharpe_ratio": 0.9779007083097555,
+        "max_drawdown": -25.39218120729426
+      },
+      {
+        "period": 21,
+        "overbought": 70,
+        "oversold": 30,
+        "total_return": 38.601849412388184,
+        "sharpe_ratio": 0.964683152785687,
+        "max_drawdown": -12.772724436573663
+      }
+    ]
+  },
+  {
+    "strategy": "MACD",
+    "market_type": "trending_up",
+    "best_params": {
+      "fast_period": "16",
+      "slow_period": "21",
+      "signal_period": "12"
+    },
+    "best_sharpe": 0.2838506434480298,
+    "best_return": 8.023338260103738,
+    "top_3_results": [
+      {
+        "fast_period": 16,
+        "slow_period": 21,
+        "signal_period": 12,
+        "total_return": 8.023338260103738,
+        "sharpe_ratio": 0.2838506434480298,
+        "max_drawdown": -27.896757471868582
+      },
+      {
+        "fast_period": 12,
+        "slow_period": 21,
+        "signal_period": 12,
+        "total_return": 3.8795333884250613,
+        "sharpe_ratio": 0.19851130482146123,
+        "max_drawdown": -32.72366448096366
+      },
+      {
+        "fast_period": 16,
+        "slow_period": 30,
+        "signal_period": 12,
+        "total_return": 2.277208218971282,
+        "sharpe_ratio": 0.16200920551249756,
+        "max_drawdown": -23.578263182273986
+      }
+    ]
+  },
+  {
+    "strategy": "Bollinger Bands",
+    "market_type": "trending_up",
+    "best_params": {
+      "period": "10",
+      "num_std": 2.0
+    },
+    "best_sharpe": 1.1572025066734655,
+    "best_return": 60.11117013973386,
+    "top_3_results": [
+      {
+        "period": 10,
+        "num_std": 2.0,
+        "total_return": 60.11117013973386,
+        "sharpe_ratio": 1.1572025066734655,
+        "max_drawdown": -18.50655563917385
+      },
+      {
+        "period": 20,
+        "num_std": 2.5,
+        "total_return": 23.058920179575434,
+        "sharpe_ratio": 0.8578932140373192,
+        "max_drawdown": -12.772389783812349
+      },
+      {
+        "period": 10,
+        "num_std": 1.5,
+        "total_return": 28.065563823357483,
+        "sharpe_ratio": 0.6737790293106084,
+        "max_drawdown": -23.56881818597449
+      }
+    ]
+  },
+  {
+    "strategy": "Stochastic Oscillator",
+    "market_type": "trending_up",
+    "best_params": {
+      "k_period": "5",
+      "d_period": "7",
+      "overbought": "80",
+      "oversold": "30"
+    },
+    "best_sharpe": 0.4504722170908191,
+    "best_return": 14.660806686008545,
+    "top_3_results": [
+      {
+        "k_period": 5,
+        "d_period": 7,
+        "overbought": 80,
+        "oversold": 30,
+        "total_return": 14.660806686008545,
+        "sharpe_ratio": 0.4504722170908191,
+        "max_drawdown": -15.768359463281381
+      },
+      {
+        "k_period": 21,
+        "d_period": 3,
+        "overbought": 70,
+        "oversold": 30,
+        "total_return": 12.455175394873677,
+        "sharpe_ratio": 0.3864069489865532,
+        "max_drawdown": -20.434548242659503
+      },
+      {
+        "k_period": 21,
+        "d_period": 3,
+        "overbought": 80,
+        "oversold": 30,
+        "total_return": 12.455175394873677,
+        "sharpe_ratio": 0.3864069489865532,
+        "max_drawdown": -20.434548242659503
+      }
+    ]
+  },
+  {
+    "strategy": "Moving Average Crossover",
+    "market_type": "trending_down",
+    "best_params": {
+      "fast_period": "15",
+      "slow_period": "20"
+    },
+    "best_sharpe": 0.5630708583315581,
+    "best_return": 20.98958116665819,
+    "top_3_results": [
+      {
+        "fast_period": 15,
+        "slow_period": 20,
+        "total_return": 20.98958116665819,
+        "sharpe_ratio": 0.5630708583315581,
+        "max_drawdown": -22.094978809333593
+      },
+      {
+        "fast_period": 10,
+        "slow_period": 20,
+        "total_return": 19.016715087066093,
+        "sharpe_ratio": 0.5208838658617546,
+        "max_drawdown": -23.101492431009756
+      },
+      {
+        "fast_period": 10,
+        "slow_period": 100,
+        "total_return": 7.37388446069719,
+        "sharpe_ratio": 0.3226793788575808,
+        "max_drawdown": -17.241523057128852
+      }
+    ]
+  },
+  {
+    "strategy": "RSI",
+    "market_type": "trending_down",
+    "best_params": {
+      "period": "7",
+      "overbought": "70",
+      "oversold": "20"
+    },
+    "best_sharpe": 2.0442095150938124,
+    "best_return": 60.103910109977896,
+    "top_3_results": [
+      {
+        "period": 7,
+        "overbought": 70,
+        "oversold": 20,
+        "total_return": 60.103910109977896,
+        "sharpe_ratio": 2.0442095150938124,
+        "max_drawdown": -8.141642876139269
+      },
+      {
+        "period": 7,
+        "overbought": 65,
+        "oversold": 25,
+        "total_return": 81.48989086402206,
+        "sharpe_ratio": 1.9166652430492102,
+        "max_drawdown": -12.999704188954567
+      },
+      {
+        "period": 7,
+        "overbought": 65,
+        "oversold": 20,
+        "total_return": 51.41766812626196,
+        "sharpe_ratio": 1.839825784323187,
+        "max_drawdown": -8.141642876139263
+      }
+    ]
+  },
+  {
+    "strategy": "MACD",
+    "market_type": "trending_down",
+    "best_params": {
+      "fast_period": "8",
+      "slow_period": "21",
+      "signal_period": "6"
+    },
+    "best_sharpe": -0.11582503572730964,
+    "best_return": -8.918881423184793,
+    "top_3_results": [
+      {
+        "fast_period": 8,
+        "slow_period": 21,
+        "signal_period": 6,
+        "total_return": -8.918881423184793,
+        "sharpe_ratio": -0.11582503572730964,
+        "max_drawdown": -31.28369107172627
+      },
+      {
+        "fast_period": 16,
+        "slow_period": 26,
+        "signal_period": 6,
+        "total_return": -9.816103477510078,
+        "sharpe_ratio": -0.13471054900896096,
+        "max_drawdown": -34.75073442002979
+      },
+      {
+        "fast_period": 8,
+        "slow_period": 26,
+        "signal_period": 12,
+        "total_return": -12.463407450551294,
+        "sharpe_ratio": -0.2075508249076789,
+        "max_drawdown": -34.750734420029744
+      }
+    ]
+  },
+  {
+    "strategy": "Bollinger Bands",
+    "market_type": "trending_down",
+    "best_params": {
+      "period": "10",
+      "num_std": 1.5
+    },
+    "best_sharpe": 1.3438103036513984,
+    "best_return": 62.760378908036365,
+    "top_3_results": [
+      {
+        "period": 10,
+        "num_std": 1.5,
+        "total_return": 62.760378908036365,
+        "sharpe_ratio": 1.3438103036513984,
+        "max_drawdown": -12.137234072630259
+      },
+      {
+        "period": 10,
+        "num_std": 2.0,
+        "total_return": 40.29256609752296,
+        "sharpe_ratio": 0.9713615848787682,
+        "max_drawdown": -14.868339771724164
+      },
+      {
+        "period": 30,
+        "num_std": 2.0,
+        "total_return": 31.858850017785663,
+        "sharpe_ratio": 0.8061921584910859,
+        "max_drawdown": -15.294181461148584
+      }
+    ]
+  },
+  {
+    "strategy": "Stochastic Oscillator",
+    "market_type": "trending_down",
+    "best_params": {
+      "k_period": "5",
+      "d_period": "3",
+      "overbought": "70",
+      "oversold": "20"
+    },
+    "best_sharpe": 1.2964414598569505,
+    "best_return": 44.34143788867963,
+    "top_3_results": [
+      {
+        "k_period": 5,
+        "d_period": 3,
+        "overbought": 70,
+        "oversold": 20,
+        "total_return": 44.34143788867963,
+        "sharpe_ratio": 1.2964414598569505,
+        "max_drawdown": -11.342472158934548
+      },
+      {
+        "k_period": 5,
+        "d_period": 3,
+        "overbought": 70,
+        "oversold": 30,
+        "total_return": 60.23878643977003,
+        "sharpe_ratio": 1.1862562232915084,
+        "max_drawdown": -22.12313585377457
+      },
+      {
+        "k_period": 5,
+        "d_period": 3,
+        "overbought": 80,
+        "oversold": 20,
+        "total_return": 51.47259567747997,
+        "sharpe_ratio": 1.1128689867377288,
+        "max_drawdown": -17.180178557044933
+      }
+    ]
+  },
+  {
+    "strategy": "Moving Average Crossover",
+    "market_type": "volatile",
+    "best_params": {
+      "fast_period": "10",
+      "slow_period": "100"
+    },
+    "best_sharpe": 1.870235760007545,
+    "best_return": 254.41564457824222,
+    "top_3_results": [
+      {
+        "fast_period": 10,
+        "slow_period": 100,
+        "total_return": 254.41564457824222,
+        "sharpe_ratio": 1.870235760007545,
+        "max_drawdown": -25.129428909525693
+      },
+      {
+        "fast_period": 5,
+        "slow_period": 100,
+        "total_return": 251.1318305499878,
+        "sharpe_ratio": 1.8256373292682069,
+        "max_drawdown": -25.16784197038729
+      },
+      {
+        "fast_period": 15,
+        "slow_period": 100,
+        "total_return": 230.64022700807953,
+        "sharpe_ratio": 1.789262562562602,
+        "max_drawdown": -25.082581547351246
+      }
+    ]
+  },
+  {
+    "strategy": "RSI",
+    "market_type": "volatile",
+    "best_params": {
+      "period": "7",
+      "overbought": "65",
+      "oversold": "25"
+    },
+    "best_sharpe": 0.6188547307814664,
+    "best_return": 42.75910896056981,
+    "top_3_results": [
+      {
+        "period": 7,
+        "overbought": 65,
+        "oversold": 25,
+        "total_return": 42.75910896056981,
+        "sharpe_ratio": 0.6188547307814664,
+        "max_drawdown": -50.42525880547358
+      },
+      {
+        "period": 7,
+        "overbought": 65,
+        "oversold": 20,
+        "total_return": 17.908681503342212,
+        "sharpe_ratio": 0.41023093954407075,
+        "max_drawdown": -48.06105853588918
+      },
+      {
+        "period": 7,
+        "overbought": 80,
+        "oversold": 20,
+        "total_return": -7.826555578245388,
+        "sharpe_ratio": 0.1853604045524125,
+        "max_drawdown": -77.77664686487729
+      }
+    ]
+  },
+  {
+    "strategy": "MACD",
+    "market_type": "volatile",
+    "best_params": {
+      "fast_period": "8",
+      "slow_period": "21",
+      "signal_period": "12"
+    },
+    "best_sharpe": 0.6429899372241502,
+    "best_return": 49.761146946779085,
+    "top_3_results": [
+      {
+        "fast_period": 8,
+        "slow_period": 21,
+        "signal_period": 12,
+        "total_return": 49.761146946779085,
+        "sharpe_ratio": 0.6429899372241502,
+        "max_drawdown": -73.70761541384788
+      },
+      {
+        "fast_period": 12,
+        "slow_period": 30,
+        "signal_period": 6,
+        "total_return": 43.60741929537176,
+        "sharpe_ratio": 0.6055030740633928,
+        "max_drawdown": -73.24061156764952
+      },
+      {
+        "fast_period": 16,
+        "slow_period": 21,
+        "signal_period": 6,
+        "total_return": 43.60741929537176,
+        "sharpe_ratio": 0.6055030740633928,
+        "max_drawdown": -73.24061156764952
+      }
+    ]
+  },
+  {
+    "strategy": "Bollinger Bands",
+    "market_type": "volatile",
+    "best_params": {
+      "period": "30",
+      "num_std": 3.0
+    },
+    "best_sharpe": 2.326831414562369,
+    "best_return": 460.38367781951973,
+    "top_3_results": [
+      {
+        "period": 30,
+        "num_std": 3.0,
+        "total_return": 460.38367781951973,
+        "sharpe_ratio": 2.326831414562369,
+        "max_drawdown": -25.370115535999116
+      },
+      {
+        "period": 20,
+        "num_std": 2.5,
+        "total_return": 328.6878052878595,
+        "sharpe_ratio": 2.0274592301331986,
+        "max_drawdown": -25.34902839877467
+      },
+      {
+        "period": 30,
+        "num_std": 2.5,
+        "total_return": 11.374578937908664,
+        "sharpe_ratio": 0.34631363168855905,
+        "max_drawdown": -69.61197316165084
+      }
+    ]
+  },
+  {
+    "strategy": "Stochastic Oscillator",
+    "market_type": "volatile",
+    "best_params": {
+      "k_period": "5",
+      "d_period": "3",
+      "overbought": "80",
+      "oversold": "20"
+    },
+    "best_sharpe": 0.9356091192915381,
+    "best_return": 73.45416208888203,
+    "top_3_results": [
+      {
+        "k_period": 5,
+        "d_period": 3,
+        "overbought": 80,
+        "oversold": 20,
+        "total_return": 73.45416208888203,
+        "sharpe_ratio": 0.9356091192915381,
+        "max_drawdown": -36.865138093122546
+      },
+      {
+        "k_period": 5,
+        "d_period": 3,
+        "overbought": 70,
+        "oversold": 20,
+        "total_return": 37.42019016524548,
+        "sharpe_ratio": 0.7200312477558152,
+        "max_drawdown": -36.865138093122546
+      },
+      {
+        "k_period": 5,
+        "d_period": 3,
+        "overbought": 80,
+        "oversold": 30,
+        "total_return": -19.16356831068324,
+        "sharpe_ratio": 0.08569645562176582,
+        "max_drawdown": -80.93406102150065
+      }
+    ]
+  },
+  {
+    "strategy": "Moving Average Crossover",
+    "market_type": "cyclical",
+    "best_params": {
+      "fast_period": "5",
+      "slow_period": "20"
+    },
+    "best_sharpe": 2.8946607536277997,
+    "best_return": 150.06823005289283,
+    "top_3_results": [
+      {
+        "fast_period": 5,
+        "slow_period": 20,
+        "total_return": 150.06823005289283,
+        "sharpe_ratio": 2.8946607536277997,
+        "max_drawdown": -7.147395550822466
+      },
+      {
+        "fast_period": 10,
+        "slow_period": 20,
+        "total_return": 73.29948809759517,
+        "sharpe_ratio": 1.781352205405216,
+        "max_drawdown": -8.070604749957859
+      },
+      {
+        "fast_period": 5,
+        "slow_period": 30,
+        "total_return": 26.46031113340843,
+        "sharpe_ratio": 0.8339359008585372,
+        "max_drawdown": -9.87179793182599
+      }
+    ]
+  },
+  {
+    "strategy": "RSI",
+    "market_type": "cyclical",
+    "best_params": {
+      "period": "21",
+      "overbought": "80",
+      "oversold": "20"
+    },
+    "best_sharpe": 3.149925667397133,
+    "best_return": 129.24791207010588,
+    "top_3_results": [
+      {
+        "period": 21,
+        "overbought": 80,
+        "oversold": 20,
+        "total_return": 129.24791207010588,
+        "sharpe_ratio": 3.149925667397133,
+        "max_drawdown": -7.991823189915936
+      },
+      {
+        "period": 21,
+        "overbought": 75,
+        "oversold": 25,
+        "total_return": 157.21650379609216,
+        "sharpe_ratio": 2.729948007904108,
+        "max_drawdown": -12.938865646690875
+      },
+      {
+        "period": 21,
+        "overbought": 75,
+        "oversold": 20,
+        "total_return": 98.63415451008571,
+        "sharpe_ratio": 2.6835662269211147,
+        "max_drawdown": -7.991731884005615
+      }
+    ]
+  },
+  {
+    "strategy": "MACD",
+    "market_type": "cyclical",
+    "best_params": {
+      "fast_period": "8",
+      "slow_period": "21",
+      "signal_period": "6"
+    },
+    "best_sharpe": 5.509042365683832,
+    "best_return": 458.42843714599786,
+    "top_3_results": [
+      {
+        "fast_period": 8,
+        "slow_period": 21,
+        "signal_period": 6,
+        "total_return": 458.42843714599786,
+        "sharpe_ratio": 5.509042365683832,
+        "max_drawdown": -4.378117892896644
+      },
+      {
+        "fast_period": 8,
+        "slow_period": 26,
+        "signal_period": 6,
+        "total_return": 410.9356967257786,
+        "sharpe_ratio": 5.134888109814107,
+        "max_drawdown": -5.919533284980698
+      },
+      {
+        "fast_period": 12,
+        "slow_period": 21,
+        "signal_period": 6,
+        "total_return": 405.96001508933443,
+        "sharpe_ratio": 5.079881997028094,
+        "max_drawdown": -5.922234429083017
+      }
+    ]
+  },
+  {
+    "strategy": "Bollinger Bands",
+    "market_type": "cyclical",
+    "best_params": {
+      "period": "30",
+      "num_std": 2.0
+    },
+    "best_sharpe": 2.4590645895994414,
+    "best_return": 134.86763052467805,
+    "top_3_results": [
+      {
+        "period": 30,
+        "num_std": 2.0,
+        "total_return": 134.86763052467805,
+        "sharpe_ratio": 2.4590645895994414,
+        "max_drawdown": -8.38449427619284
+      },
+      {
+        "period": 30,
+        "num_std": 1.5,
+        "total_return": 69.57586974249163,
+        "sharpe_ratio": 1.582111239918774,
+        "max_drawdown": -10.385190866489951
+      },
+      {
+        "period": 20,
+        "num_std": 2.5,
+        "total_return": 5.812271629649968,
+        "sharpe_ratio": 0.27881631955172725,
+        "max_drawdown": -18.868375059142398
+      }
+    ]
+  },
+  {
+    "strategy": "Stochastic Oscillator",
+    "market_type": "cyclical",
+    "best_params": {
+      "k_period": "21",
+      "d_period": "7",
+      "overbought": "80",
+      "oversold": "20"
+    },
+    "best_sharpe": 3.0257352313025248,
+    "best_return": 181.38926012112663,
+    "top_3_results": [
+      {
+        "k_period": 21,
+        "d_period": 7,
+        "overbought": 80,
+        "oversold": 20,
+        "total_return": 181.38926012112663,
+        "sharpe_ratio": 3.0257352313025248,
+        "max_drawdown": -8.54990904536231
+      },
+      {
+        "k_period": 21,
+        "d_period": 7,
+        "overbought": 80,
+        "oversold": 30,
+        "total_return": 181.38926012112663,
+        "sharpe_ratio": 3.0257352313025248,
+        "max_drawdown": -8.54990904536231
+      },
+      {
+        "k_period": 21,
+        "d_period": 7,
+        "overbought": 70,
+        "oversold": 20,
+        "total_return": 173.62613325912838,
+        "sharpe_ratio": 2.981474599922161,
+        "max_drawdown": -8.549909045362318
+      }
+    ]
+  }
+]
