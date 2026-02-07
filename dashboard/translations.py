@@ -183,7 +183,18 @@ TRANSLATIONS = {
         'auto_refresh_help': 'Automatically update quotes every 60 seconds',
         'next_refresh_in': 'Next refresh in',
         'refreshing_now': 'Refreshing now...',
-        'auto_refresh_disabled': 'Auto-refresh disabled - Click Refresh to update'
+        'auto_refresh_disabled': 'Auto-refresh disabled - Click Refresh to update',
+
+        # Live Monitor integration (US-008)
+        'current_market_price': 'Current Market Price',
+        'real_time_mode': 'Real-time Mode',
+        'simulation_mode': 'Simulation Mode',
+        'market_data_from': 'Market data from',
+        'kis_broker': 'KIS Broker (US Stocks)',
+        'exchange_data': 'Exchange Data',
+        'simulated_data': 'Simulated Data',
+        'live_quote_unavailable': 'Live quote unavailable in simulation mode',
+        'last_updated': 'Last Updated'
     },
     'ko': {
         # Page title
@@ -365,7 +376,18 @@ TRANSLATIONS = {
         'auto_refresh_help': '60초마다 자동으로 시세 업데이트',
         'next_refresh_in': '다음 새로고침',
         'refreshing_now': '새로고침 중...',
-        'auto_refresh_disabled': '자동 새로고침 비활성화 - 새로고침 버튼을 클릭하여 업데이트하세요'
+        'auto_refresh_disabled': '자동 새로고침 비활성화 - 새로고침 버튼을 클릭하여 업데이트하세요',
+
+        # Live Monitor integration (US-008)
+        'current_market_price': '현재 시장 가격',
+        'real_time_mode': '실시간 모드',
+        'simulation_mode': '시뮬레이션 모드',
+        'market_data_from': '시장 데이터 출처',
+        'kis_broker': 'KIS 브로커 (미국 주식)',
+        'exchange_data': '거래소 데이터',
+        'simulated_data': '시뮬레이션 데이터',
+        'live_quote_unavailable': '시뮬레이션 모드에서는 실시간 시세를 사용할 수 없습니다',
+        'last_updated': '마지막 업데이트'
     }
 }
 

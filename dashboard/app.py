@@ -760,21 +760,91 @@ def paper_trading_tab():
 
 def live_monitor_tab():
     """Live market monitoring with strategy signals"""
-    st.header("📡 Live Market Monitor")
+    lang = st.session_state.language
+    st.header(get_text('live_title', lang))
 
     if st.session_state.strategy_instance is None:
-        st.warning("⚠️ Please initialize the system from the sidebar first.")
+        st.warning(get_text('init_warning', lang))
         return
 
+    # Show data source mode indicator
     if st.session_state.use_simulation:
-        st.warning("⚠️ Live monitoring requires real market data. Please disable 'Use Simulation Data' in the sidebar.")
-        return
+        st.info(f"📊 {get_text('simulation_mode', lang)} - {get_text('market_data_from', lang)}: {get_text('simulated_data', lang)}")
+    else:
+        # Determine data source based on market type
+        if st.session_state.market_type == 'stock':
+            data_source = get_text('kis_broker', lang)
+        else:
+            data_source = get_text('exchange_data', lang)
+        st.success(f"📡 {get_text('real_time_mode', lang)} - {get_text('market_data_from', lang)}: {data_source}")
 
+    # Current Market Price Section (US-008) - Only show for stock market and non-simulation mode
+    if st.session_state.market_type == 'stock' and not st.session_state.use_simulation:
+        st.markdown("---")
+        st.subheader(f"💰 {get_text('current_market_price', lang)}")
+
+        # Try to get KIS broker for real-time quote
+        try:
+            from dashboard.kis_broker import get_kis_broker
+            kis_broker = get_kis_broker()
+
+            if kis_broker:
+                # Get the current symbol from config
+                symbol = st.session_state.config.get('symbol', 'AAPL')
+
+                # For US stocks, we need to remove the market suffix (e.g., AAPL.US -> AAPL)
+                if '.' in symbol:
+                    symbol = symbol.split('.')[0]
+
+                # Fetch real-time quote
+                with st.spinner(get_text('fetching_quote', lang)):
+                    try:
+                        ticker = kis_broker.fetch_ticker(symbol, overseas=True, market='NASDAQ')
+
+                        if ticker:
+                            # Display current market price with change info
+                            col1, col2, col3, col4, col5 = st.columns(5)
+
+                            with col1:
+                                st.metric(
+                                    get_text('current_price', lang),
+                                    f"${ticker['last']:.2f}",
+                                    delta=f"{ticker['rate']:.2f}%",
+                                    delta_color="normal"
+                                )
+
+                            with col2:
+                                st.metric(get_text('open_price', lang), f"${ticker['open']:.2f}")
+
+                            with col3:
+                                st.metric(get_text('high_price', lang), f"${ticker['high']:.2f}")
+
+                            with col4:
+                                st.metric(get_text('low_price', lang), f"${ticker['low']:.2f}")
+
+                            with col5:
+                                volume_str = f"{int(ticker['volume']):,}"
+                                st.metric(get_text('volume', lang), volume_str)
+
+                            # Display last updated time
+                            st.caption(f"⏰ {get_text('last_updated', lang)}: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+                    except Exception as e:
+                        st.warning(f"⚠️ {get_text('quote_fetch_error', lang)}: {str(e)}")
+            else:
+                st.info(f"ℹ️ {get_text('kis_not_available', lang)}")
+
+        except ImportError:
+            st.warning("⚠️ KIS broker module not available")
+
+        st.markdown("---")
+
+    # Strategy Signal Section
     # Auto-refresh toggle
-    auto_refresh = st.checkbox("Auto-refresh (30s)", value=False)
+    auto_refresh = st.checkbox(get_text('auto_refresh', lang), value=False)
 
-    if st.button("Refresh Now") or auto_refresh:
-        with st.spinner("Fetching latest data..."):
+    if st.button(get_text('refresh_now', lang)) or auto_refresh:
+        with st.spinner(get_text('fetching_data', lang)):
             try:
                 df = st.session_state.data_handler.fetch_ohlcv(
                     symbol=st.session_state.config['symbol'],
@@ -791,24 +861,24 @@ def live_monitor_tab():
                 signal, info = st.session_state.strategy_instance.get_current_signal(df)
 
                 # Display current status
-                st.subheader(f"Current Signal - {st.session_state.selected_strategy}")
+                st.subheader(f"{get_text('current_signal', lang)} - {get_strategy_name(st.session_state.selected_strategy, lang)}")
 
                 col1, col2, col3, col4 = st.columns(4)
 
                 with col1:
-                    st.metric("Current Price", f"${info.get('close', 0):.2f}")
+                    st.metric(get_text('current_price', lang), f"${info.get('close', 0):.2f}")
 
                 with col2:
                     signal_text = "🟢 BUY" if signal == 1 else "🔴 SELL" if signal == -1 else "⚪ HOLD"
-                    st.metric("Signal", signal_text)
+                    st.metric(get_text('signal', lang), signal_text)
 
                 with col3:
                     position = info.get('position', 0)
                     position_text = "LONG" if position == 1 else "FLAT"
-                    st.metric("Position", position_text)
+                    st.metric(get_text('position', lang), position_text)
 
                 with col4:
-                    st.metric("Timestamp", pd.Timestamp.now().strftime('%H:%M:%S'))
+                    st.metric(get_text('timestamp', lang), pd.Timestamp.now().strftime('%H:%M:%S'))
 
                 # Display strategy-specific indicators
                 display_strategy_indicators(info)
@@ -819,7 +889,7 @@ def live_monitor_tab():
                 st.plotly_chart(fig, use_container_width=True)
 
                 # Recent data table
-                st.subheader("Recent Data")
+                st.subheader(get_text('recent_data', lang))
                 display_cols = ['open', 'high', 'low', 'close', 'volume']
                 st.dataframe(data[display_cols].tail(20), use_container_width=True)
 
