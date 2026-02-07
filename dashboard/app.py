@@ -831,6 +831,23 @@ def live_monitor_tab():
                 st.error(f"Error fetching data: {e}")
 
 
+def realtime_quotes_tab():
+    """Real-time stock quotes interface"""
+    lang = st.session_state.language
+
+    st.header(get_text('tab_quotes', lang))
+
+    # Placeholder for US-004 onwards
+    st.info("Real-time Quotes tab - Coming soon!")
+    st.markdown("""
+    This tab will display:
+    - Stock symbol selection
+    - Real-time price quotes
+    - OHLCV candlestick charts
+    - Auto-refresh functionality
+    """)
+
+
 def display_strategy_indicators(info: Dict):
     """Display strategy-specific indicator values"""
     st.subheader("📊 Indicator Values")
@@ -870,24 +887,28 @@ def main():
     sidebar_config()
 
     # Main tabs
-    tab1, tab2, tab3, tab4 = st.tabs([
-        get_text('tab_backtest', lang),
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         get_text('tab_comparison', lang),
-        get_text('tab_paper', lang),
-        get_text('tab_live', lang)
+        get_text('tab_backtest', lang),
+        get_text('tab_live', lang),
+        get_text('tab_quotes', lang),
+        get_text('tab_paper', lang)
     ])
 
     with tab1:
-        backtest_tab()
-
-    with tab2:
         strategy_comparison_tab()
 
+    with tab2:
+        backtest_tab()
+
     with tab3:
-        paper_trading_tab()
+        live_monitor_tab()
 
     with tab4:
-        live_monitor_tab()
+        realtime_quotes_tab()
+
+    with tab5:
+        paper_trading_tab()
 
     # Footer
     st.markdown("---")

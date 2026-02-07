@@ -58,6 +58,7 @@ TRANSLATIONS = {
         'tab_comparison': '🔍 Strategy Comparison',
         'tab_paper': '📄 Paper Trading',
         'tab_live': '📡 Live Monitor',
+        'tab_quotes': '📊 Real-time Quotes',
 
         # Backtesting
         'backtest_title': '📊 Strategy Backtesting',
@@ -204,6 +205,7 @@ TRANSLATIONS = {
         'tab_comparison': '🔍 전략 비교',
         'tab_paper': '📄 모의 트레이딩',
         'tab_live': '📡 실시간 모니터',
+        'tab_quotes': '📊 실시간 시세',
 
         # Backtesting
         'backtest_title': '📊 전략 백테스팅',
