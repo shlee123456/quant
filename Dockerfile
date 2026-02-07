@@ -34,11 +34,9 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed packages from builder
-COPY --from=builder /root/.local /root/.local
-
-# Make sure scripts in .local are usable
-ENV PATH=/root/.local/bin:$PATH
+# Copy installed packages from builder to system location
+# This allows any user to access the packages
+COPY --from=builder /root/.local /usr/local
 
 # Copy application code
 COPY trading_bot/ ./trading_bot/
