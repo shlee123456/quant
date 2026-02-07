@@ -359,11 +359,39 @@ def sidebar_config():
     if st.sidebar.button(get_text('initialize_system', lang), type="primary"):
         with st.spinner(get_text('running_backtest', lang)):
             if not use_simulation:
-                st.session_state.data_handler = DataHandler(
-                    exchange_name=st.session_state.config['exchange']
-                )
+                # Create data handler based on market type
+                if st.session_state.market_type == 'stock':
+                    # Import and initialize KIS broker for stocks
+                    try:
+                        from dashboard.kis_broker import get_kis_broker
+                        kis_broker = get_kis_broker()
+                        
+                        if kis_broker:
+                            # Create DataHandler with KIS broker
+                            st.session_state.data_handler = DataHandler(broker=kis_broker)
+                            st.sidebar.success("✅ " + get_text('system_initialized', lang) + " (KIS Broker)")
+                        else:
+                            st.sidebar.error("❌ KIS Broker initialization failed. Using simulation mode.")
+                            st.session_state.use_simulation = True
+                            st.session_state.data_handler = None
+                            return
+                    except Exception as e:
+                        st.sidebar.error(f"❌ KIS Broker error: {str(e)}")
+                        st.session_state.use_simulation = True
+                        st.session_state.data_handler = None
+                        return
+                else:
+                    # Use CCXT for crypto
+                    st.session_state.data_handler = DataHandler(
+                        exchange_name=st.session_state.config['exchange']
+                    )
+                    st.sidebar.success("✅ " + get_text('system_initialized', lang) + " (CCXT)")
+            else:
+                st.session_state.data_handler = None
+            
             st.session_state.strategy_instance = create_strategy(strategy_name, params)
-            st.sidebar.success(get_text('system_initialized', lang))
+            if use_simulation:
+                st.sidebar.success(get_text('system_initialized', lang))
 
 
 def backtest_tab():

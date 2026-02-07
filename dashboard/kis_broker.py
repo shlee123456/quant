@@ -16,6 +16,7 @@ from trading_bot.brokers.base_broker import BrokerError, AuthenticationError
 def get_kis_broker() -> Optional[KoreaInvestmentBroker]:
     """
     환경 변수에서 한국투자증권 브로커를 초기화합니다.
+    한 번 생성된 브로커는 세션에 캐싱되어 재사용됩니다. (토큰 발급 rate limit 방지)
 
     환경 변수에서 다음 값을 읽어옵니다:
     - KIS_APPKEY: 한국투자증권 AppKey
@@ -25,7 +26,7 @@ def get_kis_broker() -> Optional[KoreaInvestmentBroker]:
     - KIS_MOCK: 모의투자 여부 (true/false, 기본값: true)
 
     Returns:
-        KoreaInvestmentBroker: 초기화된 브로커 객체
+        KoreaInvestmentBroker: 초기화된 브로커 객체 (캐싱됨)
         None: 초기화 실패 시 (환경 변수 누락, 인증 실패 등)
 
     Example:
@@ -40,7 +41,12 @@ def get_kis_broker() -> Optional[KoreaInvestmentBroker]:
         - 환경 변수 누락 시 사용자에게 명확한 에러 메시지를 표시합니다.
         - Streamlit 환경에서 st.error()를 사용하여 에러를 표시합니다.
         - 초기화 실패 시 None을 반환하여 graceful degradation을 지원합니다.
+        - 세션 상태에 브로커를 캐싱하여 토큰 발급 rate limit (1분에 1회)을 방지합니다.
     """
+    # 세션 상태에 이미 브로커가 있으면 재사용 (rate limit 방지)
+    if 'kis_broker' in st.session_state and st.session_state.kis_broker is not None:
+        return st.session_state.kis_broker
+    
     # 필수 환경 변수 검증
     required_vars = {
         'KIS_APPKEY': 'Korea Investment APPKEY',
@@ -97,6 +103,9 @@ def get_kis_broker() -> Optional[KoreaInvestmentBroker]:
             mock=mock
         )
 
+        # 세션 상태에 저장하여 재사용 (rate limit 방지)
+        st.session_state.kis_broker = broker
+
         # 초기화 성공 메시지 (디버깅용)
         mode = "모의투자" if mock else "실전투자"
         st.success(f"✅ 한국투자증권 브로커 초기화 성공 ({mode} 모드)")
@@ -105,14 +114,27 @@ def get_kis_broker() -> Optional[KoreaInvestmentBroker]:
 
     except AuthenticationError as e:
         # 인증 실패
-        st.error(
-            f"**한국투자증권 인증 실패:**\n\n"
-            f"{str(e)}\n\n"
-            f"**해결 방법:**\n"
-            f"1. APPKEY와 APPSECRET이 올바른지 확인하세요.\n"
-            f"2. 모의투자와 실전투자의 키가 다릅니다. KIS_MOCK 설정을 확인하세요.\n"
-            f"3. API 키가 만료되었는지 확인하세요."
-        )
+        error_msg = str(e)
+        
+        # Rate limit 에러 특별 처리
+        if "EGW00133" in error_msg or "1분당 1회" in error_msg:
+            st.error(
+                f"**토큰 발급 제한 초과:**\n\n"
+                f"{error_msg}\n\n"
+                f"**해결 방법:**\n"
+                f"1. 1분 이상 기다린 후 대시보드를 새로고침하세요.\n"
+                f"2. 브라우저 탭을 닫고 새 탭에서 다시 열어보세요.\n"
+                f"3. 한국투자증권 API는 1분에 1회만 토큰 발급을 허용합니다."
+            )
+        else:
+            st.error(
+                f"**한국투자증권 인증 실패:**\n\n"
+                f"{error_msg}\n\n"
+                f"**해결 방법:**\n"
+                f"1. APPKEY와 APPSECRET이 올바른지 확인하세요.\n"
+                f"2. 모의투자와 실전투자의 키가 다릅니다. KIS_MOCK 설정을 확인하세요.\n"
+                f"3. API 키가 만료되었는지 확인하세요."
+            )
         return None
 
     except BrokerError as e:

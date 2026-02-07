@@ -10,9 +10,9 @@ import time
 
 
 class DataHandler:
-    """Handles fetching and managing market data from crypto exchanges"""
+    """Handles fetching and managing market data from crypto exchanges or stock brokers"""
 
-    def __init__(self, exchange_name: str = 'binance', api_key: str = '', api_secret: str = ''):
+    def __init__(self, exchange_name: str = 'binance', api_key: str = '', api_secret: str = '', broker=None):
         """
         Initialize data handler
 
@@ -20,16 +20,24 @@ class DataHandler:
             exchange_name: Name of the exchange (default: binance)
             api_key: API key for authenticated requests
             api_secret: API secret for authenticated requests
+            broker: Optional broker instance (e.g., KoreaInvestmentBroker) for non-CCXT data sources
         """
         self.exchange_name = exchange_name
+        self.broker = broker
 
-        # Initialize exchange
-        exchange_class = getattr(ccxt, exchange_name)
-        self.exchange = exchange_class({
-            'apiKey': api_key,
-            'secret': api_secret,
-            'enableRateLimit': True,
-        })
+        # Initialize exchange or use provided broker
+        if broker is not None:
+            # Use the provided broker (e.g., KoreaInvestmentBroker)
+            self.exchange = broker
+            self.exchange_name = getattr(broker, 'name', 'broker')
+        else:
+            # Initialize CCXT exchange
+            exchange_class = getattr(ccxt, exchange_name)
+            self.exchange = exchange_class({
+                'apiKey': api_key,
+                'secret': api_secret,
+                'enableRateLimit': True,
+            })
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = '1h',
                     since: Optional[datetime] = None,
@@ -38,7 +46,7 @@ class DataHandler:
         Fetch OHLCV (Open, High, Low, Close, Volume) data
 
         Args:
-            symbol: Trading pair symbol (e.g., 'BTC/USDT')
+            symbol: Trading pair symbol (e.g., 'BTC/USDT') or stock symbol (e.g., 'AAPL')
             timeframe: Candle timeframe (e.g., '1m', '5m', '1h', '1d')
             since: Start datetime for historical data
             limit: Number of candles to fetch
@@ -52,24 +60,44 @@ class DataHandler:
             since_timestamp = None
 
         try:
-            ohlcv = self.exchange.fetch_ohlcv(
-                symbol,
-                timeframe=timeframe,
-                since=since_timestamp,
-                limit=limit
-            )
+            # Check if using broker (e.g., KoreaInvestmentBroker)
+            if self.broker is not None:
+                # Broker returns DataFrame directly
+                df = self.exchange.fetch_ohlcv(
+                    symbol,
+                    timeframe=timeframe,
+                    since=since_timestamp,
+                    limit=limit,
+                    overseas=True,  # For US stocks
+                    market='NASDAQ'
+                )
+                
+                # If broker returns DataFrame with timestamp index, convert to datetime
+                if 'timestamp' in df.columns:
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                    df.set_index('timestamp', inplace=True)
+                
+                return df
+            else:
+                # CCXT exchange
+                ohlcv = self.exchange.fetch_ohlcv(
+                    symbol,
+                    timeframe=timeframe,
+                    since=since_timestamp,
+                    limit=limit
+                )
 
-            # Convert to DataFrame
-            df = pd.DataFrame(
-                ohlcv,
-                columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
-            )
+                # Convert to DataFrame
+                df = pd.DataFrame(
+                    ohlcv,
+                    columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
+                )
 
-            # Convert timestamp to datetime
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
+                # Convert timestamp to datetime
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                df.set_index('timestamp', inplace=True)
 
-            return df
+                return df
 
         except Exception as e:
             print(f"Error fetching OHLCV data: {e}")
@@ -81,7 +109,7 @@ class DataHandler:
         Fetch historical data for a date range
 
         Args:
-            symbol: Trading pair symbol
+            symbol: Trading pair symbol (e.g., 'BTC/USDT') or stock symbol (e.g., 'AAPL')
             timeframe: Candle timeframe
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
@@ -92,10 +120,32 @@ class DataHandler:
         start_dt = datetime.strptime(start_date, '%Y-%m-%d')
         end_dt = datetime.strptime(end_date, '%Y-%m-%d')
 
+        # If using broker (e.g., KoreaInvestmentBroker), fetch all data at once
+        if self.broker is not None:
+            # Calculate total days
+            total_days = (end_dt - start_dt).days + 1
+            
+            # Fetch data with calculated limit
+            df = self.fetch_ohlcv(
+                symbol=symbol,
+                timeframe=timeframe,
+                since=start_dt,
+                limit=min(total_days, 1000)  # KIS broker limit
+            )
+            
+            if not df.empty and hasattr(df.index, 'to_pydatetime'):
+                # Filter by date range
+                df = df[
+                    (df.index >= pd.Timestamp(start_dt)) &
+                    (df.index <= pd.Timestamp(end_dt))
+                ]
+            
+            return df
+
+        # CCXT exchange: Fetch data in chunks
         all_data = []
         current_dt = start_dt
 
-        # Fetch data in chunks (exchange limits apply)
         while current_dt < end_dt:
             print(f"Fetching data from {current_dt.strftime('%Y-%m-%d')}...")
 
@@ -114,8 +164,11 @@ class DataHandler:
             # Move to next chunk
             current_dt = df.index[-1].to_pydatetime() + timedelta(milliseconds=1)
 
-            # Respect rate limits
-            time.sleep(self.exchange.rateLimit / 1000)
+            # Respect rate limits (only for CCXT)
+            if hasattr(self.exchange, 'rateLimit'):
+                time.sleep(self.exchange.rateLimit / 1000)
+            else:
+                time.sleep(1)  # Default 1 second delay
 
             # Stop if we've reached the end date
             if current_dt >= end_dt:

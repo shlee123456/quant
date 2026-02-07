@@ -26,7 +26,7 @@ Example:
 
 from typing import Dict, List, Optional, Any
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 
 from .base_broker import (
@@ -123,7 +123,16 @@ class KoreaInvestmentBroker(BaseBroker):
                 "'pip install python-kis'를 실행하세요."
             )
         except Exception as e:
-            raise AuthenticationError(f"한국투자증권 인증 실패: {str(e)}")
+            error_msg = str(e)
+            
+            # Rate limit 에러 감지 (EGW00133: 1분당 1회 제한)
+            if "EGW00133" in error_msg or "1분당 1회" in error_msg:
+                raise AuthenticationError(
+                    "한국투자증권 토큰 발급 제한 초과: 1분에 1회만 허용됩니다. "
+                    "잠시 후 다시 시도해주세요. (에러 코드: EGW00133)"
+                )
+            
+            raise AuthenticationError(f"한국투자증권 인증 실패: {error_msg}")
 
     def fetch_ohlcv(
         self,
@@ -144,7 +153,7 @@ class KoreaInvestmentBroker(BaseBroker):
             timeframe: 시간 프레임
                       - 'D' 또는 '1d': 일봉
                       - '1' 또는 '1m': 1분봉 (당일만)
-            since: 시작 타임스탬프 (밀리초, 현재 미사용)
+            since: 시작 타임스탬프 (밀리초) 또는 datetime 객체
             limit: 조회할 최대 개수
             overseas: 해외주식 여부 (기본: False)
             market: 해외주식 마켓 (NASDAQ, NYSE, AMEX 등)
@@ -157,30 +166,75 @@ class KoreaInvestmentBroker(BaseBroker):
             >>> df = broker.fetch_ohlcv('005930', '1d', limit=100)
             >>> # 미국주식 일봉
             >>> df = broker.fetch_ohlcv('AAPL', '1d', limit=100, overseas=True)
+            >>> # 특정 날짜부터 조회
+            >>> from datetime import datetime
+            >>> df = broker.fetch_ohlcv('AAPL', '1d', since=datetime(2024,1,1), limit=100, overseas=True)
         """
         self._rate_limiter.wait()
 
         try:
-            # timeframe 변환 (CCXT 형식 -> PyKis 형식)
-            period_map = {
-                '1d': 'D',
-                'D': 'D',
-                '1m': '1',
-                '1': '1'
-            }
-            period = period_map.get(timeframe, 'D')
-
             # 주식 객체 생성
             if overseas:
                 stock = self.api.stock(symbol, market=market)
             else:
                 stock = self.api.stock(symbol)
 
-            # OHLCV 데이터 조회
-            chart = stock.chart(period=period, count=limit)
+            # since를 datetime으로 변환 (타임스탬프인 경우)
+            start_date = None
+            if since is not None:
+                if isinstance(since, int):
+                    # 밀리초 타임스탬프를 datetime으로 변환
+                    start_date = datetime.fromtimestamp(since / 1000).date()
+                elif isinstance(since, datetime):
+                    start_date = since.date()
+                elif hasattr(since, 'date'):
+                    # pandas Timestamp 등
+                    start_date = since.date()
 
+            # limit 기반으로 기간 계산 (python-kis는 count 대신 기간 표현식 사용)
+            # timeframe에 따라 기간 표현식 생성
+            if timeframe in ['1d', 'D']:
+                period_type = "day"
+                
+                # start_date가 지정된 경우 end_date 계산
+                if start_date:
+                    end_date = start_date + timedelta(days=limit)
+                    # start/end 방식으로 조회
+                    chart = stock.chart(start=start_date, end=end_date, period=period_type)
+                else:
+                    # 기간 표현식 사용
+                    period_expr = f"{limit}d"
+                    chart = stock.chart(period_expr, period=period_type)
+                    
+            elif timeframe in ['1h']:
+                # 시간봉: python-kis는 시간봉 미지원, 일봉으로 대체
+                period_type = "day"
+                if start_date:
+                    end_date = start_date + timedelta(days=limit)
+                    chart = stock.chart(start=start_date, end=end_date, period=period_type)
+                else:
+                    period_expr = f"{limit}d"
+                    chart = stock.chart(period_expr, period=period_type)
+                    
+            elif timeframe in ['1m', '1']:
+                # 분봉: 당일 분봉만 가능
+                period_type = 1  # 1분봉
+                chart = stock.chart(period=period_type)
+            else:
+                # 기본값: 일봉
+                period_type = "day"
+                if start_date:
+                    end_date = start_date + timedelta(days=limit)
+                    chart = stock.chart(start=start_date, end=end_date, period=period_type)
+                else:
+                    period_expr = f"{limit}d"
+                    chart = stock.chart(period_expr, period=period_type)
+
+            # KisChart 객체를 DataFrame으로 변환
+            df = chart.df()
+            
             # DataFrame으로 변환
-            return self._format_ohlcv(chart)
+            return self._format_ohlcv(df)
 
         except Exception as e:
             raise BrokerError(f"OHLCV 조회 실패: {str(e)}")
