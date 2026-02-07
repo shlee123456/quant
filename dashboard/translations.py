@@ -194,7 +194,27 @@ TRANSLATIONS = {
         'exchange_data': 'Exchange Data',
         'simulated_data': 'Simulated Data',
         'live_quote_unavailable': 'Live quote unavailable in simulation mode',
-        'last_updated': 'Last Updated'
+        'last_updated': 'Last Updated',
+
+        # Error handling (US-009)
+        'error_rate_limit': 'API Rate Limit Exceeded',
+        'error_rate_limit_desc': 'You have made too many API requests. Please wait before trying again.',
+        'error_network': 'Network Connection Error',
+        'error_network_desc': 'Unable to connect to the API server. Please check your internet connection.',
+        'error_authentication': 'Authentication Failed',
+        'error_authentication_desc': 'Invalid API credentials. Please verify your API keys.',
+        'error_invalid_symbol': 'Invalid Symbol',
+        'error_invalid_symbol_desc': 'The stock symbol you entered does not exist or is not supported.',
+        'error_market_closed': 'Market Closed',
+        'error_market_closed_desc': 'The market is currently closed. Real-time quotes are not available.',
+        'error_generic': 'An Error Occurred',
+        'retry_after': 'Retry after',
+        'minutes': 'minutes',
+        'check_credentials': 'Check your API credentials in .env file',
+        'setup_guide': 'Setup Guide',
+        'view_readme': 'View README for API setup instructions',
+        'troubleshooting': 'Troubleshooting',
+        'common_solutions': 'Common Solutions'
     },
     'ko': {
         # Page title
@@ -387,7 +407,27 @@ TRANSLATIONS = {
         'exchange_data': '거래소 데이터',
         'simulated_data': '시뮬레이션 데이터',
         'live_quote_unavailable': '시뮬레이션 모드에서는 실시간 시세를 사용할 수 없습니다',
-        'last_updated': '마지막 업데이트'
+        'last_updated': '마지막 업데이트',
+
+        # Error handling (US-009)
+        'error_rate_limit': 'API 호출 제한 초과',
+        'error_rate_limit_desc': 'API 요청을 너무 많이 했습니다. 잠시 후 다시 시도해주세요.',
+        'error_network': '네트워크 연결 오류',
+        'error_network_desc': 'API 서버에 연결할 수 없습니다. 인터넷 연결을 확인해주세요.',
+        'error_authentication': '인증 실패',
+        'error_authentication_desc': 'API 인증 정보가 올바르지 않습니다. API 키를 확인해주세요.',
+        'error_invalid_symbol': '잘못된 종목 코드',
+        'error_invalid_symbol_desc': '입력한 종목 코드가 존재하지 않거나 지원되지 않습니다.',
+        'error_market_closed': '장 마감',
+        'error_market_closed_desc': '현재 시장이 마감되었습니다. 실시간 시세를 조회할 수 없습니다.',
+        'error_generic': '오류 발생',
+        'retry_after': '다음 후 재시도',
+        'minutes': '분',
+        'check_credentials': '.env 파일에서 API 인증 정보를 확인하세요',
+        'setup_guide': '설정 가이드',
+        'view_readme': 'README에서 API 설정 방법 보기',
+        'troubleshooting': '문제 해결',
+        'common_solutions': '일반적인 해결 방법'
     }
 }
 

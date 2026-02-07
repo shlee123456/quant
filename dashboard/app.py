@@ -830,7 +830,9 @@ def live_monitor_tab():
                             st.caption(f"⏰ {get_text('last_updated', lang)}: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
                     except Exception as e:
-                        st.warning(f"⚠️ {get_text('quote_fetch_error', lang)}: {str(e)}")
+                        # Use centralized error handler (US-009)
+                        from dashboard.error_handler import handle_kis_broker_error
+                        handle_kis_broker_error(e, lang=lang, symbol=symbol)
             else:
                 st.info(f"ℹ️ {get_text('kis_not_available', lang)}")
 
@@ -1095,16 +1097,9 @@ def realtime_quotes_tab():
         st.info(f"{change_color} {get_text('change_amount', lang)}: {change_sign}${change_amount:.2f} ({change_rate:+.2f}%)")
 
     except Exception as e:
-        # User-friendly error message
-        st.error(
-            f"**{get_text('quote_fetch_error', lang)}**\n\n"
-            f"{str(e)}\n\n"
-            f"**{get_text('possible_causes', lang)}:**\n"
-            f"- {get_text('cause_network', lang)}\n"
-            f"- {get_text('cause_rate_limit', lang)}\n"
-            f"- {get_text('cause_invalid_symbol', lang)}\n\n"
-            f"{get_text('try_again', lang)}"
-        )
+        # Use centralized error handler (US-009)
+        from dashboard.error_handler import handle_kis_broker_error
+        handle_kis_broker_error(e, lang=lang, symbol=selected_symbol)
 
     # OHLCV Chart (US-006)
     st.divider()
@@ -1198,16 +1193,10 @@ def realtime_quotes_tab():
         st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
-        # Chart loading error
-        st.error(
-            f"**{get_text('chart_error', lang)}**\n\n"
-            f"{str(e)}\n\n"
-            f"**{get_text('possible_causes', lang)}:**\n"
-            f"- {get_text('cause_network', lang)}\n"
-            f"- {get_text('cause_rate_limit', lang)}\n"
-            f"- {get_text('cause_invalid_symbol', lang)}\n\n"
-            f"{get_text('try_again', lang)}"
-        )
+        # Use centralized error handler (US-009)
+        from dashboard.error_handler import handle_kis_broker_error
+        context = f"{get_text('historical_chart', lang)}"
+        handle_kis_broker_error(e, lang=lang, symbol=selected_symbol)
 
 
 def display_strategy_indicators(info: Dict):

@@ -54,7 +54,7 @@ def get_kis_broker() -> Optional[KoreaInvestmentBroker]:
         if not value or value.strip() == '' or 'your_' in value.lower():
             missing_vars.append(f"- {var}: {description}")
 
-    # 환경 변수 누락 시 명확한 에러 메시지 표시
+    # 환경 변수 누락 시 명확한 에러 메시지 표시 (US-009)
     if missing_vars:
         error_message = (
             "**한국투자증권 API 환경 변수가 설정되지 않았습니다.**\n\n"
@@ -63,10 +63,15 @@ def get_kis_broker() -> Optional[KoreaInvestmentBroker]:
             "**설정 방법:**\n"
             "1. `.env` 파일을 생성하거나 수정하세요.\n"
             "2. `.env.example` 파일을 참고하여 필요한 값을 입력하세요.\n"
-            "3. 자세한 내용은 [README.md의 API Setup 섹션]"
-            "(https://github.com/yourusername/crypto-trading-bot#korea-investment-securities-api-setup)을 참고하세요."
         )
         st.error(error_message)
+
+        # Add helpful links (US-009)
+        st.info(
+            "📖 **설정 가이드:**\n\n"
+            "- [README - API Setup](https://github.com/yourusername/crypto-trading-bot#korea-investment-securities-api-setup)\n"
+            "- [한국투자증권 API 신청](https://securities.koreainvestment.com/main/research/invest/PB_ETF_PopupTradingAPIInfo.jsp)"
+        )
         return None
 
     # 환경 변수에서 값 읽기
