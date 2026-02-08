@@ -1,0 +1,226 @@
+{
+  "project": "Crypto Trading Bot - Full Integration Test & Error Fixes",
+  "branchName": "fix/test-errors-and-validation",
+  "description": "전체 기능 테스트 실패 수정, 에러 처리 개선, 실시간 모니터링/모의 트레이딩 검증",
+  "userStories": [
+    {
+      "id": "US-101",
+      "title": "Position tracking 에러 수정 (전략 모듈)",
+      "description": "As a developer, I need position values to only be 0 or 1, not -1, so backtesting works correctly.",
+      "acceptanceCriteria": [
+        "RSI, MACD, Bollinger Bands 전략의 position 계산 로직 수정",
+        "position은 0 (flat) 또는 1 (long)만 포함",
+        "signal은 -1 (SELL), 0 (HOLD), 1 (BUY) 유지",
+        "tests/test_*_strategy.py::test_position_tracking 테스트 통과",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-102",
+      "title": "Empty DataFrame 에러 처리 추가",
+      "description": "As a developer, I need strategies to handle empty DataFrames gracefully without KeyError.",
+      "acceptanceCriteria": [
+        "RSI, MACD, MA 전략의 calculate_indicators에 빈 DataFrame 체크 추가",
+        "빈 DataFrame 입력 시 원본 + 기본 컬럼 반환 (signal=0, position=0)",
+        "tests/test_*_strategy.py::test_empty_dataframe 테스트 통과",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-103",
+      "title": "MACD/RSI 테스트 데이터 생성 에러 수정",
+      "description": "As a developer, I need test data arrays to have equal lengths so DataFrame creation doesn't fail.",
+      "acceptanceCriteria": [
+        "tests/test_macd_strategy.py의 test_golden_cross_signal, test_dead_cross_signal 데이터 배열 길이 통일",
+        "tests/test_rsi_strategy.py의 test_oversold_signal, test_overbought_signal 데이터 수정",
+        "해당 테스트 통과",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-104",
+      "title": "Optimizer empty strategy list 에러 수정",
+      "description": "As a developer, I need optimizer to handle empty strategy list without KeyError.",
+      "acceptanceCriteria": [
+        "optimizer.py의 compare_strategies에 빈 리스트 체크 추가",
+        "빈 리스트 입력 시 빈 DataFrame 반환 (sort_values 호출 전 체크)",
+        "tests/test_optimizer.py::test_compare_empty_strategy_list 통과",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-105",
+      "title": "Simulation data seed 재현성 에러 수정",
+      "description": "As a developer, I need simulation data to be reproducible with the same seed.",
+      "acceptanceCriteria": [
+        "SimulationDataGenerator의 타임스탬프 생성 로직 수정 (고정된 시드로 동일한 타임스탬프 생성)",
+        "tests/test_simulation_data.py::test_initialization_with_seed 통과",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-106",
+      "title": "KoreaInvestmentBroker 초기화 파라미터 수정",
+      "description": "As a developer, I need to fix KoreaInvestmentBroker initialization to make user_id optional with default value.",
+      "acceptanceCriteria": [
+        "korea_investment_broker.py의 __init__에 user_id 기본값 추가 (account 사용)",
+        "tests/test_brokers.py의 KoreaInvestmentBroker 테스트 수정 (user_id 추가)",
+        "tests/test_korea_investment_broker.py의 모든 초기화 user_id 추가",
+        "해당 테스트 통과",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-107",
+      "title": "KIS API fixture 추가",
+      "description": "As a developer, I need a pytest fixture for KIS API to avoid fixture not found errors.",
+      "acceptanceCriteria": [
+        "tests/conftest.py 생성 또는 tests/test_kis_api.py에 kis fixture 추가",
+        "fixture는 환경 변수에서 KIS API 인증 정보 로드",
+        "환경 변수 없으면 pytest.skip() 처리",
+        "tests/test_kis_api.py::test_overseas_stock_quote 에러 해결",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-108",
+      "title": "API Rate Limit 테스트 개선",
+      "description": "As a developer, I need tests that call KIS API to handle rate limits gracefully.",
+      "acceptanceCriteria": [
+        "tests/test_korea_investment_broker.py에 @pytest.mark.slow 마커 추가",
+        "연속 API 호출 테스트 사이에 sleep 추가 (1초)",
+        "Rate Limit 에러 발생 시 pytest.skip() 처리",
+        "README.md에 slow 테스트 실행 방법 추가",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-109",
+      "title": "통합 테스트 스크립트 작성",
+      "description": "As a user, I want an automated integration test script to verify all major features.",
+      "acceptanceCriteria": [
+        "scripts/run_integration_tests.sh 생성",
+        "백테스팅, 최적화, 전략 비교, 대시보드 로드 테스트 포함",
+        "각 테스트 결과를 .context/terminal/에 로그 저장",
+        "테스트 성공/실패 요약 출력",
+        "실행 가능하도록 chmod +x 설정"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-110",
+      "title": "대시보드 자동 테스트 추가",
+      "description": "As a user, I want automated tests for dashboard functionality to catch UI errors.",
+      "acceptanceCriteria": [
+        "tests/test_dashboard_ui.py 생성",
+        "모든 탭 로드 테스트 (Strategy Comparison, Backtesting, Live Monitor, Real-time Quotes)",
+        "차트 생성 테스트 (ChartGenerator 메서드)",
+        "에러 핸들러 테스트 (error_handler.py)",
+        "pytest 통과",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-111",
+      "title": "에러 로깅 중앙화 및 개선",
+      "description": "As a developer, I want centralized error logging to track and debug issues more easily.",
+      "acceptanceCriteria": [
+        "trading_bot/logging_config.py 생성",
+        "로깅 설정 (파일 + 콘솔, 로그 레벨 설정)",
+        "모든 주요 모듈에 로거 추가 (broker, strategy, backtester)",
+        "에러 발생 시 스택 트레이스 로그 저장",
+        ".context/logs/ 디렉토리에 로그 저장"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-112",
+      "title": "실시간 모니터링 기능 검증 테스트",
+      "description": "As a user, I want to verify that live monitoring works correctly with real-time data.",
+      "acceptanceCriteria": [
+        "tests/test_live_monitoring.py 생성",
+        "Live Monitor 탭의 Current Market Price 섹션 테스트",
+        "Auto-refresh 기능 테스트 (모킹)",
+        "KIS 브로커 실시간 시세 조회 테스트 (모킹 또는 실제 API)",
+        "pytest 통과"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-113",
+      "title": "모의 트레이딩 엔드투엔드 테스트",
+      "description": "As a user, I want an end-to-end test for paper trading to ensure the full workflow works.",
+      "acceptanceCriteria": [
+        "tests/test_paper_trading_e2e.py 생성",
+        "시뮬레이션 데이터 생성 → 전략 실행 → 주문 생성 → 잔고 업데이트 전체 흐름 테스트",
+        "PaperTrader 클래스 동작 검증",
+        "pytest 통과"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-114",
+      "title": "테스트 커버리지 80% 달성",
+      "description": "As a developer, I want to achieve 80% test coverage to ensure code quality.",
+      "acceptanceCriteria": [
+        "pytest --cov=trading_bot --cov-report=html 실행",
+        "전체 커버리지 80% 이상",
+        "핵심 모듈 (strategy, backtester, brokers) 90% 이상",
+        "커버리지 리포트 .context/coverage/ 디렉토리에 저장",
+        "누락된 테스트 추가"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-115",
+      "title": "전체 테스트 통과 확인 및 문서화",
+      "description": "As a developer, I want all tests to pass and have updated documentation.",
+      "acceptanceCriteria": [
+        "pytest 실행 시 0 failed, 0 errors",
+        "README.md 테스트 섹션 업데이트 (테스트 실행 방법, 마커 설명)",
+        "CLAUDE.md 파일 업데이트 (테스트 실패 해결 패턴 추가)",
+        "MEMORY.md에 주요 학습 내용 기록"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

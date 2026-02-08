@@ -1,0 +1,301 @@
+# Ralph Progress Log - Full Integration Test & Error Fixes
+
+## Codebase Patterns
+- Project uses Korean commit messages (한글 커밋 메시지)
+- Environment variables are documented in both .env.example and README.md
+- Terminal logs are saved to .context/terminal/ with timestamps (excluded from git)
+- KIS broker configuration uses KIS_* prefix for environment variables
+- Dashboard helper functions go in dashboard/ directory (e.g., dashboard/kis_broker.py)
+- Use `python3 -m pip install` for dependency installation
+- Streamlit error messages should use st.error(), st.success() for user-friendly feedback
+- Helper functions should return None on failure for graceful degradation
+- KIS broker for US stocks: always use fetch_ticker(symbol, overseas=True, market='NASDAQ')
+- KIS broker OHLCV for US stocks: use fetch_ohlcv(symbol, timeframe='1d', limit=N, overseas=True, market='NASDAQ')
+- Streamlit metrics: use delta_color="normal" for green-up/red-down, "inverse" for opposite
+- Color indicators: 🔴 for positive (red=up in Korean market), 🔵 for negative (blue=down)
+- Plotly candlestick charts: use make_subplots(rows=2, cols=1, shared_xaxes=True) for price + volume layout
+- Auto-refresh pattern for Streamlit: Store 'auto_refresh_enabled' and 'last_refresh_time' in session_state, use time.sleep(1) + st.rerun() for countdown timer
+- Centralized error handling: Use dashboard/error_handler.py for consistent error messages across tabs
+- Error messages should include: icon, title, description, expandable troubleshooting, and actionable solutions
+- Dashboard tabs should check market_type and use_simulation before showing broker-specific features
+- Always add translations for new UI elements in both English and Korean (dashboard/translations.py)
+- Documentation in CLAUDE.md should include: overview, usage guide, code patterns, troubleshooting, and test checklist
+- **TESTING CRITICAL PATTERNS** (2026-02-08 New Rules):
+  - Position values MUST be 0 or 1 only (signal can be -1/0/1, but position is 0/1)
+  - Strategy calculate_indicators() must handle empty DataFrames gracefully (check len(df) == 0)
+  - Test data arrays in DataFrame creation must have equal lengths (validate before creating DataFrame)
+  - KIS API tests should use @pytest.mark.slow and include time.sleep() between calls
+  - Missing pytest fixtures should be defined in tests/conftest.py or local test file
+  - KoreaInvestmentBroker requires user_id parameter (can default to account value)
+
+---
+
+## 2026-02-07 14:30 - US-001
+- What was implemented:
+  - Added comprehensive Korea Investment Securities API setup guide to README.md
+  - Enhanced .env.example with detailed comments explaining KIS environment variables
+  - Documented mock vs real trading differences with clear warnings
+  - Provided step-by-step instructions for obtaining API credentials
+
+- Files changed:
+  - README.md: Added "API Setup > Korea Investment Securities API Setup" section
+  - .env.example: Enhanced KIS section with detailed comments and setup instructions
+
+- **Learnings for future iterations:**
+  - This project uses Korean commit messages (한글) as per CLAUDE.md conventions
+  - .env.example already had KIS_* variables but needed more detailed documentation
+  - README.md follows a clear structure: Features → Installation → API Setup → Quick Start
+  - Terminal logs should be saved with `tee .context/terminal/<operation>_$(date +%s).log`
+  - The project uses KIS (Korea Investment Securities) for stock trading via python-kis library
+  - Mock trading (KIS_MOCK=true) uses virtual funds; real trading requires separate credentials
+---
+
+## 2026-02-07 23:30 - US-002
+- What was implemented:
+  - Created dashboard/kis_broker.py with get_kis_broker() helper function
+  - Implemented environment variable validation for KIS broker initialization
+  - Added detailed error messages for missing/invalid environment variables
+  - Implemented graceful degradation (returns None on failure)
+  - Added comprehensive docstring with examples
+  - Enhanced .env.example with KIS_USER_ID (optional, defaults to KIS_ACCOUNT)
+
+- Files changed:
+  - dashboard/kis_broker.py: NEW - Helper function to initialize KIS broker from env vars
+  - .env.example: Added KIS_USER_ID optional environment variable
+
+- **Learnings for future iterations:**
+  - The KoreaInvestmentBroker requires: user_id, appkey, appsecret, account, mock
+  - KIS_USER_ID is optional - if not provided, KIS_ACCOUNT value is used as default
+  - Streamlit error messages should be clear and actionable (use st.error(), st.success())
+  - Helper functions should return None on failure for graceful degradation
+  - When installing dependencies, use `python3 -m pip install` for consistency
+  - The project uses trading_bot.brokers module structure for all broker implementations
+  - Dashboard helper functions are stored in dashboard/ directory alongside app.py
+---
+
+
+## 2026-02-07 23:31 - US-003
+- What was implemented:
+  - Added '📊 실시간 시세' (Real-time Quotes) tab to dashboard
+  - Added Korean and English translations for 'tab_quotes' key
+  - Created realtime_quotes_tab() function with placeholder content
+  - Reordered tabs: Strategy Comparison → Backtesting → Live Monitor → Real-time Quotes → Paper Trading
+  - All syntax checks and imports passed successfully
+
+- Files changed:
+  - dashboard/app.py: Added realtime_quotes_tab() function and updated main tabs section
+  - dashboard/translations.py: Added 'tab_quotes' translations in both English and Korean
+  - scripts/ralph/prd.json: Updated US-003 passes to true with notes
+
+- **Learnings for future iterations:**
+  - Dashboard tabs are defined in the main() function using st.tabs() with get_text() for i18n
+  - Each tab function should accept no parameters and use st.session_state.language for translations
+  - Tab order matters for user experience - follow the PRD specification exactly
+  - Python module imports can be verified with py_compile before committing
+  - Streamlit warnings about ScriptRunContext when importing are normal outside runtime
+---
+
+## 2026-02-07 23:45 - US-004
+- What was implemented:
+  - Added stock selection UI to realtime_quotes_tab() function in dashboard/app.py
+  - Integrated StockSymbolDB for US stock list (33 stocks across multiple sectors)
+  - Implemented Streamlit selectbox with searchable format: "SYMBOL - Company Name"
+  - Selected symbol stored in st.session_state.selected_quote_symbol (defaults to 'AAPL')
+  - Added stock info display showing sector and industry
+  - Added translations in both English and Korean for new UI elements
+
+- Files changed:
+  - dashboard/app.py: Updated realtime_quotes_tab() with full stock selection UI
+  - dashboard/translations.py: Added 'select_stock', 'select_stock_help', 'selected_symbol' keys
+  - scripts/ralph/prd.json: Updated US-004 passes to true with notes
+
+- **Learnings for future iterations:**
+  - StockSymbolDB is already implemented with 33 popular US stocks organized by sector
+  - Streamlit selectbox is inherently searchable - users can type to filter options
+  - Format "SYMBOL - Name" provides good UX for stock selection (easy to scan and search)
+  - Always initialize session_state variables before using them (check 'if key not in st.session_state')
+  - st.info() is great for displaying supplementary information like sector/industry
+  - The stock database includes: symbol, name, sector, industry for each stock
+  - Translation keys should be concise and reusable across different contexts
+---
+## 2026-02-07 23:50 - US-005
+- What was implemented:
+  - Added real-time stock quote display to realtime_quotes_tab() in dashboard/app.py
+  - Integrated KIS broker using get_kis_broker() helper function
+  - Implemented fetch_ticker() call with overseas=True for US stocks
+  - Created 5-column metrics layout: Current Price, Open, High, Low, Volume
+  - Added delta display with color coding (red for positive, blue for negative)
+  - Implemented comprehensive error handling with user-friendly messages
+  - Added translations for all new UI elements in both English and Korean
+
+- Files changed:
+  - dashboard/app.py: Added real-time quote fetching and metrics display
+  - dashboard/translations.py: Added 'current_price', 'open_price', 'high_price', 'low_price', 'volume', 'change_amount', 'fetching_quote', 'kis_not_available', 'quote_fetch_error', 'possible_causes', 'cause_network', 'cause_rate_limit', 'cause_invalid_symbol', 'try_again'
+  - scripts/ralph/prd.json: Updated US-005 passes to true with notes
+
+- **Learnings for future iterations:**
+  - KIS broker fetch_ticker() returns: symbol, last, open, high, low, volume, change, rate, timestamp
+  - For US stocks, must call fetch_ticker(symbol, overseas=True, market='NASDAQ')
+  - Streamlit st.metric() supports delta_color parameter: "normal" (green up, red down), "inverse" (red up, green down)
+  - Use st.spinner() for loading states during API calls
+  - Error handling pattern: specific error messages with actionable solutions
+  - Color indicators: 🔴 for positive change (red in Korean stock market), 🔵 for negative change (blue)
+  - Always format large numbers with commas for better readability: f"{int(volume):,}"
+  - Import statements inside functions are acceptable when using conditional imports (e.g., from dashboard.kis_broker)
+---
+
+## 2026-02-07 23:40 - US-006
+- What was implemented:
+  - Added OHLCV candlestick chart with volume subplot to realtime_quotes_tab()
+  - Implemented period selection UI (30/90/180 days) using Streamlit selectbox
+  - Integrated KIS broker fetch_ohlcv() method with overseas=True for US stocks
+  - Created two-row Plotly chart: candlestick price chart + volume bar chart
+  - Added spinner for loading state during data fetch
+  - Implemented color-coded volume bars (green for up days, red for down days)
+  - Added comprehensive error handling with user-friendly messages
+  - Added translations in both English and Korean for all new UI elements
+
+- Files changed:
+  - dashboard/app.py: Added OHLCV chart section with period selector and Plotly visualization
+  - dashboard/translations.py: Added 7 new translation keys (historical_chart, select_period, days_30/90/180, loading_chart, chart_error)
+  - scripts/ralph/prd.json: Updated US-006 passes to true with notes
+
+- **Learnings for future iterations:**
+  - KIS broker fetch_ohlcv() for US stocks: use fetch_ohlcv(symbol, timeframe='1d', limit=N, overseas=True, market='NASDAQ')
+  - Plotly make_subplots() pattern: use rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05 for candlestick + volume
+  - Candlestick colors: increasing_line_color='#00c853' (green), decreasing_line_color='#ff1744' (red)
+  - Volume bar colors: conditionally color based on close vs open (green if close >= open, red otherwise)
+  - Chart height: use height=600 for good visibility, showlegend=False to reduce clutter
+  - xaxis_rangeslider_visible=False removes the redundant range slider from candlestick charts
+  - hovermode='x unified' provides better tooltip experience across subplots
+  - Period selection pattern: use dictionary mapping display labels to numeric values
+  - Always wrap chart data fetching in try/except with st.spinner() for loading state
+  - Consistent error message structure: error title, exception message, possible causes list, retry guidance
+---
+
+## 2026-02-07 23:45 - US-007
+- What was implemented:
+  - Added auto-refresh toggle feature to realtime_quotes_tab() in dashboard/app.py
+  - Implemented checkbox control for enabling/disabling auto-refresh
+  - Added manual "Refresh Now" button alongside the toggle
+  - Implemented 60-second auto-refresh cycle using st.rerun()
+  - Created countdown timer showing remaining time until next refresh (e.g., "Next refresh in 45s")
+  - Stored auto-refresh state and last refresh time in st.session_state
+  - Added comprehensive translations in both English and Korean for all new UI elements
+
+- Files changed:
+  - dashboard/app.py: Added auto-refresh controls section with toggle, button, and countdown timer logic
+  - dashboard/translations.py: Added 5 new translation keys (enable_auto_refresh, auto_refresh_help, next_refresh_in, refreshing_now, auto_refresh_disabled)
+  - scripts/ralph/prd.json: Updated US-007 passes to true with notes
+
+- **Learnings for future iterations:**
+  - Auto-refresh pattern: Use st.session_state to track 'auto_refresh_enabled' and 'last_refresh_time'
+  - Countdown timer: Calculate elapsed time with `time.time() - last_refresh_time`, display remaining seconds
+  - st.rerun() triggers immediate page refresh - use it at the end of auto-refresh logic
+  - Manual refresh button should reset the countdown timer by updating last_refresh_time
+  - For smooth auto-refresh, combine `time.sleep(1)` with `st.rerun()` to update countdown every second
+  - Three-column layout works well for controls: [Toggle | Button | Status/Countdown]
+  - When auto-refresh is disabled, show helpful message about manual refresh option
+  - Session state initialization pattern: check 'if key not in st.session_state' before first use
+  - Import time and datetime modules only when needed (can be done inside the function)
+---
+
+## 2026-02-07 - US-008
+- What was implemented:
+  - Added 'Current Market Price' section to Live Monitor tab
+  - Integrated KIS broker for real-time US stock quotes (fetch_ticker)
+  - Display current price, open, high, low, volume with color-coded change rate
+  - Added mode indicators: simulation mode vs real-time mode
+  - Data source display based on market type (KIS Broker for stocks, Exchange Data for crypto, Simulated Data)
+  - Real-time quotes only shown for stock market in non-simulation mode
+  - Symbol parsing to handle market suffixes (e.g., AAPL.US -> AAPL)
+  - Last updated timestamp display
+  - Comprehensive error handling with user-friendly messages
+
+- Files changed:
+  - dashboard/app.py: Modified live_monitor_tab() to add Current Market Price section with KIS integration
+  - dashboard/translations.py: Added 9 new translation keys for US-008
+  - scripts/ralph/prd.json: Updated US-008 passes to true with notes
+
+- **Learnings for future iterations:**
+  - Live Monitor tab should show both strategy signals AND real-time market data side-by-side
+  - Mode indicators (simulation/real-time) help users understand data source at a glance
+  - KIS broker integration pattern: check market_type == 'stock' and not use_simulation before showing
+  - Symbol normalization: Remove market suffix (e.g., '.US') before passing to KIS broker
+  - Conditional imports (from dashboard.kis_broker import get_kis_broker) allow graceful degradation if module unavailable
+  - Use st.info() for neutral messages, st.success() for positive status indicators
+  - Layout pattern: Current Market Price → horizontal divider → Strategy Signal section
+  - Always show last updated timestamp for real-time data (helps users know freshness)
+  - When adding real-time features, consider whether they should be visible in simulation mode
+  - The live_monitor_tab previously only worked with non-simulation data; now it shows different UI based on mode
+---
+
+## 2026-02-07 - US-009
+- What was implemented:
+  - Created centralized error handling module (dashboard/error_handler.py)
+  - Implemented automatic error type detection (rate limit, network, authentication, invalid symbol, market closed, generic)
+  - Added identify_error_type() function for intelligent error categorization
+  - Created display_error() function with user-friendly messages and solutions
+  - Created handle_kis_broker_error() wrapper for KIS-specific error handling
+  - Enhanced kis_broker.py with setup guide links and API application URL
+  - Applied error handler to realtime_quotes_tab() for quote and chart errors
+  - Applied error handler to live_monitor_tab() for real-time quote errors
+  - Added 18 new translation keys for error messages (en + ko)
+
+- Files changed:
+  - dashboard/error_handler.py: NEW - Centralized error handling module
+  - dashboard/kis_broker.py: Enhanced with setup guide links (US-009)
+  - dashboard/app.py: Applied error handler to realtime_quotes_tab and live_monitor_tab
+  - dashboard/translations.py: Added 18 error-related translation keys
+  - scripts/ralph/prd.json: Updated US-009 passes to true with notes
+
+- **Learnings for future iterations:**
+  - Centralized error handling is key to consistent UX across the dashboard
+  - Error type detection using keyword matching is effective for categorizing API errors
+  - st.expander() is great for showing technical details without cluttering the UI
+  - Always provide actionable solutions alongside error messages (not just "an error occurred")
+  - Error messages should include: icon, title, description, troubleshooting, and common solutions
+  - Rate limit errors need specific guidance (wait time, retry instructions)
+  - Authentication errors should link to setup guides and credential check instructions
+  - Network errors should suggest common fixes (VPN, firewall, connection check)
+  - Market closed errors should show market hours in user's timezone
+  - Handle ImportError separately from API errors (module not available vs API call failed)
+  - Reusable error handling functions save code duplication and ensure consistency
+  - ErrorType constants make code more maintainable than magic strings
+---
+
+## 2026-02-07 - US-010
+- What was implemented:
+  - Added comprehensive documentation section "KIS 브로커 통합" to dashboard/CLAUDE.md
+  - Documented overview and supported features (real-time quotes, OHLCV charts, auto-refresh, Live Monitor integration)
+  - Detailed environment variable setup guide with step-by-step instructions
+  - Real-time Quotes tab usage: stock selection, quote display, auto-refresh, OHLCV charts
+  - Auto-refresh feature documentation with implementation patterns
+  - Live Monitor tab integration explanation (conditional display based on market type and simulation mode)
+  - Error handling and troubleshooting guide for 5 error types:
+    1. Rate Limit errors
+    2. Network errors
+    3. Authentication errors
+    4. Invalid symbol errors
+    5. Market closed errors
+  - Each error type includes: description, icon, solutions, and examples
+  - Coding patterns: KIS broker initialization, US stock quote fetching, OHLCV data fetching
+  - Performance considerations: API rate limits, caching strategy (future), supported symbols
+  - Manual test checklist for Real-time Quotes, Live Monitor, and error handling
+
+- Files changed:
+  - dashboard/CLAUDE.md: Added 336+ lines of comprehensive documentation
+  - scripts/ralph/prd.json: Updated US-010 passes to true with notes
+
+- **Learnings for future iterations:**
+  - Documentation should be comprehensive but organized into clear sections
+  - Include both conceptual explanations AND code examples
+  - Error documentation should show the actual UI messages users will see
+  - Step-by-step guides are more helpful than just listing features
+  - Test checklists help future developers verify functionality
+  - Code patterns should include both usage examples and data structure explanations
+  - Link to related documentation (README, other CLAUDE.md files) for context
+  - Performance and limitations should be documented upfront (API rate limits, supported symbols)
+  - Troubleshooting guides should include common solutions, not just error descriptions
+  - Real examples (AAPL, NASDAQ) are more concrete than abstract placeholders
+---

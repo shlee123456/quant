@@ -126,6 +126,114 @@ def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
 | `backtester.py` | 백테스팅 엔진 (수수료, 슬리피지 포함) | 공통 |
 | `optimizer.py` | 그리드 서치 파라미터 최적화 | 공통 |
 | `paper_trader.py` | 실시간 페이퍼 트레이딩 | 암호화폐 + 해외주식 |
+| `database.py` | SQLite 데이터베이스 (세션 추적) | 공통 |
+
+---
+
+## PaperTrader - 실시간 모의투자
+
+### 개요
+
+`PaperTrader` 클래스는 실시간 시장 데이터를 사용한 모의투자를 지원합니다.
+- **멀티 심볼**: 최대 7종목 동시 추적 가능
+- **데이터베이스 연동**: SQLite로 세션, 거래, 포트폴리오 스냅샷 저장
+- **실시간 실행**: `run_realtime()` 메서드로 주기적 전략 실행
+
+### 기본 사용법
+
+```python
+from trading_bot.paper_trader import PaperTrader
+from trading_bot.strategies import RSIStrategy
+from trading_bot.database import TradingDatabase
+from dashboard.kis_broker import get_kis_broker
+
+# 1. 브로커, 전략, 데이터베이스 초기화
+broker = get_kis_broker()  # KIS API 필요
+strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+db = TradingDatabase()  # data/paper_trading.db에 저장
+
+# 2. PaperTrader 생성
+trader = PaperTrader(
+    strategy=strategy,
+    symbols=['AAPL', 'MSFT', 'GOOGL'],  # 최대 7종목
+    broker=broker,
+    initial_capital=10000.0,
+    position_size=0.3,  # 종목당 30% 투자
+    db=db
+)
+
+# 3. 실시간 실행 (60초 간격)
+trader.run_realtime(interval_seconds=60, timeframe='1d')
+```
+
+### 실시간 실행 루프
+
+`run_realtime()` 메서드는 다음 작업을 반복합니다:
+
+1. **실시간 시세 조회**: `broker.fetch_ticker(symbol, overseas=True)`
+2. **OHLCV 데이터 조회**: `broker.fetch_ohlcv(symbol, timeframe, limit=100, overseas=True)`
+3. **전략 신호 생성**: `strategy.get_current_signal(df)`
+4. **거래 실행**: 신호에 따라 BUY/SELL
+5. **포트폴리오 스냅샷**: 현재 포트폴리오 상태 저장
+6. **대기**: `interval_seconds` 만큼 sleep
+
+### 데이터베이스 연동
+
+`TradingDatabase` 클래스는 다음 테이블을 관리합니다:
+
+#### 1. `paper_trading_sessions`
+- `session_id`: 세션 ID (strategy_name_timestamp 형식)
+- `strategy_name`: 전략 이름
+- `start_time`, `end_time`: 세션 시작/종료 시간
+- `initial_capital`, `final_capital`: 초기/최종 자본
+- `total_return`, `sharpe_ratio`, `max_drawdown`, `win_rate`: 성과 지표
+- `status`: 세션 상태 (active/completed)
+
+#### 2. `trades`
+- 거래 내역 (symbol, timestamp, type, price, size, commission, pnl)
+
+#### 3. `portfolio_snapshots`
+- 포트폴리오 스냅샷 (timestamp, total_value, cash, positions JSON)
+
+#### 4. `strategy_signals`
+- 전략 신호 (symbol, timestamp, signal, indicator_values JSON, executed)
+
+### 멀티 심볼 포트폴리오
+
+```python
+# positions는 Dict[str, float] (심볼 → 보유 주식 수)
+trader.positions = {
+    'AAPL': 10.0,
+    'MSFT': 5.0,
+    'GOOGL': 3.0
+}
+
+# 포트폴리오 가치 계산
+total_value = trader.get_portfolio_value()  # 현금 + 모든 포지션 가치
+```
+
+### 세션 관리
+
+```python
+# 세션 시작 (자동으로 session_id 생성)
+trader.start()
+
+# 세션 중지 (최종 지표 업데이트)
+trader.stop()
+
+# 세션 요약 조회
+summary = db.get_session_summary(trader.session_id)
+print(f"Total Return: {summary['total_return']:.2f}%")
+print(f"Sharpe Ratio: {summary['sharpe_ratio']:.2f}")
+```
+
+### 주의사항
+
+1. **브로커 필수**: `run_realtime()` 사용 시 broker 파라미터 필수
+2. **API 제한**: KIS API rate limit (1분당 1회) 고려
+3. **해외주식**: `overseas=True` 파라미터 필수 (미국 주식 거래 시)
+4. **종목 수 제한**: 최대 7종목 (API 제한 및 성능 고려)
+5. **데이터베이스**: db 파라미터 없으면 세션 추적 안 됨
 
 ---
 
