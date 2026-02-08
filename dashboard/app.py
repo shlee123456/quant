@@ -135,13 +135,15 @@ def init_session_state():
         st.session_state.language = 'ko'  # Default to Korean
     if 'market_type' not in st.session_state:
         st.session_state.market_type = 'stock'  # Default to Foreign Stocks
+    if 'paper_trading_active' not in st.session_state:
+        st.session_state.paper_trading_active = False
 
 
 def create_strategy(strategy_name: str, params: Dict[str, Any]):
     """Create strategy instance with given parameters"""
     strategy_config = STRATEGY_CONFIGS[strategy_name]
     strategy_class = strategy_config['class']
-    return strategy_class(**params)
+    return strategy_class(**params)  # type: ignore[operator]
 
 
 def sidebar_config():
@@ -485,12 +487,12 @@ def display_backtest_results(backtest_data: Dict):
 
     with col1:
         return_pct = results['total_return']
-        return_color = "normal" if return_pct >= 0 else "inverse"
+        return_color = "normal" if return_pct >= 0 else "inverse"  # type: ignore[assignment]
         st.metric(
             get_text('total_return', lang),
             f"{return_pct:.2f}%",
             delta=f"${results['final_capital'] - results['initial_capital']:.2f}",
-            delta_color=return_color
+            delta_color=return_color  # type: ignore[arg-type]
         )
 
     with col2:
@@ -704,86 +706,179 @@ def strategy_comparison_tab():
 
 def paper_trading_tab():
     """Paper trading interface"""
-    st.header("📄 Paper Trading")
+    lang = st.session_state.language
 
-    if st.session_state.strategy_instance is None:
-        st.warning("⚠️ Please initialize the system from the sidebar first.")
-        return
+    st.header(get_text('tab_paper', lang))
 
-    if st.session_state.use_simulation:
-        st.warning("⚠️ Paper trading requires real market data. Please disable 'Use Simulation Data' in the sidebar.")
-        return
+    st.markdown("""
+    실시간 모의투자 기능입니다. 전략과 종목을 선택하여 실제 시장 데이터로 모의투자를 실행할 수 있습니다.
+    """)
 
-    col1, col2 = st.columns([1, 3])
+    # Configuration Section
+    st.subheader("⚙️ 모의투자 설정")
+
+    col1, col2 = st.columns(2)
 
     with col1:
-        if not st.session_state.live_mode:
-            if st.button("Start Paper Trading", type="primary"):
-                st.session_state.paper_trader = PaperTrader(
-                    strategy=st.session_state.strategy_instance,
-                    data_handler=st.session_state.data_handler,
-                    initial_capital=st.session_state.config['initial_capital']
-                )
-                st.session_state.live_mode = True
-                st.rerun()
-        else:
-            if st.button("Stop Paper Trading", type="secondary"):
-                st.session_state.live_mode = False
-                st.rerun()
+        # Strategy selector
+        strategy_options = ['RSI Strategy', 'MACD Strategy', 'Moving Average Crossover',
+                           'Bollinger Bands', 'Stochastic Oscillator']
+        selected_strategy = st.selectbox(
+            "전략 선택",
+            options=strategy_options,
+            index=0,
+            help="모의투자에 사용할 전략을 선택하세요"
+        )
+
+        # Multi-select for US stocks
+        us_stocks = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA']
+        selected_symbols = st.multiselect(
+            "미국 주식 선택",
+            options=us_stocks,
+            default=['AAPL'],
+            help="모의투자할 미국 주식을 선택하세요 (여러 종목 선택 가능)"
+        )
 
     with col2:
-        if st.session_state.live_mode:
-            st.info(f"🟢 Paper trading is ACTIVE with {st.session_state.selected_strategy} - Updates every 60 seconds")
+        # Initial capital input
+        initial_capital = st.number_input(
+            "초기 자본 ($)",
+            min_value=1000.0,
+            max_value=1000000.0,
+            value=10000.0,
+            step=1000.0,
+            help="모의투자 시작 자본금"
+        )
+
+        # Position size slider
+        position_size = st.slider(
+            "포지션 크기",
+            min_value=0.1,
+            max_value=1.0,
+            value=0.95,
+            step=0.05,
+            help="각 거래에 사용할 자본 비율 (0.1 = 10%, 1.0 = 100%)"
+        )
+
+    # Validation
+    if not selected_symbols:
+        st.warning("⚠️ 최소 1개 이상의 종목을 선택해주세요.")
+        return
+
+    st.markdown("---")
+
+    # Control Section
+    st.subheader("🎮 모의투자 제어")
+
+    # Initialize session state for paper trading
+    if 'paper_trading_active' not in st.session_state:
+        st.session_state.paper_trading_active = False
+    if 'paper_trader' not in st.session_state:
+        st.session_state.paper_trader = None
+
+    col1, col2, col3 = st.columns([1, 1, 2])
+
+    with col1:
+        # 모의투자 시작 button
+        start_button = st.button(
+            "🚀 모의투자 시작",
+            type="primary",
+            disabled=st.session_state.paper_trading_active,
+            use_container_width=True
+        )
+
+    with col2:
+        # 모의투자 중지 button
+        stop_button = st.button(
+            "⏹️ 모의투자 중지",
+            type="secondary",
+            disabled=not st.session_state.paper_trading_active,
+            use_container_width=True
+        )
+
+    with col3:
+        # Status indicator
+        if st.session_state.paper_trading_active:
+            st.success(f"🟢 모의투자 실행 중 - {selected_strategy}")
         else:
-            st.info("⚪ Paper trading is STOPPED")
+            st.info("⚪ 모의투자 대기 중")
 
-    # Live updates
-    if st.session_state.live_mode and st.session_state.paper_trader:
-        placeholder = st.empty()
+    # Handle button clicks
+    if start_button:
+        try:
+            # Create strategy instance
+            strategy_params = {}
+            if selected_strategy == 'RSI Strategy':
+                strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+            elif selected_strategy == 'MACD Strategy':
+                strategy = MACDStrategy(fast_period=12, slow_period=26, signal_period=9)
+            elif selected_strategy == 'Moving Average Crossover':
+                strategy = MovingAverageCrossover(fast_period=10, slow_period=30)
+            elif selected_strategy == 'Bollinger Bands':
+                strategy = BollingerBandsStrategy(period=20, num_std=2.0)
+            elif selected_strategy == 'Stochastic Oscillator':
+                strategy = StochasticStrategy(k_period=14, d_period=3, overbought=80, oversold=20)
 
-        with placeholder.container():
-            st.session_state.paper_trader.update(
-                symbol=st.session_state.config['symbol'],
-                timeframe=st.session_state.config['timeframe']
+            # Get KIS broker for US stocks
+            from dashboard.kis_broker import get_kis_broker
+            broker = get_kis_broker()
+
+            if broker is None:
+                st.error("❌ KIS 브로커 초기화 실패. 환경 변수를 확인해주세요.")
+                return
+
+            # Create paper trader
+            st.session_state.paper_trader = PaperTrader(
+                strategy=strategy,
+                symbols=selected_symbols,
+                broker=broker,
+                initial_capital=initial_capital,
+                position_size=position_size
             )
 
-            if st.session_state.paper_trader.equity_history:
-                latest = st.session_state.paper_trader.equity_history[-1]
-
-                # Metrics
-                col1, col2, col3, col4 = st.columns(4)
-
-                with col1:
-                    st.metric("Current Price", f"${latest['price']:.2f}")
-
-                with col2:
-                    portfolio_value = latest['equity']
-                    st.metric("Portfolio Value", f"${portfolio_value:.2f}")
-
-                with col3:
-                    pnl = portfolio_value - st.session_state.paper_trader.initial_capital
-                    pnl_pct = (pnl / st.session_state.paper_trader.initial_capital) * 100
-                    st.metric("P&L", f"${pnl:.2f}", f"{pnl_pct:+.2f}%")
-
-                with col4:
-                    position = latest['position']
-                    st.metric("Position", f"{position:.6f}")
-
-                # Charts
-                equity_df = st.session_state.paper_trader.get_equity_df()
-                if not equity_df.empty:
-                    chart_gen = ChartGenerator()
-                    fig = chart_gen.plot_equity_curve(equity_df)
-                    st.plotly_chart(fig, use_container_width=True)
-
-                # Trade history
-                trades_df = st.session_state.paper_trader.get_trades_df()
-                if not trades_df.empty:
-                    st.subheader("Trade History")
-                    st.dataframe(trades_df, use_container_width=True)
-
-            time.sleep(60)
+            st.session_state.paper_trading_active = True
+            st.success("✅ 모의투자가 시작되었습니다!")
             st.rerun()
+
+        except Exception as e:
+            st.error(f"❌ 모의투자 시작 실패: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+
+    if stop_button:
+        if st.session_state.paper_trader:
+            st.session_state.paper_trader.stop()
+        st.session_state.paper_trading_active = False
+        st.session_state.paper_trader = None
+        st.success("✅ 모의투자가 중지되었습니다.")
+        st.rerun()
+
+    # Display current session info
+    if st.session_state.paper_trading_active and st.session_state.paper_trader:
+        st.markdown("---")
+        st.subheader("📊 현재 세션 정보")
+
+        trader = st.session_state.paper_trader
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("전략", selected_strategy)
+
+        with col2:
+            st.metric("종목 수", len(selected_symbols))
+
+        with col3:
+            st.metric("초기 자본", f"${initial_capital:,.2f}")
+
+        with col4:
+            st.metric("포지션 크기", f"{position_size:.0%}")
+
+        # Show selected symbols
+        st.info(f"📈 선택된 종목: {', '.join(selected_symbols)}")
+
+        # Note: Real-time monitoring will be implemented in US-108
+        st.info("💡 실시간 포트폴리오 모니터링은 다음 단계에서 구현됩니다.")
 
 
 def live_monitor_tab():
