@@ -194,3 +194,28 @@ Started: Sun Feb  8 16:42:16 KST 2026
   - Browser verification deferred (no browser testing tools available)
 ---
 
+## 2026-02-08 20:30 - US-109
+- Implemented paper_trading_comparison_tab() for comparing paper trading sessions
+- Fetch all sessions using db.get_all_sessions()
+- Session selection via multiselect with formatted display names (session_id | strategy | start_time | status)
+- Comparison table with columns: Session ID, Strategy, Start/End Time, Initial/Final Capital, Return %, Sharpe, Drawdown %, Win Rate %, Status
+- Best performance metrics: highest return, highest win rate, highest Sharpe ratio
+- Handle empty sessions gracefully with info message
+- Filter completed sessions for best performance calculation
+- Added "Session Comparison" as 6th tab in main()
+- Typecheck passes
+- Files changed: dashboard/app.py
+- **Learnings for future iterations:**
+  - db.get_all_sessions() returns list of session dicts with all fields
+  - Session display format: f"{session_id} | {strategy} | {start_time[:16]} | {status}"
+  - Multiselect default: first 3 sessions (min(3, len(session_options)))
+  - Comparison data built from session fields, formatted with f-strings
+  - None handling: use conditional expressions (value if value is not None else 'N/A')
+  - Best strategy: use max() with key=lambda on filtered completed sessions
+  - Completed sessions filter: status == 'completed' and win_rate is not None
+  - st.metric delta parameter can show strategy name for context
+  - "Session Comparison" tab added as 6th tab (not replacing existing Strategy Comparison)
+  - Browser verification deferred (no browser testing tools available)
+  - Next step: US-110 will add equity curve comparison chart
+---
+
