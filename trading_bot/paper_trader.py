@@ -4,9 +4,10 @@ Paper trading simulator for live trading without real money
 
 import pandas as pd
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any, Union
 from .strategy import MovingAverageCrossover
 from .data_handler import DataHandler
+from .brokers.base_broker import BaseBroker
 import time
 import json
 
@@ -14,64 +15,115 @@ import json
 class PaperTrader:
     """
     Paper trading simulator - trades with simulated money on real-time data
+
+    Supports:
+    - Single or multiple symbols
+    - Broker integration (for real-time data)
+    - Database logging (optional)
     """
 
-    def __init__(self, strategy: MovingAverageCrossover, data_handler: DataHandler,
-                 initial_capital: float = 10000.0, position_size: float = 0.95,
-                 commission: float = 0.001, log_file: str = None):
+    def __init__(
+        self,
+        strategy: MovingAverageCrossover,
+        symbols: Union[str, List[str]],
+        data_handler: Optional[DataHandler] = None,
+        broker: Optional[BaseBroker] = None,
+        initial_capital: float = 10000.0,
+        position_size: float = 0.95,
+        commission: float = 0.001,
+        log_file: Optional[str] = None
+    ):
         """
         Initialize paper trader
 
         Args:
             strategy: Trading strategy to use
-            data_handler: Data handler for fetching live data
+            symbols: Trading symbol(s) - can be single string or list of strings
+            data_handler: Data handler for fetching live data (deprecated, use broker)
+            broker: Broker instance for fetching live data (recommended)
             initial_capital: Starting capital
             position_size: Fraction of capital to use per trade
             commission: Trading commission/fee
             log_file: Path to log file for trades (optional)
         """
         self.strategy = strategy
+
+        # Normalize symbols to list
+        if isinstance(symbols, str):
+            self.symbols = [symbols]
+        else:
+            self.symbols = symbols
+
+        # Backward compatibility with data_handler
         self.data_handler = data_handler
+        self.broker = broker
+
         self.initial_capital = initial_capital
         self.position_size = position_size
         self.commission = commission
         self.log_file = log_file
 
-        # Trading state
+        # Trading state - track positions per symbol
         self.capital = initial_capital
-        self.position = 0  # Current position size
-        self.entry_price = 0
-        self.last_signal = 0
+        self.positions: Dict[str, float] = {symbol: 0.0 for symbol in self.symbols}
+        self.entry_prices: Dict[str, float] = {symbol: 0.0 for symbol in self.symbols}
+        self.last_signals: Dict[str, int] = {symbol: 0 for symbol in self.symbols}
 
         # History
-        self.trades = []
-        self.equity_history = []
+        self.trades: List[Dict[str, Any]] = []
+        self.equity_history: List[Dict[str, Any]] = []
 
         # Running flag
         self.is_running = False
 
-    def get_portfolio_value(self, current_price: float) -> float:
-        """Calculate current portfolio value"""
-        if self.position > 0:
-            return self.capital + (self.position * current_price)
-        return self.capital
+    def get_portfolio_value(self, current_prices: Optional[Dict[str, float]] = None) -> float:
+        """
+        Calculate current portfolio value
 
-    def execute_buy(self, price: float, timestamp: datetime):
-        """Execute a buy order"""
-        if self.position > 0:
-            print("Already in position, skipping BUY signal")
+        Args:
+            current_prices: Dict mapping symbol to current price.
+                           If None, only returns cash value.
+
+        Returns:
+            Total portfolio value (cash + positions)
+        """
+        if current_prices is None:
+            current_prices = {}
+
+        # Start with cash
+        total_value = self.capital
+
+        # Add value of all positions
+        for symbol, position in self.positions.items():
+            if position > 0 and symbol in current_prices:
+                total_value += position * current_prices[symbol]
+
+        return total_value
+
+    def execute_buy(self, symbol: str, price: float, timestamp: datetime):
+        """
+        Execute a buy order
+
+        Args:
+            symbol: Trading symbol
+            price: Buy price
+            timestamp: Trade timestamp
+        """
+        if self.positions[symbol] > 0:
+            print(f"Already in position for {symbol}, skipping BUY signal")
             return
 
         trade_capital = self.capital * self.position_size
-        self.position = trade_capital / price * (1 - self.commission)
-        self.entry_price = price
+        self.positions[symbol] = trade_capital / price * (1 - self.commission)
+        self.entry_prices[symbol] = price
         self.capital = self.capital - trade_capital
 
         trade = {
+            'symbol': symbol,
             'timestamp': timestamp,
             'type': 'BUY',
             'price': price,
-            'size': self.position,
+            'size': self.positions[symbol],
             'capital': self.capital,
             'commission': trade_capital * self.commission
         }
@@ -79,57 +131,71 @@ class PaperTrader:
         self.trades.append(trade)
         self._log_trade(trade)
 
-        print(f"\n[BUY] {timestamp}")
+        print(f"\n[BUY] {symbol} {timestamp}")
         print(f"Price: ${price:.2f}")
-        print(f"Size: {self.position:.6f}")
+        print(f"Size: {self.positions[symbol]:.6f}")
         print(f"Capital remaining: ${self.capital:.2f}")
 
-    def execute_sell(self, price: float, timestamp: datetime):
-        """Execute a sell order"""
-        if self.position == 0:
-            print("No position to sell, skipping SELL signal")
+    def execute_sell(self, symbol: str, price: float, timestamp: datetime):
+        """
+        Execute a sell order
+
+        Args:
+            symbol: Trading symbol
+            price: Sell price
+            timestamp: Trade timestamp
+        """
+        if self.positions[symbol] == 0:
+            print(f"No position to sell for {symbol}, skipping SELL signal")
             return
 
-        sale_proceeds = self.position * price * (1 - self.commission)
+        sale_proceeds = self.positions[symbol] * price * (1 - self.commission)
         self.capital = self.capital + sale_proceeds
 
         # Calculate profit/loss
-        pnl = sale_proceeds - (self.position * self.entry_price)
-        pnl_pct = (price - self.entry_price) / self.entry_price * 100
+        pnl = sale_proceeds - (self.positions[symbol] * self.entry_prices[symbol])
+        pnl_pct = (price - self.entry_prices[symbol]) / self.entry_prices[symbol] * 100
 
         trade = {
+            'symbol': symbol,
             'timestamp': timestamp,
             'type': 'SELL',
             'price': price,
-            'size': self.position,
+            'size': self.positions[symbol],
             'capital': self.capital,
             'pnl': pnl,
             'pnl_pct': pnl_pct,
-            'commission': self.position * price * self.commission
+            'commission': self.positions[symbol] * price * self.commission
         }
 
         self.trades.append(trade)
         self._log_trade(trade)
 
-        print(f"\n[SELL] {timestamp}")
+        print(f"\n[SELL] {symbol} {timestamp}")
         print(f"Price: ${price:.2f}")
-        print(f"Size: {self.position:.6f}")
+        print(f"Size: {self.positions[symbol]:.6f}")
         print(f"P&L: ${pnl:.2f} ({pnl_pct:+.2f}%)")
         print(f"Capital: ${self.capital:.2f}")
 
-        self.position = 0
-        self.entry_price = 0
+        self.positions[symbol] = 0
+        self.entry_prices[symbol] = 0
 
     def update(self, symbol: str, timeframe: str):
         """
-        Update with latest market data and execute trades
+        Update with latest market data and execute trades (backward compatibility)
 
         Args:
             symbol: Trading pair symbol
             timeframe: Candle timeframe
         """
-        # Fetch recent data
-        df = self.data_handler.fetch_ohlcv(symbol, timeframe, limit=100)
+        # Use data_handler if available (backward compatibility)
+        if self.data_handler:
+            df = self.data_handler.fetch_ohlcv(symbol, timeframe, limit=100)
+        elif self.broker:
+            df = self.broker.fetch_ohlcv(symbol, timeframe, limit=100)
+        else:
+            print("No data handler or broker configured")
+            return
 
         if df.empty:
             print("No data received")
@@ -141,22 +207,23 @@ class PaperTrader:
         current_price = info['close']
         timestamp = info['timestamp']
 
-        # Track equity
-        portfolio_value = self.get_portfolio_value(current_price)
+        # Track equity (single symbol version)
+        current_prices = {symbol: current_price}
+        portfolio_value = self.get_portfolio_value(current_prices)
         self.equity_history.append({
             'timestamp': timestamp,
             'equity': portfolio_value,
             'price': current_price,
-            'position': self.position
+            'position': self.positions[symbol]
         })
 
         # Execute trades based on signal
-        if signal == 1 and self.last_signal != 1:  # New BUY signal
-            self.execute_buy(current_price, timestamp)
-        elif signal == -1 and self.last_signal != -1:  # New SELL signal
-            self.execute_sell(current_price, timestamp)
+        if signal == 1 and self.last_signals[symbol] != 1:  # New BUY signal
+            self.execute_buy(symbol, current_price, timestamp)
+        elif signal == -1 and self.last_signals[symbol] != -1:  # New SELL signal
+            self.execute_sell(symbol, current_price, timestamp)
 
-        self.last_signal = signal
+        self.last_signals[symbol] = signal
 
         # Print status
         self._print_status(info, portfolio_value)
@@ -214,7 +281,10 @@ class PaperTrader:
             indicator_parts.append(f"Signal: {info['signal_line']:.2f}")
 
         print(" | ".join(indicator_parts))
-        print(f"Position: {self.position:.6f} | Portfolio Value: ${portfolio_value:.2f}")
+
+        # Show total positions
+        total_position = sum(self.positions.values())
+        print(f"Position: {total_position:.6f} | Portfolio Value: ${portfolio_value:.2f}")
         print(f"Return: {((portfolio_value - self.initial_capital) / self.initial_capital * 100):+.2f}%")
 
     def _print_summary(self):

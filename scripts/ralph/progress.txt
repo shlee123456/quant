@@ -23,3 +23,19 @@ Started: Sun Feb  8 16:42:16 KST 2026
   - Used sqlite3.Row factory for easy dict conversion in getter methods
   - mypy typecheck passes with no errors for database.py
 ---
+
+## 2026-02-08 17:00 - US-102
+- Implemented all CRUD methods in TradingDatabase class
+- Added create_session(), log_trade(), log_signal(), log_portfolio_snapshot()
+- Added get_session_summary(), get_all_sessions(), update_session()
+- Added helper methods: get_session_trades(), get_session_snapshots(), get_session_signals()
+- Files changed: trading_bot/database.py
+- **Learnings for future iterations:**
+  - All CRUD methods properly handle datetime to ISO string conversion
+  - JSON deserialization happens in getter methods (get_session_snapshots, get_session_signals)
+  - update_session() uses dynamic SQL building to update any subset of fields
+  - sqlite3.Row factory allows easy conversion to dict with dict(row)
+  - session_id is generated as "{strategy_name}_{timestamp}" format
+  - All getter methods return None or empty list when no data found (graceful handling)
+  - Validation is minimal - assumes callers provide correct data types
+---
