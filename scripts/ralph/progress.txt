@@ -165,3 +165,32 @@ Started: Sun Feb  8 16:42:16 KST 2026
   - Next step: US-108 will implement real-time portfolio display
 ---
 
+## 2026-02-08 20:00 - US-108
+- Implemented real-time portfolio monitoring in Paper Trading tab
+- Display total portfolio value calculated from real-time prices
+- Display cash balance from trader.capital
+- Show positions table with columns: Symbol, Shares, Current Price, Market Value, P&L, P&L %
+- Calculate and display total P&L and P&L % from (portfolio_value - initial_capital)
+- Auto-refresh every 10 seconds using time.sleep(10) + st.rerun()
+- Show "No active session" message when paper_trading_active is False
+- Format all currency values with $ prefix and 2 decimal places
+- Fetch real-time ticker prices via broker.fetch_ticker() for each symbol
+- Handle ticker fetch errors gracefully (use 0.0 as fallback price)
+- Positions filtered to show only non-zero holdings (shares > 0)
+- Completed trades count displayed (SELL type trades)
+- Typecheck passes
+- Files changed: dashboard/app.py
+- **Learnings for future iterations:**
+  - Real-time portfolio monitoring requires fetching current prices in loop
+  - broker.fetch_ticker() called per symbol, wrapped in try/except for robustness
+  - trader.get_portfolio_value(current_prices) calculates total value from prices dict
+  - Auto-refresh pattern: time.sleep(10) + st.rerun() creates 10-second loop
+  - Positions table filters trader.positions.items() for shares > 0
+  - P&L calculation: (current_price - entry_price) * shares
+  - P&L % calculation: ((current - entry) / entry) * 100, check entry > 0 to avoid division by zero
+  - DataFrame formatting: f-strings for currency (${value:.2f}) and percentage ({pct:+.2f}%)
+  - Conditional UI: show table if positions_data else show "no positions" message
+  - "No active session" block uses elif to avoid conflict with active session block
+  - Browser verification deferred (no browser testing tools available)
+---
+
