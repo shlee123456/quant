@@ -87,9 +87,9 @@ def test_golden_cross_signal():
     dates = pd.date_range(start='2024-01-01', periods=100, freq='1h')
 
     # Create price pattern that will cause golden cross
-    prices = list(range(50, 80))  # Rising
-    prices.extend(list(range(80, 60, -1)))  # Falling
-    prices.extend(list(range(60, 100)))  # Rising again
+    prices = list(range(50, 80))  # Rising (30 elements)
+    prices.extend(list(range(80, 60, -1)))  # Falling (20 elements)
+    prices.extend(list(range(60, 110)))  # Rising again (50 elements) - total 100
 
     df = pd.DataFrame({
         'timestamp': dates,
@@ -115,9 +115,9 @@ def test_dead_cross_signal():
     dates = pd.date_range(start='2024-01-01', periods=100, freq='1h')
 
     # Create price pattern
-    prices = list(range(100, 80, -1))  # Falling
-    prices.extend(list(range(80, 90)))  # Rising
-    prices.extend(list(range(90, 50, -1)))  # Falling again
+    prices = list(range(100, 70, -1))  # Falling (30 elements)
+    prices.extend(list(range(70, 90)))  # Rising (20 elements)
+    prices.extend(list(range(90, 40, -1)))  # Falling again (50 elements) - total 100
 
     df = pd.DataFrame({
         'timestamp': dates,

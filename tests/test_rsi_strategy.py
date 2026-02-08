@@ -81,9 +81,20 @@ def test_signal_generation(sample_data):
 
 def test_oversold_signal():
     """Test BUY signal generation when RSI is oversold"""
-    # Create data that will produce low RSI
-    dates = pd.date_range(start='2024-01-01', periods=50, freq='1h')
-    prices = list(range(100, 50, -1))  # Declining prices
+    # Create data that will produce RSI crossover from oversold
+    dates = pd.date_range(start='2024-01-01', periods=60, freq='1h')
+
+    # Pattern: sideways -> sharp decline -> recovery (to create oversold crossover)
+    prices = [100.0 + i * 0.1 for i in range(15)]  # Slight upward trend (15 elements)
+    # Sharp decline to create oversold condition
+    current_price = prices[-1]
+    for _ in range(20):  # Decline (20 elements)
+        current_price -= 2.0
+        prices.append(current_price)
+    # Recovery to create crossover back above oversold
+    for _ in range(25):  # Recovery (25 elements) - total 60
+        current_price += 1.0
+        prices.append(current_price)
 
     df = pd.DataFrame({
         'timestamp': dates,
@@ -91,7 +102,7 @@ def test_oversold_signal():
         'high': [p * 1.01 for p in prices],
         'low': [p * 0.99 for p in prices],
         'close': prices,
-        'volume': [1000] * 50
+        'volume': [1000] * 60
     })
     df.set_index('timestamp', inplace=True)
 
@@ -105,9 +116,20 @@ def test_oversold_signal():
 
 def test_overbought_signal():
     """Test SELL signal generation when RSI is overbought"""
-    # Create data that will produce high RSI
-    dates = pd.date_range(start='2024-01-01', periods=50, freq='1h')
-    prices = list(range(50, 100))  # Rising prices
+    # Create data that will produce RSI crossover from overbought
+    dates = pd.date_range(start='2024-01-01', periods=60, freq='1h')
+
+    # Pattern: sideways -> sharp rise -> decline (to create overbought crossover)
+    prices = [50.0 - i * 0.1 for i in range(15)]  # Slight downward trend (15 elements)
+    # Sharp rise to create overbought condition
+    current_price = prices[-1]
+    for _ in range(20):  # Rise (20 elements)
+        current_price += 2.0
+        prices.append(current_price)
+    # Decline to create crossover back below overbought
+    for _ in range(25):  # Decline (25 elements) - total 60
+        current_price -= 1.0
+        prices.append(current_price)
 
     df = pd.DataFrame({
         'timestamp': dates,
@@ -115,7 +137,7 @@ def test_overbought_signal():
         'high': [p * 1.01 for p in prices],
         'low': [p * 0.99 for p in prices],
         'close': prices,
-        'volume': [1000] * 50
+        'volume': [1000] * 60
     })
     df.set_index('timestamp', inplace=True)
 
