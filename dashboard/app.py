@@ -651,8 +651,131 @@ def display_backtest_results(backtest_data: Dict):
         st.info(get_text('no_trades', lang))
 
 
+def paper_trading_comparison_tab():
+    """Paper trading sessions comparison interface"""
+    lang = st.session_state.language
+
+    st.header("📊 Strategy Comparison")
+
+    st.markdown("""
+    과거 모의투자 세션들의 성과를 비교합니다. 여러 전략과 종목 조합의 결과를 한눈에 확인하세요.
+    """)
+
+    # Initialize database
+    try:
+        db = TradingDatabase()
+        all_sessions = db.get_all_sessions()
+    except Exception as e:
+        st.error(f"❌ 데이터베이스 연결 실패: {e}")
+        return
+
+    if not all_sessions:
+        st.info("ℹ️ 아직 완료된 모의투자 세션이 없습니다. Paper Trading 탭에서 모의투자를 시작해보세요!")
+        return
+
+    # Session selection
+    st.subheader("📋 세션 선택")
+
+    # Create session display names
+    session_options = {}
+    for session in all_sessions:
+        session_id = session['session_id']
+        strategy = session['strategy_name']
+        start_time = session['start_time'][:16] if session['start_time'] else 'N/A'
+        status = session['status']
+
+        display_name = f"{session_id} | {strategy} | {start_time} | {status}"
+        session_options[display_name] = session_id
+
+    selected_displays = st.multiselect(
+        "비교할 세션을 선택하세요 (여러 개 선택 가능)",
+        options=list(session_options.keys()),
+        default=list(session_options.keys())[:min(3, len(session_options))],
+        help="최대 10개까지 선택 가능합니다"
+    )
+
+    if not selected_displays:
+        st.warning("⚠️ 비교할 세션을 최소 1개 이상 선택해주세요.")
+        return
+
+    # Get selected session IDs
+    selected_session_ids = [session_options[display] for display in selected_displays]
+
+    # Filter sessions
+    selected_sessions = [s for s in all_sessions if s['session_id'] in selected_session_ids]
+
+    # Comparison table
+    st.markdown("---")
+    st.subheader("📊 성과 비교")
+
+    comparison_data = []
+    for session in selected_sessions:
+        # Get detailed session info
+        summary = db.get_session_summary(session['session_id'])
+
+        if summary:
+            comparison_data.append({
+                'Session ID': session['session_id'],
+                'Strategy': session['strategy_name'],
+                'Start Time': session['start_time'][:16] if session['start_time'] else 'N/A',
+                'End Time': session['end_time'][:16] if session['end_time'] else 'Running',
+                'Initial Capital': f"${session['initial_capital']:,.2f}",
+                'Final Capital': f"${session['final_capital']:,.2f}" if session['final_capital'] else 'N/A',
+                'Return %': f"{session['total_return']:.2f}%" if session['total_return'] is not None else 'N/A',
+                'Sharpe Ratio': f"{session['sharpe_ratio']:.2f}" if session['sharpe_ratio'] is not None else 'N/A',
+                'Max Drawdown %': f"{session['max_drawdown']:.2f}%" if session['max_drawdown'] is not None else 'N/A',
+                'Win Rate %': f"{session['win_rate']:.2f}%" if session['win_rate'] is not None else 'N/A',
+                'Status': session['status']
+            })
+
+    if comparison_data:
+        comparison_df = pd.DataFrame(comparison_data)
+
+        # Display table
+        st.dataframe(comparison_df, use_container_width=True)
+
+        # Find best strategy by win rate
+        st.markdown("---")
+        st.subheader("🏆 최고 성과")
+
+        completed_sessions = [s for s in selected_sessions if s['status'] == 'completed' and s['win_rate'] is not None]
+
+        if completed_sessions:
+            best_by_return = max(completed_sessions, key=lambda x: x['total_return'] if x['total_return'] is not None else -float('inf'))
+            best_by_win_rate = max(completed_sessions, key=lambda x: x['win_rate'] if x['win_rate'] is not None else 0)
+            best_by_sharpe = max(completed_sessions, key=lambda x: x['sharpe_ratio'] if x['sharpe_ratio'] is not None else -float('inf'))
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric(
+                    "최고 수익률",
+                    f"{best_by_return['total_return']:.2f}%" if best_by_return['total_return'] else 'N/A',
+                    delta=f"{best_by_return['strategy_name']}"
+                )
+
+            with col2:
+                st.metric(
+                    "최고 승률",
+                    f"{best_by_win_rate['win_rate']:.2f}%" if best_by_win_rate['win_rate'] else 'N/A',
+                    delta=f"{best_by_win_rate['strategy_name']}"
+                )
+
+            with col3:
+                st.metric(
+                    "최고 샤프 비율",
+                    f"{best_by_sharpe['sharpe_ratio']:.2f}" if best_by_sharpe['sharpe_ratio'] else 'N/A',
+                    delta=f"{best_by_sharpe['strategy_name']}"
+                )
+        else:
+            st.info("ℹ️ 완료된 세션이 없어 최고 성과를 표시할 수 없습니다.")
+
+    else:
+        st.warning("⚠️ 선택한 세션에 대한 데이터가 없습니다.")
+
+
 def strategy_comparison_tab():
-    """Strategy comparison interface"""
+    """Strategy comparison interface (legacy - for backtesting)"""
     st.header("🔍 Strategy Comparison")
 
     st.markdown("""
@@ -1537,12 +1660,13 @@ def main():
     sidebar_config()
 
     # Main tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         get_text('tab_comparison', lang),
         get_text('tab_backtest', lang),
         get_text('tab_live', lang),
         get_text('tab_quotes', lang),
-        get_text('tab_paper', lang)
+        get_text('tab_paper', lang),
+        "📊 Session Comparison"  # New tab for US-109
     ])
 
     with tab1:
@@ -1559,6 +1683,9 @@ def main():
 
     with tab5:
         paper_trading_tab()
+
+    with tab6:
+        paper_trading_comparison_tab()
 
     # Footer
     st.markdown("---")
