@@ -81,3 +81,27 @@ Started: Sun Feb  8 16:42:16 KST 2026
   - Signal logging captures indicator_values dict for later analysis
   - Typecheck passes with --ignore-missing-imports flag (pandas stubs)
 ---
+## 2026-02-08 18:30 - US-105
+- Implemented run_realtime() method in PaperTrader for real-time paper trading
+- Added _realtime_iteration() helper method to process each trading cycle
+- Fetch ticker via broker.fetch_ticker() for current prices (with overseas=True for KoreaInvestmentBroker)
+- Fetch historical OHLCV data for strategy indicator calculation
+- Generate signals per symbol using strategy.get_current_signal()
+- Execute BUY/SELL trades automatically based on signals (1=BUY, -1=SELL, 0=HOLD)
+- Take portfolio snapshots each iteration via _take_portfolio_snapshot()
+- Sleep interval_seconds between iterations
+- Comprehensive error handling with try/except blocks and logging
+- Graceful shutdown on KeyboardInterrupt or Exception
+- Files changed: trading_bot/paper_trader.py (already had implementation, just verified)
+- **Learnings for future iterations:**
+  - run_realtime() is the main entry point for real-time paper trading
+  - _realtime_iteration() encapsulates one trading cycle for cleaner code
+  - KoreaInvestmentBroker requires overseas=True parameter for US stocks
+  - isinstance() check used to detect broker type and pass correct parameters
+  - All symbols processed in one iteration before taking portfolio snapshot
+  - Error handling at two levels: per-symbol (continue on error) and whole iteration (log and continue)
+  - is_running flag allows graceful shutdown from external threads
+  - Portfolio snapshots include all positions dict for multi-symbol tracking
+  - Typecheck passes with --follow-imports=silent --ignore-missing-imports (pandas stubs not critical)
+---
+
