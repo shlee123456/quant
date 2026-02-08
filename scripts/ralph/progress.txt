@@ -281,3 +281,32 @@ Started: Sun Feb  8 16:42:16 KST 2026
   - Browser verification not applicable for unit tests
 ---
 
+## 2026-02-08 22:00 - US-112
+- Created tests/test_paper_trading_integration.py with 10 integration tests
+- MockBroker class simulates real-time ticker/OHLCV data with price movement
+- test_run_realtime_with_mock_broker: background thread execution for 3 iterations
+- test_multi_symbol_iteration: verify both AAPL and MSFT processed
+- test_start_stop_control_flow: verify is_running flag transitions
+- test_database_logging_during_execution: verify snapshots/signals logged
+- test_portfolio_snapshot_creation: verify multi-symbol positions in snapshot
+- test_session_state_transitions: verify active -> completed status
+- test_run_realtime_with_macd_strategy: verify different strategy works
+- test_error_handling_in_realtime_iteration: graceful error handling when broker fails
+- test_position_tracking_across_iterations: verify positions maintained
+- test_concurrent_symbol_processing: verify all symbols fetched per iteration
+- All 10 tests pass in 5.90s
+- Typecheck passes
+- Files changed: tests/test_paper_trading_integration.py
+- **Learnings for future iterations:**
+  - Integration tests use _realtime_iteration() directly for controlled execution
+  - Background thread pattern: create thread, start, join with timeout
+  - MockBroker tracks call_count and symbols_fetched for verification
+  - Threading.daemon=True prevents blocking on test exit
+  - Error handling tested by replacing broker methods with failing functions
+  - Session state verified by querying database before/after stop()
+  - Multi-symbol tests check all symbols in broker.symbols_fetched list
+  - Portfolio snapshots include positions dict with all active symbols
+  - time.sleep() used between iterations to simulate real-time execution
+  - Browser verification not applicable for integration tests
+---
+
