@@ -93,8 +93,21 @@ class RSIStrategy:
             'signal'
         ] = -1
 
-        # Position tracking (1 = long, 0 = no position)
-        data['position'] = data['signal'].replace(0, np.nan).ffill().fillna(0)
+        # Position tracking (1 = long, 0 = flat)
+        # Buy signal (1) -> position = 1
+        # Sell signal (-1) -> position = 0
+        # Hold (0) -> maintain previous position
+        data['position'] = 0
+        for i in range(len(data)):
+            if i == 0:
+                data.iloc[i, data.columns.get_loc('position')] = 1 if data.iloc[i]['signal'] == 1 else 0
+            else:
+                if data.iloc[i]['signal'] == 1:
+                    data.iloc[i, data.columns.get_loc('position')] = 1
+                elif data.iloc[i]['signal'] == -1:
+                    data.iloc[i, data.columns.get_loc('position')] = 0
+                else:
+                    data.iloc[i, data.columns.get_loc('position')] = data.iloc[i-1]['position']
 
         return data
 
