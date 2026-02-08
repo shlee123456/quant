@@ -310,3 +310,34 @@ Started: Sun Feb  8 16:42:16 KST 2026
   - Browser verification not applicable for integration tests
 ---
 
+## 2026-02-08 22:30 - US-113
+- Created tests/test_dashboard_paper_trading.py with 13 dashboard integration tests
+- test_paper_trading_tab_data_flow: verify strategy instantiation
+- test_strategy_selection_options: verify 5 strategy options
+- test_symbol_selection_options: verify 7 US stock symbols
+- test_session_comparison_data_retrieval: verify session data structure
+- test_portfolio_display_data_structure: verify snapshot structure with positions
+- test_equity_comparison_chart_data: verify chart data preparation
+- test_create_equity_comparison_chart_function: verify plotly figure creation
+- test_create_equity_comparison_chart_with_no_data: verify None return for empty data
+- test_session_start_workflow_components: verify required components
+- test_session_comparison_metrics: verify best session selection logic
+- test_portfolio_value_calculation: verify cash + positions value
+- test_pnl_calculation: verify P&L and P&L% formulas
+- test_comparison_table_data_formatting: verify currency/percentage formatting
+- All 13 tests pass in 2.58s
+- Typecheck passes
+- Files changed: tests/test_dashboard_paper_trading.py
+- **Learnings for future iterations:**
+  - Dashboard tests focus on data logic, not UI rendering (Streamlit requires browser)
+  - create_equity_comparison_chart imported from dashboard.app module
+  - Comparison metrics use max() with key=lambda for finding best sessions
+  - Portfolio value = cash + sum(positions[symbol] * current_prices[symbol])
+  - P&L% = ((current_price - entry_price) / entry_price) * 100
+  - Currency formatting: f"${value:,.2f}" for comma thousands separator
+  - Percentage formatting: f"{value:.2f}%" for 2 decimal places
+  - Temp database fixture creates sample sessions/trades/snapshots for testing
+  - None return from chart function when no data available
+  - Browser verification not applicable for unit/integration tests
+---
+
