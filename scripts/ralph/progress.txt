@@ -219,3 +219,32 @@ Started: Sun Feb  8 16:42:16 KST 2026
   - Next step: US-110 will add equity curve comparison chart
 ---
 
+## 2026-02-08 21:00 - US-110
+- Implemented create_equity_comparison_chart(session_ids: List[str], db: TradingDatabase) function
+- Fetch portfolio snapshots for each session using db.get_session_snapshots(session_id)
+- Plot equity curves using plotly.graph_objects.Scatter in line mode
+- Each session displayed with unique color from predefined palette (10 colors)
+- Label format: "{strategy_name} ({session_id[:8]})"
+- X-axis: timestamp (converted to datetime), Y-axis: total_value
+- Legend positioned at top-left corner
+- Display with st.plotly_chart(fig, use_container_width=True)
+- Handle sessions with no snapshots: return None, display info message
+- Typecheck passes
+- Added plotly.graph_objects import
+- Integrated chart into paper_trading_comparison_tab() after best performance section
+- Files changed: dashboard/app.py
+- **Learnings for future iterations:**
+  - db.get_session_snapshots() returns list of snapshot dicts
+  - pd.to_datetime() used to convert timestamp strings to datetime objects
+  - go.Scatter with mode='lines' creates line chart
+  - hovertemplate customizes hover info: '%{y:$,.2f}<br>%{x}<extra></extra>'
+  - Colors cycled using modulo: colors[idx % len(colors)]
+  - sessions_with_data counter tracks sessions with actual data
+  - Return None when no sessions have data (graceful handling)
+  - fig.update_layout() sets title, axis labels, legend position, template
+  - fig.update_yaxes(tickprefix="$", tickformat=",.0f") formats Y-axis as currency
+  - Chart displayed conditionally: if fig: st.plotly_chart(fig) else: st.info(message)
+  - Browser verification deferred (no browser testing tools available)
+  - Next steps: US-111, US-112, US-113 are test implementations
+---
+
