@@ -30,9 +30,14 @@ A multi-asset trading bot supporting cryptocurrencies and stocks (domestic & int
   - Compare multiple strategies
   - Parameter sensitivity analysis
 
-- **Paper Trading**
-  - Test strategies in real-time without risking capital
-  - Live dashboard with Streamlit
+- **Paper Trading** (Phase 1 Complete)
+  - Real-time simulation with live market data
+  - Multi-symbol portfolio tracking (up to 7 US stocks simultaneously)
+  - SQLite database for session history and performance metrics
+  - Automated trade execution based on strategy signals
+  - Portfolio snapshots with P&L tracking
+  - Interactive dashboard with Streamlit
+  - Session comparison and equity curve visualization
 
 ## Installation
 
@@ -257,6 +262,61 @@ volatile_data = data_gen.generate_volatile_data(periods=1000)
 # Cyclical market
 cyclical_data = data_gen.generate_cyclical_data(periods=1000, cycle_length=100)
 ```
+
+### 6. Paper Trading - Real-time Simulation
+
+Paper trading allows you to test strategies with real market data without risking capital. See [examples/run_paper_trading.py](examples/run_paper_trading.py) for a complete example.
+
+```python
+from trading_bot.paper_trader import PaperTrader
+from trading_bot.strategies import RSIStrategy
+from trading_bot.database import TradingDatabase
+from dashboard.kis_broker import get_kis_broker
+
+# Initialize components
+strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+broker = get_kis_broker()  # Requires KIS API credentials
+db = TradingDatabase()  # Stores session history
+
+# Create paper trader for multiple symbols
+trader = PaperTrader(
+    strategy=strategy,
+    symbols=['AAPL', 'MSFT', 'GOOGL'],  # Trade multiple stocks
+    broker=broker,
+    initial_capital=10000.0,
+    position_size=0.3,  # Use 30% of capital per trade
+    db=db
+)
+
+# Run real-time paper trading (60 second intervals)
+trader.run_realtime(interval_seconds=60, timeframe='1d')
+
+# Or use the dashboard for interactive paper trading
+# streamlit run dashboard/app.py
+```
+
+#### Database Schema
+
+Paper trading sessions are stored in SQLite (`data/paper_trading.db`) with the following schema:
+
+**Sessions Table:**
+- `session_id`: Unique session identifier (strategy_name_timestamp)
+- `strategy_name`: Strategy used (e.g., "RSI_14_30_70")
+- `start_time`, `end_time`: Session duration
+- `initial_capital`, `final_capital`: Capital tracking
+- `total_return`, `sharpe_ratio`, `max_drawdown`, `win_rate`: Performance metrics
+- `status`: Session status (active/completed)
+
+**Trades Table:**
+- Records all trades with symbol, timestamp, type (BUY/SELL), price, size, commission, P&L
+
+**Portfolio Snapshots:**
+- Periodic portfolio value snapshots with cash and positions
+
+**Strategy Signals:**
+- All strategy signals generated with indicator values and execution status
+
+See the **Session Comparison** tab in the dashboard to compare performance across multiple sessions.
 
 ## Strategy Interface
 
