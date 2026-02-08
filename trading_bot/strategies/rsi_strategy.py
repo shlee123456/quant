@@ -5,6 +5,9 @@ RSI (Relative Strength Index) Trading Strategy
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple
+from ..logging_config import get_strategy_logger
+
+logger = get_strategy_logger()
 
 
 class RSIStrategy:
@@ -28,6 +31,8 @@ class RSIStrategy:
         self.overbought = overbought
         self.oversold = oversold
         self.name = f"RSI_{period}_{oversold}_{overbought}"
+
+        logger.debug(f"Initialized {self.name} - Overbought: {overbought}, Oversold: {oversold}")
 
     def _calculate_rsi(self, prices: pd.Series) -> pd.Series:
         """

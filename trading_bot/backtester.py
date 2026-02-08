@@ -6,6 +6,9 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List
 from .strategy import MovingAverageCrossover
+from .logging_config import get_backtester_logger, log_exception
+
+logger = get_backtester_logger()
 
 
 class Backtester:
@@ -43,102 +46,113 @@ class Backtester:
         Returns:
             Dictionary with backtest results
         """
-        # Calculate indicators
-        data = self.strategy.calculate_indicators(df)
+        try:
+            logger.info(f"Starting backtest with strategy: {self.strategy.name}")
+            logger.debug(f"Initial capital: ${self.initial_capital}, Position size: {self.position_size}, Commission: {self.commission}")
 
-        # Initialize tracking variables
-        capital = self.initial_capital
-        position = 0  # 0 = no position, >0 = long position size
-        entry_price = 0
-        trades = []
-        equity = []
+            # Calculate indicators
+            data = self.strategy.calculate_indicators(df)
+            logger.debug(f"Calculated indicators for {len(data)} data points")
 
-        # Iterate through data
-        for idx, row in data.iterrows():
-            signal = row['signal']
-            price = row['close']
+            # Initialize tracking variables
+            capital = self.initial_capital
+            position = 0  # 0 = no position, >0 = long position size
+            entry_price = 0
+            trades = []
+            equity = []
 
-            # Track equity
-            if position > 0:
-                current_value = capital + (position * price)
-            else:
-                current_value = capital
+            # Iterate through data
+            for idx, row in data.iterrows():
+                signal = row['signal']
+                price = row['close']
 
-            equity.append({
-                'timestamp': idx,
-                'equity': current_value,
-                'price': price,
-                'position': position
-            })
+                # Track equity
+                if position > 0:
+                    current_value = capital + (position * price)
+                else:
+                    current_value = capital
 
-            # Execute trades based on signals
-            if signal == 1 and position == 0:  # BUY signal
-                # Enter long position
-                trade_capital = capital * self.position_size
-                position = trade_capital / price * (1 - self.commission)
-                entry_price = price
-                capital = capital - trade_capital
-
-                trades.append({
+                equity.append({
                     'timestamp': idx,
-                    'type': 'BUY',
+                    'equity': current_value,
                     'price': price,
-                    'size': position,
-                    'capital': capital,
-                    'commission': trade_capital * self.commission
+                    'position': position
                 })
 
-            elif signal == -1 and position > 0:  # SELL signal
-                # Exit long position
-                sale_proceeds = position * price * (1 - self.commission)
+                # Execute trades based on signals
+                if signal == 1 and position == 0:  # BUY signal
+                    # Enter long position
+                    trade_capital = capital * self.position_size
+                    position = trade_capital / price * (1 - self.commission)
+                    entry_price = price
+                    capital = capital - trade_capital
+
+                    trades.append({
+                        'timestamp': idx,
+                        'type': 'BUY',
+                        'price': price,
+                        'size': position,
+                        'capital': capital,
+                        'commission': trade_capital * self.commission
+                    })
+
+                elif signal == -1 and position > 0:  # SELL signal
+                    # Exit long position
+                    sale_proceeds = position * price * (1 - self.commission)
+                    capital = capital + sale_proceeds
+
+                    # Calculate profit/loss
+                    pnl = sale_proceeds - (position * entry_price)
+                    pnl_pct = (price - entry_price) / entry_price * 100
+
+                    trades.append({
+                        'timestamp': idx,
+                        'type': 'SELL',
+                        'price': price,
+                        'size': position,
+                        'capital': capital,
+                        'pnl': pnl,
+                        'pnl_pct': pnl_pct,
+                        'commission': position * price * self.commission
+                    })
+
+                    position = 0
+                    entry_price = 0
+
+            # Close any open position at the end
+            if position > 0:
+                final_price = data.iloc[-1]['close']
+                sale_proceeds = position * final_price * (1 - self.commission)
                 capital = capital + sale_proceeds
 
-                # Calculate profit/loss
                 pnl = sale_proceeds - (position * entry_price)
-                pnl_pct = (price - entry_price) / entry_price * 100
+                pnl_pct = (final_price - entry_price) / entry_price * 100
 
                 trades.append({
-                    'timestamp': idx,
-                    'type': 'SELL',
-                    'price': price,
+                    'timestamp': data.index[-1],
+                    'type': 'SELL (CLOSE)',
+                    'price': final_price,
                     'size': position,
                     'capital': capital,
                     'pnl': pnl,
                     'pnl_pct': pnl_pct,
-                    'commission': position * price * self.commission
+                    'commission': position * final_price * self.commission
                 })
 
-                position = 0
-                entry_price = 0
+            # Store results
+            self.trades = trades
+            self.equity_curve = equity
 
-        # Close any open position at the end
-        if position > 0:
-            final_price = data.iloc[-1]['close']
-            sale_proceeds = position * final_price * (1 - self.commission)
-            capital = capital + sale_proceeds
+            # Calculate performance metrics
+            results = self._calculate_metrics(data)
 
-            pnl = sale_proceeds - (position * entry_price)
-            pnl_pct = (final_price - entry_price) / entry_price * 100
+            logger.info(f"Backtest completed: {len(trades)} trades, Total Return: {results['total_return']:.2f}%")
 
-            trades.append({
-                'timestamp': data.index[-1],
-                'type': 'SELL (CLOSE)',
-                'price': final_price,
-                'size': position,
-                'capital': capital,
-                'pnl': pnl,
-                'pnl_pct': pnl_pct,
-                'commission': position * final_price * self.commission
-            })
+            return results
 
-        # Store results
-        self.trades = trades
-        self.equity_curve = equity
-
-        # Calculate performance metrics
-        results = self._calculate_metrics(data)
-
-        return results
+        except Exception as e:
+            log_exception(logger, f"Error during backtest: {str(e)}")
+            raise
 
     def _calculate_metrics(self, data: pd.DataFrame) -> Dict:
         """Calculate performance metrics"""

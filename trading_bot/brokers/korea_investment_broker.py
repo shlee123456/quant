@@ -44,6 +44,9 @@ from .base_broker import (
     OrderNotFound,
     RateLimitExceeded
 )
+from ..logging_config import get_broker_logger, log_exception
+
+logger = get_broker_logger()
 
 
 class KoreaInvestmentBroker(BaseBroker):
@@ -111,6 +114,8 @@ class KoreaInvestmentBroker(BaseBroker):
         self.account = account
         self.mock = mock
 
+        logger.info(f"Initializing Korea Investment Broker - Account: {account}, Mock: {mock}")
+
         try:
             # python-kis 라이브러리 임포트 (지연 로딩)
             from pykis import PyKis
@@ -130,20 +135,23 @@ class KoreaInvestmentBroker(BaseBroker):
             self._rate_limiter = RateLimiter(max_calls=15, period=1.0)
 
         except ImportError:
+            logger.error("python-kis library not found")
             raise BrokerError(
                 "python-kis 라이브러리가 설치되지 않았습니다. "
                 "'pip install python-kis'를 실행하세요."
             )
         except Exception as e:
             error_msg = str(e)
-            
+
             # Rate limit 에러 감지 (EGW00133: 1분당 1회 제한)
             if "EGW00133" in error_msg or "1분당 1회" in error_msg:
+                logger.warning(f"Rate limit exceeded during authentication: {error_msg}")
                 raise AuthenticationError(
                     "한국투자증권 토큰 발급 제한 초과: 1분에 1회만 허용됩니다. "
                     "잠시 후 다시 시도해주세요. (에러 코드: EGW00133)"
                 )
-            
+
+            log_exception(logger, f"Authentication failed: {error_msg}")
             raise AuthenticationError(f"한국투자증권 인증 실패: {error_msg}")
 
     def fetch_ohlcv(
