@@ -136,3 +136,32 @@ Started: Sun Feb  8 16:42:16 KST 2026
   - Next step: US-107 will implement actual start/stop functionality with background thread
 ---
 
+## 2026-02-08 19:30 - US-107
+- Implemented start_paper_trading() function to start paper trading in background thread
+- Implemented stop_paper_trading() function to stop paper trading and join thread
+- Integrated TradingDatabase into paper trading workflow for session tracking
+- Background thread runs paper_trader.run_realtime(interval_seconds=60, timeframe='1d')
+- Session state management: paper_trading_active, paper_trader, paper_trading_thread
+- Display session_id prominently when paper trading is active
+- Background thread error handling via session state (paper_trading_error)
+- Thread lifecycle management with daemon=True and thread.join(timeout=5.0)
+- Updated paper_trading_tab() to use new start/stop functions
+- Import threading and TradingDatabase modules
+- Display current session info from trader instance (not user input variables)
+- Typecheck passes with strategy: Any annotation and type: ignore[arg-type]
+- Files changed: dashboard/app.py
+- **Learnings for future iterations:**
+  - Background threads in Streamlit require daemon=True to avoid blocking on exit
+  - Threading pattern: create thread, start(), store reference in session state
+  - Stop pattern: set flag, call trader.stop(), join thread with timeout
+  - Session state persists across reruns, so thread reference survives
+  - Error propagation from thread: store exception in session state, check in UI
+  - TradingDatabase() instantiated in start function, passed to PaperTrader
+  - PaperTrader.run_realtime() blocks until is_running=False, so must run in thread
+  - session_id available via trader.session_id after start() called
+  - Display values from trader instance (trader.symbols, trader.initial_capital) not UI inputs
+  - strategy: Any type annotation prevents mypy errors from conditional strategy creation
+  - Browser verification deferred (no browser testing tools available)
+  - Next step: US-108 will implement real-time portfolio display
+---
+
