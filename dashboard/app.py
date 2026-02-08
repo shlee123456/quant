@@ -957,8 +957,104 @@ def paper_trading_tab():
         # Show selected symbols
         st.info(f"📈 선택된 종목: {', '.join(trader.symbols)}")
 
-        # Note: Real-time monitoring will be implemented in US-108
-        st.info("💡 실시간 포트폴리오 모니터링은 다음 단계에서 구현됩니다.")
+        # Real-time Portfolio Status
+        st.markdown("---")
+        st.subheader("💼 실시간 포트폴리오 현황")
+
+        # Auto-refresh every 10 seconds
+        time.sleep(0.1)  # Brief pause to allow UI to render
+
+        # Get current prices for all symbols
+        try:
+            from dashboard.kis_broker import get_kis_broker
+            broker = get_kis_broker()
+
+            if broker:
+                current_prices = {}
+                for symbol in trader.symbols:
+                    try:
+                        ticker = broker.fetch_ticker(symbol, overseas=True, market='NASDAQ')
+                        current_prices[symbol] = ticker['last']
+                    except Exception:
+                        # If fetching fails for a symbol, use last known price or 0
+                        current_prices[symbol] = 0.0
+
+                # Calculate portfolio value
+                portfolio_value = trader.get_portfolio_value(current_prices)
+                total_pnl = portfolio_value - trader.initial_capital
+                total_pnl_pct = (total_pnl / trader.initial_capital) * 100
+
+                # Display summary metrics
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric(
+                        "총 포트폴리오 가치",
+                        f"${portfolio_value:,.2f}",
+                        delta=f"{total_pnl_pct:+.2f}%"
+                    )
+
+                with col2:
+                    st.metric("현금 잔고", f"${trader.capital:,.2f}")
+
+                with col3:
+                    st.metric(
+                        "총 손익 (P&L)",
+                        f"${total_pnl:,.2f}",
+                        delta=f"{total_pnl_pct:+.2f}%"
+                    )
+
+                with col4:
+                    total_trades = len([t for t in trader.trades if t['type'] == 'SELL'])
+                    st.metric("완료된 거래", total_trades)
+
+                # Positions table
+                st.markdown("---")
+                st.subheader("📊 보유 포지션")
+
+                if any(pos > 0 for pos in trader.positions.values()):
+                    positions_data = []
+
+                    for symbol, shares in trader.positions.items():
+                        if shares > 0:
+                            current_price = current_prices.get(symbol, 0.0)
+                            entry_price = trader.entry_prices.get(symbol, 0.0)
+                            market_value = shares * current_price
+                            pnl = (current_price - entry_price) * shares
+                            pnl_pct = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0.0
+
+                            positions_data.append({
+                                'Symbol': symbol,
+                                'Shares': f"{shares:.6f}",
+                                'Current Price': f"${current_price:.2f}",
+                                'Market Value': f"${market_value:.2f}",
+                                'P&L': f"${pnl:.2f}",
+                                'P&L %': f"{pnl_pct:+.2f}%"
+                            })
+
+                    if positions_data:
+                        positions_df = pd.DataFrame(positions_data)
+                        st.dataframe(positions_df, use_container_width=True)
+                    else:
+                        st.info("현재 보유 중인 포지션이 없습니다.")
+                else:
+                    st.info("현재 보유 중인 포지션이 없습니다.")
+
+                # Auto-refresh trigger
+                st.markdown("---")
+                st.caption("🔄 자동 새로고침: 10초마다 업데이트")
+                time.sleep(10)
+                st.rerun()
+
+            else:
+                st.warning("⚠️ 브로커 연결 실패. 포트폴리오 정보를 가져올 수 없습니다.")
+
+        except Exception as e:
+            st.error(f"❌ 포트폴리오 데이터 로딩 실패: {e}")
+
+    elif not st.session_state.paper_trading_active:
+        # No active session message
+        st.info("ℹ️ 활성화된 모의투자 세션이 없습니다. '모의투자 시작' 버튼을 눌러 시작하세요.")
 
 
 def live_monitor_tab():
