@@ -199,7 +199,21 @@ class PaperTrader:
     def _print_status(self, info: Dict, portfolio_value: float):
         """Print current status"""
         print(f"\n[{info['timestamp']}]")
-        print(f"Price: ${info['close']:.2f} | Fast MA: ${info['fast_ma']:.2f} | Slow MA: ${info['slow_ma']:.2f}")
+
+        # Build indicator info string dynamically based on available fields
+        indicator_parts = [f"Price: ${info['close']:.2f}"]
+
+        # Add strategy-specific indicators if present
+        if 'fast_ma' in info and 'slow_ma' in info:
+            indicator_parts.append(f"Fast MA: ${info['fast_ma']:.2f}")
+            indicator_parts.append(f"Slow MA: ${info['slow_ma']:.2f}")
+        elif 'rsi' in info:
+            indicator_parts.append(f"RSI: {info['rsi']:.2f}")
+        elif 'macd_line' in info and 'signal_line' in info:
+            indicator_parts.append(f"MACD: {info['macd_line']:.2f}")
+            indicator_parts.append(f"Signal: {info['signal_line']:.2f}")
+
+        print(" | ".join(indicator_parts))
         print(f"Position: {self.position:.6f} | Portfolio Value: ${portfolio_value:.2f}")
         print(f"Return: {((portfolio_value - self.initial_capital) / self.initial_capital * 100):+.2f}%")
 
