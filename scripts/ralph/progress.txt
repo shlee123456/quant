@@ -39,3 +39,45 @@ Started: Sun Feb  8 16:42:16 KST 2026
   - All getter methods return None or empty list when no data found (graceful handling)
   - Validation is minimal - assumes callers provide correct data types
 ---
+
+## 2026-02-08 17:10 - US-103
+- Refactored PaperTrader to support multiple symbols simultaneously
+- Changed symbols parameter to accept Union[str, List[str]] for flexibility
+- Added broker parameter (BaseBroker type) as recommended alternative to data_handler
+- Changed position tracking to Dict[str, float] for per-symbol positions
+- Updated execute_buy/execute_sell to require symbol parameter
+- Updated get_portfolio_value to accept Dict[str, float] of current prices
+- Maintained backward compatibility with single symbol usage via update() method
+- Files changed: trading_bot/paper_trader.py
+- **Learnings for future iterations:**
+  - PaperTrader normalizes single symbol string to list internally
+  - All position tracking uses dictionaries keyed by symbol
+  - Backward compatibility achieved by keeping update() method for single symbol
+  - broker parameter is optional - can still use data_handler for backward compatibility
+  - get_portfolio_value() sums across all symbols when current_prices dict provided
+  - mypy typecheck passes with --ignore-missing-imports (pandas stubs not critical)
+---
+
+## 2026-02-08 18:15 - US-104
+- Integrated TradingDatabase into PaperTrader class
+- Added optional db parameter to __init__
+- Implemented start() method to create database session
+- Added session_id tracking to PaperTrader
+- Updated execute_buy() and execute_sell() to log trades to database
+- Updated update() method to log signals to database
+- Implemented _take_portfolio_snapshot() method to log portfolio snapshots
+- Updated stop() method to finalize session with performance metrics
+- Added performance calculation methods: _calculate_sharpe_ratio(), _calculate_max_drawdown(), _calculate_win_rate()
+- Files changed: trading_bot/paper_trader.py
+- **Learnings for future iterations:**
+  - Database integration is optional - gracefully handles None case
+  - Session created in start() method, finalized in stop() method
+  - All database logging wrapped in `if self.db and self.session_id:` checks
+  - Performance metrics calculated from equity_history and trades list
+  - Sharpe ratio calculation uses sqrt(252) for annualization (daily data)
+  - Max drawdown tracks peak equity and calculates percentage decline
+  - Win rate calculated from SELL trades with positive P&L
+  - Portfolio snapshots include timestamp, total_value, cash, and positions dict
+  - Signal logging captures indicator_values dict for later analysis
+  - Typecheck passes with --ignore-missing-imports flag (pandas stubs)
+---

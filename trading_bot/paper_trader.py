@@ -113,7 +113,10 @@ class PaperTrader:
         Start a new paper trading session
 
         Creates database session if db is configured
+        Sets is_running flag to True
         """
+        self.is_running = True
+
         if self.db and not self.session_id:
             self.session_id = self.db.create_session(
                 strategy_name=self.strategy.name,
@@ -280,9 +283,143 @@ class PaperTrader:
         # Print status
         self._print_status(info, portfolio_value)
 
+    def run_realtime(self, interval_seconds: int = 60, timeframe: str = '1d'):
+        """
+        Run paper trading in real-time with live data fetching
+
+        Args:
+            interval_seconds: Seconds between iterations (default: 60)
+            timeframe: OHLCV timeframe for indicator calculation (default: '1d')
+        """
+        if not self.broker:
+            raise ValueError("Broker is required for real-time trading. Please provide broker parameter.")
+
+        # Start session
+        self.start()
+
+        print(f"\n{'='*60}")
+        print(f"REAL-TIME PAPER TRADING STARTED")
+        print(f"{'='*60}")
+        print(f"Symbols: {', '.join(self.symbols)}")
+        print(f"Timeframe: {timeframe}")
+        print(f"Strategy: {self.strategy.name}")
+        print(f"Initial Capital: ${self.initial_capital:,.2f}")
+        print(f"Update Interval: {interval_seconds}s")
+        if self.session_id:
+            print(f"Session ID: {self.session_id}")
+        print(f"{'='*60}\n")
+
+        self.is_running = True
+
+        try:
+            while self.is_running:
+                self._realtime_iteration(timeframe)
+                time.sleep(interval_seconds)
+
+        except KeyboardInterrupt:
+            print("\n\nPaper trading stopped by user")
+            self.stop()
+        except Exception as e:
+            print(f"\n\nError during paper trading: {e}")
+            import traceback
+            traceback.print_exc()
+            self.stop()
+
+    def _realtime_iteration(self, timeframe: str):
+        """
+        Execute one iteration of real-time paper trading
+
+        Args:
+            timeframe: OHLCV timeframe for indicator calculation
+        """
+        if not self.broker:
+            raise ValueError("Broker is required for real-time trading")
+
+        try:
+            # Collect current prices for all symbols
+            current_prices: Dict[str, float] = {}
+
+            # Process each symbol
+            for symbol in self.symbols:
+                try:
+                    # Fetch current ticker
+                    # Check if broker supports overseas parameter (KoreaInvestmentBroker)
+                    from .brokers.korea_investment_broker import KoreaInvestmentBroker
+                    if isinstance(self.broker, KoreaInvestmentBroker):
+                        ticker = self.broker.fetch_ticker(symbol, overseas=True)
+                    else:
+                        ticker = self.broker.fetch_ticker(symbol)
+
+                    current_price = ticker['last']
+                    current_prices[symbol] = current_price
+
+                    # Fetch historical OHLCV data for strategy indicator calculation
+                    df = self.broker.fetch_ohlcv(symbol, timeframe, limit=100)
+
+                    if df.empty:
+                        print(f"[WARNING] No OHLCV data for {symbol}, skipping")
+                        continue
+
+                    # Get current signal from strategy
+                    signal, info = self.strategy.get_current_signal(df)
+
+                    timestamp = datetime.now()
+
+                    # Log signal to database
+                    if self.db and self.session_id:
+                        signal_data = {
+                            'symbol': symbol,
+                            'timestamp': timestamp,
+                            'signal': signal,
+                            'indicator_values': info,
+                            'market_price': current_price,
+                            'executed': False
+                        }
+                        self.db.log_signal(self.session_id, signal_data)
+
+                    # Execute trades based on signals
+                    executed = False
+                    if signal == 1 and self.last_signals.get(symbol, 0) != 1:  # New BUY signal
+                        self.execute_buy(symbol, current_price, timestamp)
+                        executed = True
+                    elif signal == -1 and self.last_signals.get(symbol, 0) != -1:  # New SELL signal
+                        self.execute_sell(symbol, current_price, timestamp)
+                        executed = True
+
+                    # Update last signal
+                    self.last_signals[symbol] = signal
+
+                    # Print status for this symbol
+                    print(f"[{timestamp}] {symbol}: Price=${current_price:.2f}, Signal={signal}")
+
+                except Exception as e:
+                    print(f"[ERROR] Failed to process {symbol}: {e}")
+                    continue
+
+            # Take portfolio snapshot after all symbols processed
+            portfolio_value = self.get_portfolio_value(current_prices)
+            timestamp = datetime.now()
+
+            self.equity_history.append({
+                'timestamp': timestamp,
+                'equity': portfolio_value,
+                'prices': current_prices.copy(),
+                'positions': self.positions.copy()
+            })
+
+            self._take_portfolio_snapshot(timestamp, portfolio_value, current_prices)
+
+            # Print portfolio summary
+            print(f"\n--- Portfolio Value: ${portfolio_value:.2f} | Return: {((portfolio_value - self.initial_capital) / self.initial_capital * 100):+.2f}% ---\n")
+
+        except Exception as e:
+            print(f"[ERROR] Iteration failed: {e}")
+            import traceback
+            traceback.print_exc()
+
     def run(self, symbol: str, timeframe: str, update_interval: int = 60):
         """
-        Run paper trading in a loop
+        Run paper trading in a loop (backward compatibility)
 
         Args:
             symbol: Trading pair symbol
