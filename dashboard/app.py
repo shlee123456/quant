@@ -19,6 +19,7 @@ from trading_bot.paper_trader import PaperTrader
 from trading_bot.simulation_data import SimulationDataGenerator
 from trading_bot.database import TradingDatabase
 from dashboard.charts import ChartGenerator
+import plotly.graph_objects as go
 from dashboard.translations import get_text, get_strategy_name, get_strategy_desc
 from dashboard.market_hours import MarketHours
 from dashboard.stock_symbols import StockSymbolDB
@@ -246,6 +247,79 @@ def stop_paper_trading():
         st.success("✅ 모의투자가 중지되었습니다.")
     else:
         st.warning("⚠️ 실행 중인 모의투자 세션이 없습니다.")
+
+
+def create_equity_comparison_chart(session_ids: list, db: TradingDatabase) -> Optional[go.Figure]:
+    """
+    Create equity curve comparison chart for selected sessions
+
+    Args:
+        session_ids: List of session IDs to compare
+        db: TradingDatabase instance
+
+    Returns:
+        Plotly figure or None if no data
+    """
+    if not session_ids:
+        return None
+
+    fig = go.Figure()
+
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+              '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+
+    sessions_with_data = 0
+
+    for idx, session_id in enumerate(session_ids):
+        # Fetch portfolio snapshots
+        snapshots = db.get_session_snapshots(session_id)
+
+        if not snapshots:
+            continue
+
+        # Extract data for plotting
+        timestamps = [pd.to_datetime(s['timestamp']) for s in snapshots]
+        total_values = [s['total_value'] for s in snapshots]
+
+        # Get session info for label
+        session = db.get_session_summary(session_id)
+        strategy_name = session['strategy_name'] if session else 'Unknown'
+
+        # Plot equity curve
+        fig.add_trace(go.Scatter(
+            x=timestamps,
+            y=total_values,
+            mode='lines',
+            name=f"{strategy_name} ({session_id[:8]})",
+            line=dict(color=colors[idx % len(colors)], width=2),
+            hovertemplate='%{y:$,.2f}<br>%{x}<extra></extra>'
+        ))
+
+        sessions_with_data += 1
+
+    if sessions_with_data == 0:
+        return None
+
+    # Update layout
+    fig.update_layout(
+        title='수익 곡선 비교 (Equity Curve Comparison)',
+        xaxis_title='시간 (Time)',
+        yaxis_title='포트폴리오 가치 (Portfolio Value, $)',
+        hovermode='x unified',
+        template='plotly_white',
+        showlegend=True,
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01
+        ),
+        height=500
+    )
+
+    fig.update_yaxes(tickprefix="$", tickformat=",.0f")
+
+    return fig
 
 
 def sidebar_config():
@@ -769,6 +843,17 @@ def paper_trading_comparison_tab():
                 )
         else:
             st.info("ℹ️ 완료된 세션이 없어 최고 성과를 표시할 수 없습니다.")
+
+        # Equity curve comparison chart
+        st.markdown("---")
+        st.subheader("📈 수익 곡선 비교")
+
+        fig = create_equity_comparison_chart(selected_session_ids, db)
+
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("ℹ️ 선택한 세션에 포트폴리오 스냅샷 데이터가 없습니다. 모의투자를 실행하면 데이터가 생성됩니다.")
 
     else:
         st.warning("⚠️ 선택한 세션에 대한 데이터가 없습니다.")
