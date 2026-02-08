@@ -37,6 +37,10 @@ class MovingAverageCrossover:
         Returns:
             DataFrame with indicators and signals
         """
+        # Handle empty DataFrame
+        if df.empty:
+            return df.copy()
+
         # Make a copy to avoid modifying original
         data = df.copy()
 
