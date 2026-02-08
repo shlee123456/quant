@@ -1,0 +1,272 @@
+{
+  "project": "Crypto Trading Bot - Phase 1: Paper Trading End-to-End",
+  "branchName": "ralph/phase1-paper-trading",
+  "description": "Phase 1: 모의투자 엔드투엔드 연결 - 백테스트에서 모의투자까지 대시보드에서 원클릭 실행",
+  "userStories": [
+    {
+      "id": "US-101",
+      "title": "SQLite 데이터베이스 스키마 생성",
+      "description": "As a developer, I need to create database schema for storing paper trading sessions, trades, portfolio snapshots, and strategy signals.",
+      "acceptanceCriteria": [
+        "Create trading_bot/database.py with TradingDatabase class",
+        "Implement _init_db() method with 4 tables: paper_trading_sessions, trades, portfolio_snapshots, strategy_signals",
+        "paper_trading_sessions table: session_id (PK), strategy_name, start_time, end_time, initial_capital, final_capital, total_return, sharpe_ratio, max_drawdown, win_rate, status",
+        "trades table: trade_id (PK), session_id (FK), symbol, timestamp, type, price, size, commission, pnl, pnl_pct",
+        "portfolio_snapshots table: snapshot_id (PK), session_id (FK), timestamp, total_value, cash, positions (JSON)",
+        "strategy_signals table: signal_id (PK), session_id (FK), symbol, timestamp, signal, indicator_values (JSON), market_price, executed",
+        "Database file created at data/paper_trading.db on initialization",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-102",
+      "title": "TradingDatabase CRUD 메서드 구현",
+      "description": "As a developer, I need methods to create sessions, log trades, signals, snapshots, and retrieve session data.",
+      "acceptanceCriteria": [
+        "Implement create_session(strategy_name, initial_capital) -> session_id",
+        "Implement log_trade(session_id, trade: Dict) with validation",
+        "Implement log_signal(session_id, signal: Dict) with validation",
+        "Implement log_portfolio_snapshot(session_id, snapshot: Dict)",
+        "Implement get_session_summary(session_id) -> Dict",
+        "Implement get_all_sessions() -> List[Dict]",
+        "Implement update_session(session_id, updates: Dict)",
+        "All JSON fields properly serialized/deserialized",
+        "Add basic error handling for missing session_id",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-103",
+      "title": "PaperTrader 멀티 심볼 지원 리팩토링",
+      "description": "As a developer, I need PaperTrader to support trading multiple symbols simultaneously.",
+      "acceptanceCriteria": [
+        "Update PaperTrader.__init__ to accept symbols: List[str]",
+        "Add broker parameter (KoreaInvestmentBroker or compatible)",
+        "Track positions per symbol using Dict[str, float]",
+        "Update execute_buy/execute_sell to accept symbol parameter",
+        "Update get_portfolio_value to sum across all symbols",
+        "Maintain backward compatibility with single symbol usage",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-104",
+      "title": "PaperTrader 데이터베이스 연동",
+      "description": "As a developer, I need to integrate TradingDatabase into PaperTrader for persistent logging.",
+      "acceptanceCriteria": [
+        "Add optional db: TradingDatabase parameter to PaperTrader.__init__",
+        "Create session_id in start() using db.create_session() if db provided",
+        "Log trades via db.log_trade() after execution",
+        "Log signals via db.log_signal() when generated",
+        "Implement _take_portfolio_snapshot() calling db.log_portfolio_snapshot()",
+        "Update session with final metrics in stop() method",
+        "Handle case when db is None gracefully",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-105",
+      "title": "PaperTrader 실시간 실행 루프 구현",
+      "description": "As a user, I want PaperTrader to fetch live data and execute trades in real-time.",
+      "acceptanceCriteria": [
+        "Implement run_realtime(interval_seconds: int = 60) method",
+        "Add is_running flag with start()/stop() control methods",
+        "Fetch ticker for each symbol via broker.fetch_ticker(symbol, overseas=True)",
+        "Fetch historical OHLCV data for strategy indicator calculation",
+        "Call strategy.get_current_signal() for each symbol",
+        "Execute trades based on signals (1=BUY, -1=SELL, 0=HOLD)",
+        "Take portfolio snapshot each iteration",
+        "Sleep interval_seconds between iterations",
+        "Add error handling with logging",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-106",
+      "title": "Paper Trading 탭 UI 추가",
+      "description": "As a user, I want a Paper Trading tab in the dashboard to start and configure paper trading.",
+      "acceptanceCriteria": [
+        "Add 'Paper Trading' tab to dashboard/app.py",
+        "Add strategy selector dropdown (RSI, MACD, MA, Bollinger, Stochastic)",
+        "Add multi-select for US stocks (AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA)",
+        "Add number_input for initial_capital (default 10000.0)",
+        "Add slider for position_size (0.1 to 1.0, default 0.95)",
+        "Add '모의투자 시작' button",
+        "Add '모의투자 중지' button",
+        "Disable buttons appropriately based on session state",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-107",
+      "title": "Paper Trading 세션 시작/중지 기능",
+      "description": "As a user, I want to start and stop paper trading sessions from the dashboard.",
+      "acceptanceCriteria": [
+        "Create session state: st.session_state.paper_trader, st.session_state.paper_trading_active",
+        "Implement start_paper_trading() instantiating PaperTrader with config",
+        "Run paper trading in background thread",
+        "Implement stop_paper_trading() calling paper_trader.stop()",
+        "Show success/error messages with st.success/st.error",
+        "Display current session_id when active",
+        "Persist state across Streamlit reruns",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-108",
+      "title": "실시간 포트폴리오 현황 표시",
+      "description": "As a user, I want to see my portfolio status in real-time during paper trading.",
+      "acceptanceCriteria": [
+        "Display total portfolio value",
+        "Display cash balance",
+        "Show positions table: Symbol, Shares, Current Price, Market Value, P&L, P&L %",
+        "Display total P&L and P&L %",
+        "Auto-refresh every 10 seconds",
+        "Show 'No active session' when not trading",
+        "Format currency with $ and 2 decimals",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-109",
+      "title": "Strategy Comparison 탭 추가",
+      "description": "As a user, I want to compare performance of different paper trading sessions.",
+      "acceptanceCriteria": [
+        "Add 'Strategy Comparison' tab to dashboard",
+        "Fetch sessions using db.get_all_sessions()",
+        "Add multiselect to choose sessions",
+        "Display comparison table: Strategy, Symbols, Start/End Time, Capital, Return %, Sharpe, Drawdown %, Win Rate %",
+        "Show best strategy based on win_rate",
+        "Handle empty sessions gracefully",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-110",
+      "title": "수익 곡선 비교 차트 구현",
+      "description": "As a user, I want to see equity curves for selected sessions on a chart.",
+      "acceptanceCriteria": [
+        "Create create_equity_comparison_chart(session_ids: List[str]) function",
+        "Fetch portfolio snapshots for each session from database",
+        "Plot equity curves using plotly line chart",
+        "Each session has different color with strategy + session_id label",
+        "X-axis: timestamp, Y-axis: total_value",
+        "Include legend",
+        "Display with st.plotly_chart",
+        "Handle sessions with no snapshots gracefully",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-111",
+      "title": "Paper Trading 단위 테스트 작성",
+      "description": "As a developer, I need unit tests for TradingDatabase and PaperTrader integration.",
+      "acceptanceCriteria": [
+        "Create tests/test_trading_database.py",
+        "Test all TradingDatabase CRUD methods",
+        "Test database schema creation",
+        "Test JSON serialization/deserialization",
+        "Test error handling for invalid inputs",
+        "Create tests/test_paper_trader_db.py",
+        "Test PaperTrader database integration",
+        "Test multi-symbol tracking",
+        "All tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-112",
+      "title": "실시간 모니터링 통합 테스트",
+      "description": "As a developer, I need integration tests for real-time paper trading.",
+      "acceptanceCriteria": [
+        "Create tests/test_paper_trading_integration.py",
+        "Test PaperTrader.run_realtime() with mock broker",
+        "Test multi-symbol iteration",
+        "Test start/stop control flow",
+        "Test database logging during execution",
+        "Test portfolio snapshot creation",
+        "Verify session state transitions",
+        "All tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-113",
+      "title": "대시보드 Paper Trading 탭 통합 테스트",
+      "description": "As a QA, I need end-to-end test for Paper Trading dashboard workflow.",
+      "acceptanceCriteria": [
+        "Create tests/test_dashboard_paper_trading.py",
+        "Test Paper Trading tab rendering",
+        "Test strategy/symbol selection workflow",
+        "Test session start/stop workflow",
+        "Test portfolio display with mock data",
+        "Test Strategy Comparison tab rendering",
+        "Test equity comparison chart generation",
+        "All tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-114",
+      "title": "문서 업데이트 - Phase 1 완료",
+      "description": "As a developer, I need updated documentation reflecting Phase 1 implementation.",
+      "acceptanceCriteria": [
+        "Update README.md with Paper Trading feature",
+        "Document database schema in README.md",
+        "Update trading_bot/CLAUDE.md with PaperTrader real-time mode",
+        "Update dashboard/CLAUDE.md with new tabs",
+        "Create example script examples/run_paper_trading.py",
+        "Mark Phase 1 completed in docs/roadmap.md",
+        "Update MEMORY.md with key learnings",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

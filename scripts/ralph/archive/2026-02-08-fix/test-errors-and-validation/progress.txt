@@ -1,0 +1,14 @@
+# Ralph Progress Log
+Started: Sat Feb  8 20:30:00 KST 2026
+
+## Codebase Patterns
+- Terminal logs saved to `.context/terminal/` with timestamps for all bash commands
+- Typecheck passes requirement: Pre-existing errors in pandas stubs, config.py acceptable if not introduced by current story
+- Database pattern: Use SQLite with proper schema design, foreign keys, JSON for complex fields
+- Multi-resource tracking: Use Dict[str, T] pattern for tracking per-symbol state
+- Optional dependencies: Make database/broker parameters optional with None defaults
+- Background threads: Use threading.Thread for long-running processes in Streamlit
+- Session state: Use st.session_state for persistence across Streamlit reruns
+- Error handling: Wrap external API calls in try/except with appropriate logging
+
+---

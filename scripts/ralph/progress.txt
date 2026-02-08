@@ -1,0 +1,25 @@
+# Ralph Progress Log
+Started: Sun Feb  8 16:42:16 KST 2026
+---
+
+## Codebase Patterns
+- Database files are stored in `data/` directory which is in .gitignore
+- TypeCheck: Use `mypy <file> --follow-imports=silent` to check only specific files
+- All database tables use TEXT for timestamps (stored as ISO format)
+- JSON fields in SQLite stored as TEXT and serialized/deserialized with json module
+- Database schema uses AUTOINCREMENT for integer primary keys, TEXT for session_id
+---
+
+## 2026-02-08 16:44 - US-101
+- Implemented TradingDatabase class in trading_bot/database.py
+- Created 4 SQLite tables: paper_trading_sessions, trades, portfolio_snapshots, strategy_signals
+- All tables include proper foreign key constraints
+- Database file automatically created at data/paper_trading.db on initialization
+- **Learnings for future iterations:**
+  - The data/ directory is in .gitignore, so database files won't be committed
+  - SQLite schema uses TEXT for all timestamps, converted to/from datetime using ISO format
+  - JSON fields (positions, indicator_values) serialized as TEXT using json.dumps/loads
+  - Database path uses os.makedirs to create directory if it doesn't exist
+  - Used sqlite3.Row factory for easy dict conversion in getter methods
+  - mypy typecheck passes with no errors for database.py
+---
