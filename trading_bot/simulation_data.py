@@ -22,9 +22,12 @@ class SimulationDataGenerator:
         Args:
             seed: Random seed for reproducibility
         """
-        if seed is not None:
-            np.random.seed(seed)
         self.seed = seed
+        # Create a RandomState instance for reproducible random number generation
+        if seed is not None:
+            self.rng = np.random.RandomState(seed)
+        else:
+            self.rng = np.random.RandomState()
 
     def generate_ohlcv(
         self,
@@ -54,7 +57,11 @@ class SimulationDataGenerator:
 
         # Generate timestamps
         if start_date is None:
-            start_date = datetime.now() - (periods * timeframe_delta)
+            # Use fixed date if seed is provided for reproducibility
+            if self.seed is not None:
+                start_date = datetime(2024, 1, 1) - (periods * timeframe_delta)
+            else:
+                start_date = datetime.now() - (periods * timeframe_delta)
 
         timestamps = [start_date + i * timeframe_delta for i in range(periods)]
 
@@ -64,7 +71,7 @@ class SimulationDataGenerator:
         prices = [initial_price]
 
         for i in range(1, periods):
-            random_shock = np.random.normal(0, 1)
+            random_shock = self.rng.normal(0, 1)
             price_change = drift * prices[-1] * dt + volatility * prices[-1] * random_shock * np.sqrt(dt)
             new_price = max(prices[-1] + price_change, 0.01)  # Prevent negative prices
             prices.append(new_price)
@@ -74,8 +81,8 @@ class SimulationDataGenerator:
         for i, (timestamp, close) in enumerate(zip(timestamps, prices)):
             # Add realistic intrabar movements
             intrabar_volatility = volatility * 0.5
-            high = close * (1 + abs(np.random.normal(0, intrabar_volatility)))
-            low = close * (1 - abs(np.random.normal(0, intrabar_volatility)))
+            high = close * (1 + abs(self.rng.normal(0, intrabar_volatility)))
+            low = close * (1 - abs(self.rng.normal(0, intrabar_volatility)))
 
             # Ensure OHLC consistency: low <= open,close <= high
             open_price = prices[i-1] if i > 0 else initial_price
@@ -84,7 +91,7 @@ class SimulationDataGenerator:
 
             # Generate volume (correlated with volatility)
             base_volume = 100000
-            volume = base_volume * (1 + abs(np.random.normal(0, 0.5)))
+            volume = base_volume * (1 + abs(self.rng.normal(0, 0.5)))
 
             data.append({
                 'timestamp': timestamp,
@@ -188,7 +195,11 @@ class SimulationDataGenerator:
         timeframe_delta = self._parse_timeframe(timeframe)
 
         # Generate timestamps
-        start_date = datetime.now() - (periods * timeframe_delta)
+        # Use fixed date if seed is provided for reproducibility
+        if self.seed is not None:
+            start_date = datetime(2024, 1, 1) - (periods * timeframe_delta)
+        else:
+            start_date = datetime.now() - (periods * timeframe_delta)
         timestamps = [start_date + i * timeframe_delta for i in range(periods)]
 
         # Generate prices with sine wave pattern
@@ -199,7 +210,7 @@ class SimulationDataGenerator:
             trend_price = initial_price * (1 + amplitude * sine_component)
 
             # Add random noise
-            noise = np.random.normal(0, 0.01)
+            noise = self.rng.normal(0, 0.01)
             price = trend_price * (1 + noise)
             prices.append(max(price, 0.01))
 
@@ -207,14 +218,14 @@ class SimulationDataGenerator:
         data = []
         for i, (timestamp, close) in enumerate(zip(timestamps, prices)):
             intrabar_volatility = 0.01
-            high = close * (1 + abs(np.random.normal(0, intrabar_volatility)))
-            low = close * (1 - abs(np.random.normal(0, intrabar_volatility)))
+            high = close * (1 + abs(self.rng.normal(0, intrabar_volatility)))
+            low = close * (1 - abs(self.rng.normal(0, intrabar_volatility)))
 
             open_price = prices[i-1] if i > 0 else initial_price
             open_price = np.clip(open_price, low, high)
             close = np.clip(close, low, high)
 
-            volume = 100000 * (1 + abs(np.random.normal(0, 0.5)))
+            volume = 100000 * (1 + abs(self.rng.normal(0, 0.5)))
 
             data.append({
                 'timestamp': timestamp,
