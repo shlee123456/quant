@@ -121,6 +121,10 @@ class StrategyOptimizer:
         Returns:
             DataFrame with comparison results
         """
+        # Handle empty strategy list
+        if not strategies:
+            return pd.DataFrame()
+
         print(f"\nComparing {len(strategies)} strategies...\n")
 
         comparison_results = []
