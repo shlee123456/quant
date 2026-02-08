@@ -331,7 +331,7 @@ def sidebar_config():
     # Language Selection
     st.sidebar.subheader(get_text('language', lang))
     language = st.sidebar.selectbox(
-        "",
+        "Language Selection",
         options=['한국어', 'English'],
         index=0 if st.session_state.language == 'ko' else 1,
         label_visibility="collapsed"
@@ -348,7 +348,7 @@ def sidebar_config():
         get_text('crypto_market', lang): 'crypto'
     }
     selected_market_display = st.sidebar.radio(
-        "",
+        "Market Type Selection",
         options=list(market_options.keys()),
         index=0,  # Default to stocks
         label_visibility="collapsed"

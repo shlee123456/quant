@@ -537,6 +537,7 @@ class KoreaInvestmentBroker(BaseBroker):
         # PyKis는 일반적으로 'date', 'open', 'high', 'low', 'close', 'volume' 컬럼 사용
         column_map = {
             'date': 'timestamp',
+            'time': 'timestamp',             # 해외주식 시간
             'stck_bsop_date': 'timestamp',  # 국내주식 일자
             'stck_clpr': 'close',            # 국내주식 종가
             'stck_oprc': 'open',             # 국내주식 시가
