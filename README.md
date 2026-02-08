@@ -326,15 +326,32 @@ crypto-trading-bot/
 ## Running Tests
 
 ```bash
-# Run all tests
+# Run all tests (excluding slow tests)
+pytest -m "not slow"
+
+# Run all tests including slow tests
 pytest
+
+# Run only slow tests (API integration tests)
+pytest -m slow
 
 # Run with coverage
 pytest --cov=trading_bot
 
 # Run specific test file
 pytest tests/test_rsi_strategy.py
+
+# Verbose output
+pytest -v
 ```
+
+### Test Markers
+
+- **`slow`**: Tests that make external API calls (KIS API, exchange APIs)
+  - These tests may take longer to run
+  - May hit rate limits if run too frequently
+  - Skip with: `pytest -m "not slow"`
+  - Run only slow tests: `pytest -m slow`
 
 ## Dashboard
 
