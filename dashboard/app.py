@@ -17,13 +17,15 @@ from trading_bot.strategies import RSIStrategy, MACDStrategy, BollingerBandsStra
 from trading_bot.backtester import Backtester
 from trading_bot.paper_trader import PaperTrader
 from trading_bot.simulation_data import SimulationDataGenerator
+from trading_bot.database import TradingDatabase
 from dashboard.charts import ChartGenerator
 from dashboard.translations import get_text, get_strategy_name, get_strategy_desc
 from dashboard.market_hours import MarketHours
 from dashboard.stock_symbols import StockSymbolDB
 import time
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+import threading
 
 
 # Page configuration
@@ -144,6 +146,106 @@ def create_strategy(strategy_name: str, params: Dict[str, Any]):
     strategy_config = STRATEGY_CONFIGS[strategy_name]
     strategy_class = strategy_config['class']
     return strategy_class(**params)  # type: ignore[operator]
+
+
+def start_paper_trading(
+    strategy_name: str,
+    symbols: list,
+    initial_capital: float,
+    position_size: float
+) -> Optional[str]:
+    """
+    Start paper trading session in background thread
+
+    Args:
+        strategy_name: Name of the strategy to use
+        symbols: List of stock symbols to trade
+        initial_capital: Starting capital
+        position_size: Position size fraction (0.1 to 1.0)
+
+    Returns:
+        session_id if successful, None if failed
+    """
+    try:
+        # Create strategy instance
+        strategy: Any
+        if strategy_name == 'RSI Strategy':
+            strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+        elif strategy_name == 'MACD Strategy':
+            strategy = MACDStrategy(fast_period=12, slow_period=26, signal_period=9)
+        elif strategy_name == 'Moving Average Crossover':
+            strategy = MovingAverageCrossover(fast_period=10, slow_period=30)
+        elif strategy_name == 'Bollinger Bands':
+            strategy = BollingerBandsStrategy(period=20, num_std=2.0)
+        elif strategy_name == 'Stochastic Oscillator':
+            strategy = StochasticStrategy(k_period=14, d_period=3, overbought=80, oversold=20)
+        else:
+            raise ValueError(f"Unknown strategy: {strategy_name}")
+
+        # Get KIS broker for US stocks
+        from dashboard.kis_broker import get_kis_broker
+        broker = get_kis_broker()
+
+        if broker is None:
+            st.error("❌ KIS 브로커 초기화 실패. 환경 변수를 확인해주세요.")
+            return None
+
+        # Initialize database
+        db = TradingDatabase()
+
+        # Create paper trader
+        paper_trader = PaperTrader(
+            strategy=strategy,  # type: ignore[arg-type]
+            symbols=symbols,
+            broker=broker,
+            initial_capital=initial_capital,
+            position_size=position_size,
+            db=db
+        )
+
+        # Store in session state
+        st.session_state.paper_trader = paper_trader
+        st.session_state.paper_trading_active = True
+
+        # Start paper trading in background thread
+        def run_trading():
+            try:
+                paper_trader.run_realtime(interval_seconds=60, timeframe='1d')
+            except Exception as e:
+                st.session_state.paper_trading_error = str(e)
+                st.session_state.paper_trading_active = False
+
+        trading_thread = threading.Thread(target=run_trading, daemon=True)
+        trading_thread.start()
+
+        # Store thread reference
+        st.session_state.paper_trading_thread = trading_thread
+
+        # Return session_id
+        return paper_trader.session_id
+
+    except Exception as e:
+        st.error(f"❌ 모의투자 시작 실패: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+        return None
+
+
+def stop_paper_trading():
+    """Stop paper trading session"""
+    if st.session_state.paper_trader:
+        st.session_state.paper_trader.stop()
+        st.session_state.paper_trading_active = False
+
+        # Wait for thread to finish (with timeout)
+        if hasattr(st.session_state, 'paper_trading_thread'):
+            thread = st.session_state.paper_trading_thread
+            if thread.is_alive():
+                thread.join(timeout=5.0)
+
+        st.success("✅ 모의투자가 중지되었습니다.")
+    else:
+        st.warning("⚠️ 실행 중인 모의투자 세션이 없습니다.")
 
 
 def sidebar_config():
@@ -805,53 +907,27 @@ def paper_trading_tab():
 
     # Handle button clicks
     if start_button:
-        try:
-            # Create strategy instance
-            strategy_params = {}
-            if selected_strategy == 'RSI Strategy':
-                strategy = RSIStrategy(period=14, overbought=70, oversold=30)
-            elif selected_strategy == 'MACD Strategy':
-                strategy = MACDStrategy(fast_period=12, slow_period=26, signal_period=9)
-            elif selected_strategy == 'Moving Average Crossover':
-                strategy = MovingAverageCrossover(fast_period=10, slow_period=30)
-            elif selected_strategy == 'Bollinger Bands':
-                strategy = BollingerBandsStrategy(period=20, num_std=2.0)
-            elif selected_strategy == 'Stochastic Oscillator':
-                strategy = StochasticStrategy(k_period=14, d_period=3, overbought=80, oversold=20)
+        session_id = start_paper_trading(
+            strategy_name=selected_strategy,
+            symbols=selected_symbols,
+            initial_capital=initial_capital,
+            position_size=position_size
+        )
 
-            # Get KIS broker for US stocks
-            from dashboard.kis_broker import get_kis_broker
-            broker = get_kis_broker()
-
-            if broker is None:
-                st.error("❌ KIS 브로커 초기화 실패. 환경 변수를 확인해주세요.")
-                return
-
-            # Create paper trader
-            st.session_state.paper_trader = PaperTrader(
-                strategy=strategy,
-                symbols=selected_symbols,
-                broker=broker,
-                initial_capital=initial_capital,
-                position_size=position_size
-            )
-
-            st.session_state.paper_trading_active = True
-            st.success("✅ 모의투자가 시작되었습니다!")
+        if session_id:
+            st.success(f"✅ 모의투자가 시작되었습니다! (Session ID: {session_id})")
             st.rerun()
-
-        except Exception as e:
-            st.error(f"❌ 모의투자 시작 실패: {e}")
-            import traceback
-            st.code(traceback.format_exc())
+        else:
+            st.error("❌ 모의투자 시작에 실패했습니다.")
 
     if stop_button:
-        if st.session_state.paper_trader:
-            st.session_state.paper_trader.stop()
-        st.session_state.paper_trading_active = False
-        st.session_state.paper_trader = None
-        st.success("✅ 모의투자가 중지되었습니다.")
+        stop_paper_trading()
         st.rerun()
+
+    # Check for errors in background thread
+    if hasattr(st.session_state, 'paper_trading_error'):
+        st.error(f"❌ 모의투자 실행 중 오류 발생: {st.session_state.paper_trading_error}")
+        del st.session_state.paper_trading_error
 
     # Display current session info
     if st.session_state.paper_trading_active and st.session_state.paper_trader:
@@ -860,22 +936,26 @@ def paper_trading_tab():
 
         trader = st.session_state.paper_trader
 
+        # Display session ID if available
+        if trader.session_id:
+            st.success(f"🔑 Session ID: **{trader.session_id}**")
+
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            st.metric("전략", selected_strategy)
+            st.metric("전략", trader.strategy.name if hasattr(trader.strategy, 'name') else selected_strategy)
 
         with col2:
-            st.metric("종목 수", len(selected_symbols))
+            st.metric("종목 수", len(trader.symbols))
 
         with col3:
-            st.metric("초기 자본", f"${initial_capital:,.2f}")
+            st.metric("초기 자본", f"${trader.initial_capital:,.2f}")
 
         with col4:
-            st.metric("포지션 크기", f"{position_size:.0%}")
+            st.metric("포지션 크기", f"{trader.position_size:.0%}")
 
         # Show selected symbols
-        st.info(f"📈 선택된 종목: {', '.join(selected_symbols)}")
+        st.info(f"📈 선택된 종목: {', '.join(trader.symbols)}")
 
         # Note: Real-time monitoring will be implemented in US-108
         st.info("💡 실시간 포트폴리오 모니터링은 다음 단계에서 구현됩니다.")
