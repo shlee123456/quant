@@ -18,6 +18,13 @@ Example:
     ...     appsecret='YOUR_APPSECRET',
     ...     account='12345678-01'
     ... )
+    >>> # user_id를 명시할 수도 있음
+    >>> broker = KoreaInvestmentBroker(
+    ...     appkey='YOUR_APPKEY',
+    ...     appsecret='YOUR_APPSECRET',
+    ...     account='12345678-01',
+    ...     user_id='@1234567'
+    ... )
     >>> # 국내주식 조회
     >>> df = broker.fetch_ohlcv('005930', '1d', limit=100)  # 삼성전자
     >>> # 해외주식 조회
@@ -54,20 +61,20 @@ class KoreaInvestmentBroker(BaseBroker):
 
     def __init__(
         self,
-        user_id: str,
         appkey: str,
         appsecret: str,
         account: str,
+        user_id: Optional[str] = None,
         mock: bool = False
     ):
         """
         한국투자증권 브로커 초기화.
 
         Args:
-            user_id: 한국투자증권 사용자 ID
             appkey: 한국투자증권 AppKey
             appsecret: 한국투자증권 AppSecret
             account: 계좌번호 (예: '12345678-01')
+            user_id: 한국투자증권 사용자 ID (기본: account 값 사용)
             mock: 모의투자 계좌 사용 여부 (기본: False)
 
         Raises:
@@ -75,16 +82,21 @@ class KoreaInvestmentBroker(BaseBroker):
             AuthenticationError: 인증 실패 시
 
         Example:
-            >>> # 실전 계좌
+            >>> # 실전 계좌 (user_id 생략)
             >>> broker = KoreaInvestmentBroker(
-            ...     user_id='@1234567',
             ...     appkey='YOUR_APPKEY',
             ...     appsecret='YOUR_APPSECRET',
             ...     account='12345678-01'
             ... )
+            >>> # 실전 계좌 (user_id 명시)
+            >>> broker = KoreaInvestmentBroker(
+            ...     appkey='YOUR_APPKEY',
+            ...     appsecret='YOUR_APPSECRET',
+            ...     account='12345678-01',
+            ...     user_id='@1234567'
+            ... )
             >>> # 모의투자 계좌
             >>> broker = KoreaInvestmentBroker(
-            ...     user_id='@1234567',
             ...     appkey='YOUR_APPKEY',
             ...     appsecret='YOUR_APPSECRET',
             ...     account='12345678-01',
@@ -93,7 +105,7 @@ class KoreaInvestmentBroker(BaseBroker):
         """
         super().__init__(name='KoreaInvestment', market_type='stock_global')
 
-        self.user_id = user_id
+        self.user_id = user_id if user_id is not None else account
         self.appkey = appkey
         self.appsecret = appsecret
         self.account = account
@@ -105,10 +117,10 @@ class KoreaInvestmentBroker(BaseBroker):
 
             # PyKis 객체 생성 (실전과 모의투자 설정 모두 제공)
             self.api = PyKis(
-                id=user_id,
+                id=self.user_id,
                 appkey=appkey,
                 secretkey=appsecret,
-                virtual_id=user_id,
+                virtual_id=self.user_id,
                 virtual_appkey=appkey,
                 virtual_secretkey=appsecret,
                 account=account

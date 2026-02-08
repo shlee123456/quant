@@ -288,27 +288,55 @@ def test_ccxt_broker_error_handling(mock_ccxt):
 
 # ==================== KoreaInvestmentBroker Tests ====================
 
-def test_korea_investment_broker_init():
+@patch('pykis.PyKis')
+def test_korea_investment_broker_init(mock_pykis):
     """KoreaInvestmentBroker 초기화 테스트"""
-    # python-kis가 설치되지 않았을 수 있으므로 Mock 사용
+    # Mock PyKis
+    mock_api = Mock()
+    mock_pykis.return_value = mock_api
+
     broker = KoreaInvestmentBroker(
-        appkey='TEST_APPKEY',
+        appkey='TEST_APPKEY' * 3,  # 36자
         appsecret='TEST_APPSECRET',
         account='12345678-01'
     )
 
     assert broker.name == 'KoreaInvestment'
     assert broker.market_type == 'stock_global'
-    assert broker.appkey == 'TEST_APPKEY'
+    assert broker.appkey == 'TEST_APPKEY' * 3
     assert broker.appsecret == 'TEST_APPSECRET'
     assert broker.account == '12345678-01'
+    assert broker.user_id == '12345678-01'  # user_id defaults to account
     assert broker.mock is False
 
 
-def test_korea_investment_broker_mock_mode():
-    """KoreaInvestmentBroker 모의투자 모드 테스트"""
+@patch('pykis.PyKis')
+def test_korea_investment_broker_with_user_id(mock_pykis):
+    """KoreaInvestmentBroker user_id 명시 테스트"""
+    # Mock PyKis
+    mock_api = Mock()
+    mock_pykis.return_value = mock_api
+
     broker = KoreaInvestmentBroker(
-        appkey='TEST_APPKEY',
+        appkey='TEST_APPKEY' * 3,  # 36자
+        appsecret='TEST_APPSECRET',
+        account='12345678-01',
+        user_id='@test_user'
+    )
+
+    assert broker.user_id == '@test_user'  # user_id explicitly set
+    assert broker.account == '12345678-01'
+
+
+@patch('pykis.PyKis')
+def test_korea_investment_broker_mock_mode(mock_pykis):
+    """KoreaInvestmentBroker 모의투자 모드 테스트"""
+    # Mock PyKis
+    mock_api = Mock()
+    mock_pykis.return_value = mock_api
+
+    broker = KoreaInvestmentBroker(
+        appkey='TEST_APPKEY' * 3,  # 36자
         appsecret='TEST_APPSECRET',
         account='12345678-01',
         mock=True
@@ -317,23 +345,24 @@ def test_korea_investment_broker_mock_mode():
     assert broker.mock is True
 
 
-def test_korea_investment_broker_not_implemented():
-    """KoreaInvestmentBroker 미구현 메서드 테스트"""
+@patch('pykis.PyKis')
+def test_korea_investment_broker_methods_available(mock_pykis):
+    """KoreaInvestmentBroker 메서드 사용 가능 테스트"""
+    # Mock PyKis
+    mock_api = Mock()
+    mock_pykis.return_value = mock_api
+
     broker = KoreaInvestmentBroker(
-        appkey='TEST_APPKEY',
+        appkey='TEST_APPKEY' * 3,  # 36자
         appsecret='TEST_APPSECRET',
         account='12345678-01'
     )
 
-    # 현재 스켈레톤 구현이므로 NotImplementedError 발생
-    with pytest.raises(NotImplementedError):
-        broker.fetch_ohlcv('005930', '1d', limit=100)
-
-    with pytest.raises(NotImplementedError):
-        broker.fetch_balance()
-
-    with pytest.raises(NotImplementedError):
-        broker.create_order('005930', 'market', 'buy', 10)
+    # 메서드들이 존재하는지 확인 (구현 여부와 관계없이)
+    assert hasattr(broker, 'fetch_ohlcv')
+    assert hasattr(broker, 'fetch_balance')
+    assert hasattr(broker, 'create_order')
+    assert hasattr(broker, 'fetch_ticker')
 
 
 # ==================== RateLimiter Tests ====================
