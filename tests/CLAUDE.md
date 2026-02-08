@@ -19,6 +19,7 @@
 ```
 tests/
 ├── __init__.py
+├── conftest.py                        # 공통 pytest fixtures
 ├── test_strategy.py                   # MA 전략 테스트
 ├── test_rsi_strategy.py               # RSI 전략 테스트
 ├── test_macd_strategy.py              # MACD 전략 테스트
@@ -27,6 +28,7 @@ tests/
 ├── test_backtester.py                 # 백테스터 테스트
 ├── test_optimizer.py                  # 최적화 테스트
 ├── test_simulation_data.py            # 데이터 생성 테스트
+├── test_kis_api.py                    # 한국투자증권 API 테스트
 └── test_dashboard_integration.py      # 대시보드 통합 테스트
 ```
 
@@ -35,8 +37,14 @@ tests/
 ## 테스트 명령어
 
 ```bash
-# 모든 테스트 실행
-pytest 2>&1 | tee .context/terminal/test_$(date +%s).log
+# 모든 테스트 실행 (slow 테스트 제외)
+pytest -m "not slow" 2>&1 | tee .context/terminal/test_$(date +%s).log
+
+# 모든 테스트 실행 (slow 테스트 포함)
+pytest 2>&1 | tee .context/terminal/test_all_$(date +%s).log
+
+# slow 테스트만 실행 (API 통합 테스트)
+pytest -m slow 2>&1 | tee .context/terminal/test_slow_$(date +%s).log
 
 # 커버리지 포함
 pytest --cov=trading_bot --cov-report=html 2>&1 | tee .context/terminal/test_cov_$(date +%s).log
@@ -52,6 +60,81 @@ pytest --lf 2>&1 | tee .context/terminal/test_failed_$(date +%s).log
 
 # 병렬 실행 (pytest-xdist 설치 필요)
 pytest -n auto
+```
+
+### 테스트 마커
+
+프로젝트는 다음 pytest 마커를 사용합니다 (pytest.ini에 정의):
+
+- **`slow`**: 외부 API를 호출하는 느린 테스트
+  - 예: KIS API, 거래소 API 통합 테스트
+  - 실행 시간이 길고 rate limit이 있을 수 있음
+  - CI/CD에서 기본적으로 제외하려면: `pytest -m "not slow"`
+
+---
+
+## conftest.py - 공통 Fixtures
+
+### 위치
+`tests/conftest.py`는 pytest가 자동으로 로드하는 공통 fixture 파일입니다.
+
+### 사용 가능한 Fixtures
+
+#### `kis` - 한국투자증권 API 클라이언트
+
+외부 API를 사용하는 테스트를 위한 fixture입니다.
+
+**사용 예시:**
+```python
+def test_overseas_stock_quote(kis):
+    """해외주식 시세 조회 테스트"""
+    stock = kis.stock('AAPL', market='NASDAQ')
+    quote = stock.quote()
+    assert quote.price > 0
+```
+
+**환경 변수 요구사항:**
+- `KIS_ID`: 한국투자증권 ID
+- `KIS_APPKEY`: API Key
+- `KIS_APPSECRET`: API Secret
+- `KIS_ACCOUNT`: 계좌번호
+- `KIS_MOCK`: 모의투자 여부 (기본값: true)
+
+**동작:**
+- 환경 변수가 없으면 자동으로 `pytest.skip()` 처리
+- `pykis` 패키지가 없으면 자동으로 skip
+- PyKis 초기화 실패 시 자동으로 skip
+
+### 외부 API Fixture 패턴
+
+외부 API 클라이언트를 fixture로 만들 때 다음 패턴을 따르세요:
+
+```python
+@pytest.fixture
+def api_client():
+    """외부 API 클라이언트 fixture"""
+    # 1. 환경 변수 로드
+    credentials = {
+        'api_key': os.getenv('API_KEY'),
+        'api_secret': os.getenv('API_SECRET'),
+    }
+
+    # 2. 필수 값 확인 - 없으면 skip
+    if not all(credentials.values()):
+        pytest.skip("API credentials not set in .env")
+
+    try:
+        # 3. 선택적 의존성 - ImportError 시 skip
+        from external_api import APIClient
+
+        # 4. 클라이언트 생성
+        client = APIClient(**credentials)
+        return client
+
+    except ImportError:
+        pytest.skip("external_api package not installed")
+    except Exception as e:
+        pytest.skip(f"Failed to initialize API client: {e}")
 ```
 
 ---
@@ -457,6 +540,80 @@ def test_strategy_with_extreme_volatility():
 - [ ] 통합 테스트 업데이트
 - [ ] 커버리지 확인 (80% 이상)
 - [ ] 에러 처리 테스트
+
+---
+
+## API Rate Limit 처리 패턴
+
+외부 API를 호출하는 테스트는 rate limit을 고려해야 합니다.
+
+### 1. 테스트 클래스에 slow 마커 추가
+
+```python
+import time
+import pytest
+from trading_bot.brokers.base_broker import BrokerError
+
+@pytest.mark.slow
+class TestAPIIntegration:
+    """외부 API 통합 테스트"""
+
+    def test_api_call(self, api_client):
+        """API 호출 테스트"""
+        try:
+            result = api_client.fetch_data()
+            assert result is not None
+        except BrokerError as e:
+            # Rate limit 에러 발생 시 테스트 건너뛰기
+            error_msg = str(e).lower()
+            if any(keyword in error_msg for keyword in [
+                'rate limit', 'too many requests', 'egw00133', '1분당 1회', 'forbidden'
+            ]):
+                pytest.skip(f"Rate limit exceeded: {e}")
+            raise
+```
+
+### 2. 연속 API 호출 시 sleep 추가
+
+```python
+@pytest.mark.slow
+class TestMultipleAPICalls:
+    """여러 API 호출 테스트"""
+
+    def test_multiple_symbols(self, api_client):
+        """여러 종목 조회"""
+        symbols = ['AAPL', 'MSFT', 'GOOGL']
+
+        for i, symbol in enumerate(symbols):
+            if i > 0:
+                # Rate limit 방지를 위한 대기
+                time.sleep(1)
+
+            try:
+                result = api_client.fetch_data(symbol)
+                assert result['symbol'] == symbol
+            except BrokerError as e:
+                error_msg = str(e).lower()
+                if any(keyword in error_msg for keyword in [
+                    'rate limit', 'too many requests', 'egw00133', '1분당 1회', 'forbidden'
+                ]):
+                    pytest.skip(f"Rate limit exceeded: {e}")
+                raise
+```
+
+### 3. Rate Limit 에러 키워드
+
+다음 키워드를 사용하여 rate limit 에러를 감지합니다:
+- `'rate limit'`: 일반적인 rate limit 메시지
+- `'too many requests'`: HTTP 429 에러
+- `'egw00133'`: KIS API rate limit 에러 코드
+- `'1분당 1회'`: KIS API 한글 에러 메시지
+- `'forbidden'`: HTTP 403 (rate limit으로 인한 접근 거부)
+
+### 4. pytest.skip() vs pytest.xfail()
+
+- **pytest.skip()**: Rate limit 에러는 테스트 실패가 아니므로 skip 사용
+- **pytest.xfail()**: 알려진 버그나 미구현 기능에 사용
 
 ---
 
