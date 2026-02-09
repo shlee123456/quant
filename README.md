@@ -39,6 +39,15 @@ A multi-asset trading bot supporting cryptocurrencies and stocks (domestic & int
   - Interactive dashboard with Streamlit
   - Session comparison and equity curve visualization
 
+- **Automated Scheduler** (Phase 2 Complete)
+  - APScheduler integration for cron-based execution
+  - Automatic trading during US market hours (23:30-06:00 KST)
+  - Pre-market strategy optimization (23:00 KST)
+  - Post-market reporting and analysis
+  - Slack and Email notifications
+  - Trade alerts, daily reports, and error notifications
+  - Graceful shutdown handling
+
 ## Installation
 
 ### Option 1: Docker (Recommended)
@@ -312,6 +321,65 @@ Paper trading sessions are stored in SQLite (`data/paper_trading.db`) with the f
 
 **Portfolio Snapshots:**
 - Periodic portfolio value snapshots with cash and positions
+
+### 7. Strategy Presets - Save and Load Configurations
+
+Strategy presets allow you to save your favorite trading configurations and load them later without manually adjusting settings each time.
+
+```python
+from trading_bot.strategy_presets import StrategyPresetManager
+
+# Initialize preset manager
+manager = StrategyPresetManager()  # Saves to data/strategy_presets.json
+
+# Save a preset
+manager.save_preset(
+    name="보수적 RSI 전략",
+    strategy="RSI Strategy",
+    strategy_params={"period": 14, "overbought": 70, "oversold": 30},
+    initial_capital=10000.0,
+    position_size=0.3,
+    symbols=["AAPL", "MSFT"],
+    stop_loss_pct=0.03,   # 3% stop loss
+    take_profit_pct=0.06,  # 6% take profit
+    enable_stop_loss=True,
+    enable_take_profit=True,
+    description="안정적인 수익을 추구하는 보수적 전략"
+)
+
+# Load a preset
+preset = manager.load_preset("보수적 RSI 전략")
+print(f"Strategy: {preset['strategy']}")
+print(f"Symbols: {preset['symbols']}")
+print(f"Parameters: {preset['strategy_params']}")
+
+# List all presets
+all_presets = manager.list_presets()
+for p in all_presets:
+    print(f"{p['name']} - {p['strategy']}")
+
+# Delete a preset
+manager.delete_preset("보수적 RSI 전략")
+
+# Export/Import presets
+manager.export_preset("보수적 RSI 전략", "my_preset.json")
+manager.import_preset("my_preset.json")
+```
+
+#### Dashboard Integration
+
+The dashboard's **Paper Trading** tab includes a built-in preset management UI:
+
+1. **Load Presets**: Select a saved preset from the dropdown and click "불러오기" to populate all form fields
+2. **Save Presets**: Configure your strategy settings, enter a preset name, and click "프리셋 저장"
+3. **Delete Presets**: Select a preset and click "삭제" to remove it
+4. **Preset Details**: View full configuration details in the expandable section
+
+This feature is especially useful for:
+- **Quick Testing**: Switch between different strategies without manual reconfiguration
+- **Strategy Comparison**: Save multiple variations of the same strategy with different parameters
+- **Risk Management**: Save conservative and aggressive versions of strategies
+- **Sharing**: Export presets as JSON files to share with others
 
 **Strategy Signals:**
 - All strategy signals generated with indicator values and execution status

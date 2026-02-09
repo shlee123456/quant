@@ -19,11 +19,15 @@
 
 ```
 examples/
-├── quickstart.py               # 빠른 시작 가이드
-├── run_backtest_example.py     # 백테스팅 예제
-├── strategy_optimization.py    # 전략 최적화 예제
-├── strategy_comparison.py      # 전략 비교 예제
-└── test_dashboard.py           # 대시보드 테스트
+├── quickstart.py                    # 빠른 시작 가이드
+├── run_backtest_example.py          # 백테스팅 예제
+├── strategy_optimization.py         # 전략 최적화 예제
+├── strategy_comparison.py           # 전략 비교 예제
+├── test_dashboard.py                # 대시보드 테스트
+├── test_strategy_presets.py         # 전략 프리셋 관리 테스트
+├── test_stop_loss_take_profit.py    # 손절/익절 기능 테스트
+├── test_notifications.py            # 알림 서비스 테스트 (Phase 2)
+└── test_scheduler.py                # 자동화 스케줄러 테스트 (Phase 2)
 ```
 
 ---
@@ -241,6 +245,317 @@ python examples/test_dashboard.py 2>&1 | tee .context/terminal/dashboard_test_$(
 - 대시보드 차트 생성 함수 테스트
 - 다국어 번역 테스트
 - 데이터 로딩 테스트
+
+---
+
+### 6. `test_strategy_presets.py` - 전략 프리셋 관리
+
+**목적**: StrategyPresetManager 기능 검증
+
+**실행 명령어**:
+```bash
+python examples/test_strategy_presets.py 2>&1 | tee .context/terminal/test_presets_$(date +%s).log
+```
+
+**주요 내용**:
+- 프리셋 저장/불러오기
+- 프리셋 목록 조회
+- 프리셋 삭제
+- 프리셋 내보내기/가져오기
+
+**코드 구조**:
+```python
+from trading_bot.strategy_presets import StrategyPresetManager
+
+def test_save_and_load():
+    """프리셋 저장 및 불러오기 테스트"""
+    manager = StrategyPresetManager()
+
+    # 저장
+    manager.save_preset(
+        name="테스트 전략",
+        strategy="RSI Strategy",
+        strategy_params={"period": 14, "overbought": 70, "oversold": 30},
+        symbols=["AAPL"],
+        initial_capital=10000.0,
+        position_size=0.3
+    )
+
+    # 불러오기
+    preset = manager.load_preset("테스트 전략")
+    assert preset['strategy'] == "RSI Strategy"
+    print("✅ 저장/불러오기 성공")
+
+def test_list_presets():
+    """프리셋 목록 조회 테스트"""
+    manager = StrategyPresetManager()
+    presets = manager.list_presets()
+    print(f"총 {len(presets)}개 프리셋:")
+    for name in presets:
+        print(f"  - {name}")
+
+def test_delete_preset():
+    """프리셋 삭제 테스트"""
+    manager = StrategyPresetManager()
+    manager.delete_preset("테스트 전략")
+    print("✅ 삭제 성공")
+
+if __name__ == "__main__":
+    test_save_and_load()
+    test_list_presets()
+    test_delete_preset()
+```
+
+---
+
+### 7. `test_stop_loss_take_profit.py` - 손절/익절 기능
+
+**목적**: PaperTrader의 손절/익절 자동화 검증
+
+**실행 명령어**:
+```bash
+python examples/test_stop_loss_take_profit.py 2>&1 | tee .context/terminal/test_sl_tp_$(date +%s).log
+```
+
+**주요 내용**:
+- MockBroker로 가격 시뮬레이션
+- Stop Loss 트리거 확인
+- Take Profit 트리거 확인
+- 거래 로그 검증
+
+**코드 구조**:
+```python
+from trading_bot.paper_trader import PaperTrader
+from trading_bot.strategies import RSIStrategy
+
+class MockBroker:
+    """가격 시뮬레이션을 위한 Mock Broker"""
+    def __init__(self):
+        self.current_price = 100.0
+
+    def fetch_ticker(self, symbol, overseas=True):
+        return {'last': self.current_price}
+
+    def fetch_ohlcv(self, symbol, timeframe, limit, overseas=True):
+        # OHLCV 데이터 생성
+        pass
+
+def test_stop_loss():
+    """손절 기능 테스트"""
+    broker = MockBroker()
+
+    trader = PaperTrader(
+        strategy=RSIStrategy(),
+        symbols=['AAPL'],
+        broker=broker,
+        initial_capital=10000.0,
+        stop_loss_pct=0.03,  # 3% 손절
+        enable_stop_loss=True
+    )
+
+    # 1. 매수 ($100)
+    trader._execute_trade('AAPL', 'BUY', 10.0)
+
+    # 2. 가격 하락 ($97, -3%)
+    broker.current_price = 97.0
+    trader._check_stop_loss_take_profit()
+
+    # 3. 손절 확인
+    assert trader.positions.get('AAPL', 0) == 0  # 포지션 청산
+    print("✅ 손절 성공")
+
+def test_take_profit():
+    """익절 기능 테스트"""
+    broker = MockBroker()
+
+    trader = PaperTrader(
+        strategy=RSIStrategy(),
+        symbols=['AAPL'],
+        broker=broker,
+        initial_capital=10000.0,
+        take_profit_pct=0.06,  # 6% 익절
+        enable_take_profit=True
+    )
+
+    # 1. 매수 ($100)
+    trader._execute_trade('AAPL', 'BUY', 10.0)
+
+    # 2. 가격 상승 ($106, +6%)
+    broker.current_price = 106.0
+    trader._check_stop_loss_take_profit()
+
+    # 3. 익절 확인
+    assert trader.positions.get('AAPL', 0) == 0  # 포지션 청산
+    print("✅ 익절 성공")
+
+if __name__ == "__main__":
+    test_stop_loss()
+    test_take_profit()
+```
+
+---
+
+### 8. `test_notifications.py` - 알림 서비스 (Phase 2)
+
+**목적**: NotificationService의 Slack/Email 알림 검증
+
+**실행 명령어**:
+```bash
+python examples/test_notifications.py 2>&1 | tee .context/terminal/test_notifications_$(date +%s).log
+```
+
+**주요 내용**:
+- Slack Webhook 테스트
+- Email SMTP 테스트
+- 다양한 알림 타입 테스트
+
+**환경 변수 요구사항**:
+```bash
+# .env 파일
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+EMAIL_SMTP_SERVER=smtp.gmail.com
+EMAIL_SMTP_PORT=587
+EMAIL_SENDER=your_email@gmail.com
+EMAIL_PASSWORD=your_app_password
+EMAIL_RECEIVER=receiver@example.com
+```
+
+**코드 구조**:
+```python
+import os
+from trading_bot.notifications import NotificationService
+
+def test_slack_notification():
+    """Slack 알림 테스트"""
+    notifier = NotificationService(
+        slack_webhook_url=os.getenv('SLACK_WEBHOOK_URL')
+    )
+
+    # 거래 알림
+    notifier.notify_trade({
+        'type': 'BUY',
+        'symbol': 'AAPL',
+        'price': 150.25,
+        'size': 10.0
+    })
+    print("✅ Slack 거래 알림 전송")
+
+    # 일일 리포트
+    notifier.notify_daily_report({
+        'strategy_name': 'RSI_14_70_30',
+        'total_return': 2.5,
+        'win_rate': 65.0
+    })
+    print("✅ Slack 일일 리포트 전송")
+
+def test_email_notification():
+    """Email 알림 테스트"""
+    notifier = NotificationService(
+        email_config={
+            'smtp_server': os.getenv('EMAIL_SMTP_SERVER'),
+            'smtp_port': int(os.getenv('EMAIL_SMTP_PORT', 587)),
+            'sender_email': os.getenv('EMAIL_SENDER'),
+            'sender_password': os.getenv('EMAIL_PASSWORD'),
+            'receiver_email': os.getenv('EMAIL_RECEIVER')
+        }
+    )
+
+    # 일일 리포트 (Email)
+    notifier.notify_daily_report({
+        'strategy_name': 'RSI_14_70_30',
+        'total_return': 2.5,
+        'sharpe_ratio': 1.45
+    })
+    print("✅ Email 일일 리포트 전송")
+
+if __name__ == "__main__":
+    test_slack_notification()
+    test_email_notification()
+```
+
+---
+
+### 9. `test_scheduler.py` - 자동화 스케줄러 (Phase 2)
+
+**목적**: APScheduler 기반 자동 트레이딩 검증
+
+**실행 명령어**:
+```bash
+python examples/test_scheduler.py 2>&1 | tee .context/terminal/test_scheduler_$(date +%s).log
+```
+
+**주요 내용**:
+- 스케줄러 초기화
+- Cron 트리거 설정
+- 시뮬레이션 모드 실행
+
+**코드 구조**:
+```python
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.triggers.cron import CronTrigger
+from trading_bot.paper_trader import PaperTrader
+from trading_bot.strategies import RSIStrategy
+
+def start_trading():
+    """거래 시작 작업 (23:30 KST)"""
+    print("📈 Starting paper trading...")
+
+    trader = PaperTrader(
+        strategy=RSIStrategy(),
+        symbols=['AAPL', 'MSFT'],
+        initial_capital=10000.0
+    )
+    trader.start()
+    print("✅ Trading session started")
+
+def stop_trading():
+    """거래 종료 작업 (06:00 KST)"""
+    print("📊 Stopping paper trading...")
+    # 세션 종료 및 리포트 생성
+    print("✅ Trading session stopped")
+
+def optimize_strategy():
+    """전략 최적화 작업 (23:00 KST)"""
+    print("🔍 Optimizing strategy...")
+    # 파라미터 최적화 실행
+    print("✅ Strategy optimized")
+
+def test_scheduler():
+    """스케줄러 테스트 (즉시 실행)"""
+    scheduler = BlockingScheduler()
+
+    # 테스트용 즉시 실행
+    scheduler.add_job(optimize_strategy, 'date')  # 즉시 1회
+    scheduler.add_job(start_trading, 'date')  # 즉시 1회
+    scheduler.add_job(stop_trading, 'date')  # 즉시 1회
+
+    try:
+        scheduler.start()
+    except KeyboardInterrupt:
+        scheduler.shutdown()
+
+if __name__ == "__main__":
+    test_scheduler()
+```
+
+**실제 스케줄 설정** (`scheduler.py`):
+```python
+# 실전 스케줄 (매일 자동 실행)
+scheduler.add_job(
+    optimize_strategy,
+    CronTrigger(hour=23, minute=0)  # 23:00 KST
+)
+
+scheduler.add_job(
+    start_trading,
+    CronTrigger(hour=23, minute=30)  # 23:30 KST (장 시작)
+)
+
+scheduler.add_job(
+    stop_trading,
+    CronTrigger(hour=6, minute=0)  # 06:00 KST (장 마감)
+)
+```
 
 ---
 

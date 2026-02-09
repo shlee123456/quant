@@ -27,6 +27,9 @@ trading_bot/
 ├── backtester.py                # 백테스팅 엔진
 ├── optimizer.py                 # 전략 최적화
 ├── paper_trader.py              # 페이퍼 트레이딩
+├── database.py                  # SQLite 데이터베이스 (세션 추적)
+├── strategy_presets.py          # 전략 프리셋 관리
+├── notifications.py             # 알림 서비스 (Slack, Email)
 └── strategies/
     ├── __init__.py
     ├── rsi_strategy.py          # RSI 전략
@@ -125,8 +128,10 @@ def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
 | `simulation_data.py` | GBM 기반 시뮬레이션 데이터 생성 | 공통 |
 | `backtester.py` | 백테스팅 엔진 (수수료, 슬리피지 포함) | 공통 |
 | `optimizer.py` | 그리드 서치 파라미터 최적화 | 공통 |
-| `paper_trader.py` | 실시간 페이퍼 트레이딩 | 암호화폐 + 해외주식 |
+| `paper_trader.py` | 실시간 페이퍼 트레이딩 (Stop Loss/Take Profit 지원) | 암호화폐 + 해외주식 |
 | `database.py` | SQLite 데이터베이스 (세션 추적) | 공통 |
+| `strategy_presets.py` | 전략 설정 저장/불러오기 (JSON) | 공통 |
+| `notifications.py` | 알림 서비스 (Slack Webhook, Email SMTP) | 공통 |
 
 ---
 
@@ -234,6 +239,284 @@ print(f"Sharpe Ratio: {summary['sharpe_ratio']:.2f}")
 3. **해외주식**: `overseas=True` 파라미터 필수 (미국 주식 거래 시)
 4. **종목 수 제한**: 최대 7종목 (API 제한 및 성능 고려)
 5. **데이터베이스**: db 파라미터 없으면 세션 추적 안 됨
+
+---
+
+## Strategy Preset Manager - 전략 설정 관리
+
+### 개요
+
+`StrategyPresetManager` 클래스는 전략 설정을 JSON 파일로 저장하고 불러오는 기능을 제공합니다.
+- **프리셋 저장**: 전략 이름, 파라미터, 심볼, 자본금, 위험 관리 설정 저장
+- **프리셋 불러오기**: 저장된 설정을 빠르게 복원
+- **프리셋 공유**: JSON 파일로 내보내기/가져오기
+
+### 기본 사용법
+
+```python
+from trading_bot.strategy_presets import StrategyPresetManager
+
+# 1. StrategyPresetManager 초기화
+manager = StrategyPresetManager()  # 기본 경로: data/strategy_presets.json
+
+# 2. 프리셋 저장
+manager.save_preset(
+    name="보수적 RSI 전략",
+    description="안정적 수익을 위한 보수적 RSI 설정",
+    strategy="RSI Strategy",
+    strategy_params={"period": 14, "overbought": 70, "oversold": 30},
+    symbols=["AAPL", "MSFT", "GOOGL"],
+    initial_capital=10000.0,
+    position_size=0.3,
+    stop_loss_pct=0.03,  # 3% 손절
+    take_profit_pct=0.06,  # 6% 익절
+    enable_stop_loss=True,
+    enable_take_profit=True
+)
+
+# 3. 프리셋 불러오기
+preset = manager.load_preset("보수적 RSI 전략")
+print(preset['strategy'])  # "RSI Strategy"
+print(preset['strategy_params'])  # {"period": 14, ...}
+
+# 4. 모든 프리셋 조회
+all_presets = manager.list_presets()
+for preset_name in all_presets:
+    print(preset_name)
+
+# 5. 프리셋 삭제
+manager.delete_preset("보수적 RSI 전략")
+
+# 6. 프리셋 내보내기
+manager.export_preset("보수적 RSI 전략", "presets/my_strategy.json")
+
+# 7. 프리셋 가져오기
+manager.import_preset("presets/my_strategy.json", new_name="가져온 전략")
+```
+
+### 프리셋 데이터 구조
+
+```python
+{
+    "name": "보수적 RSI 전략",
+    "description": "안정적 수익을 위한 보수적 RSI 설정",
+    "strategy": "RSI Strategy",
+    "strategy_params": {
+        "period": 14,
+        "overbought": 70,
+        "oversold": 30
+    },
+    "symbols": ["AAPL", "MSFT", "GOOGL"],
+    "initial_capital": 10000.0,
+    "position_size": 0.3,
+    "stop_loss_pct": 0.03,
+    "take_profit_pct": 0.06,
+    "enable_stop_loss": true,
+    "enable_take_profit": true,
+    "created_at": "2026-02-09T10:30:00",
+    "updated_at": "2026-02-09T10:30:00",
+    "last_used": "2026-02-09T12:00:00"
+}
+```
+
+### 주의사항
+
+- 프리셋 이름은 고유해야 함 (중복 시 덮어쓰기)
+- JSON 파일은 `data/` 디렉토리에 자동 저장
+- 프리셋 불러오기 시 `last_used` 타임스탬프 자동 업데이트
+- 프리셋 가져오기 시 `new_name` 지정하지 않으면 원래 이름 사용
+
+---
+
+## Notification Service - 알림 서비스 (Phase 2)
+
+### 개요
+
+`NotificationService` 클래스는 거래 알림과 일일 리포트를 Slack 또는 Email로 전송합니다.
+- **Slack Webhook**: 실시간 거래 알림
+- **Email SMTP**: 일일 성과 리포트
+- **다양한 알림 타입**: 거래, 세션 시작/종료, 일일 리포트, 에러
+
+### 기본 사용법
+
+#### Slack 알림
+
+```python
+from trading_bot.notifications import NotificationService
+import os
+
+# 1. Slack Webhook으로 초기화
+notifier = NotificationService(
+    slack_webhook_url=os.getenv('SLACK_WEBHOOK_URL')
+)
+
+# 2. 거래 알림
+notifier.notify_trade({
+    'type': 'BUY',
+    'symbol': 'AAPL',
+    'price': 150.25,
+    'size': 10.0,
+    'timestamp': '2026-02-09 10:30:00'
+})
+
+# 3. 세션 시작 알림
+notifier.notify_session_start({
+    'strategy_name': 'RSI_14_70_30',
+    'symbols': ['AAPL', 'MSFT'],
+    'initial_capital': 10000.0
+})
+
+# 4. 세션 종료 알림
+notifier.notify_session_end({
+    'strategy_name': 'RSI_14_70_30',
+    'total_return': 2.5,
+    'win_rate': 65.0,
+    'max_drawdown': -3.2
+})
+
+# 5. 일일 리포트
+notifier.notify_daily_report({
+    'strategy_name': 'RSI_14_70_30',
+    'total_return': 2.5,
+    'sharpe_ratio': 1.45,
+    'max_drawdown': -3.2,
+    'win_rate': 65.0,
+    'num_trades': 12
+})
+
+# 6. 에러 알림
+notifier.notify_error('API 호출 실패', 'Rate limit exceeded')
+```
+
+#### Email 알림
+
+```python
+# Email SMTP로 초기화
+notifier = NotificationService(
+    email_config={
+        'smtp_server': 'smtp.gmail.com',
+        'smtp_port': 587,
+        'sender_email': 'your_email@gmail.com',
+        'sender_password': os.getenv('EMAIL_PASSWORD'),
+        'receiver_email': 'receiver@example.com'
+    }
+)
+
+# Email로 일일 리포트 전송
+notifier.notify_daily_report({
+    'strategy_name': 'RSI_14_70_30',
+    'total_return': 2.5,
+    'sharpe_ratio': 1.45,
+    'max_drawdown': -3.2,
+    'win_rate': 65.0,
+    'num_trades': 12
+})
+```
+
+#### Slack + Email 동시 사용
+
+```python
+# 두 채널 모두 활성화
+notifier = NotificationService(
+    slack_webhook_url=os.getenv('SLACK_WEBHOOK_URL'),
+    email_config={
+        'smtp_server': 'smtp.gmail.com',
+        'smtp_port': 587,
+        'sender_email': 'your_email@gmail.com',
+        'sender_password': os.getenv('EMAIL_PASSWORD'),
+        'receiver_email': 'receiver@example.com'
+    }
+)
+
+# 거래는 Slack으로 (실시간)
+notifier.notify_trade({...})
+
+# 일일 리포트는 Email로 (상세)
+notifier.notify_daily_report({...})
+```
+
+### 환경 변수 설정
+
+`.env` 파일에 다음 환경 변수를 설정하세요:
+
+```bash
+# Slack Webhook
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+
+# Email SMTP
+EMAIL_SMTP_SERVER=smtp.gmail.com
+EMAIL_SMTP_PORT=587
+EMAIL_SENDER=your_email@gmail.com
+EMAIL_PASSWORD=your_app_password  # Gmail: 2단계 인증 후 앱 비밀번호 생성
+EMAIL_RECEIVER=receiver@example.com
+```
+
+### 주의사항
+
+- **Slack Webhook**: [Slack 앱](https://api.slack.com/messaging/webhooks) 생성 후 Webhook URL 발급
+- **Gmail 사용 시**: 2단계 인증 활성화 후 앱 비밀번호 생성 필요
+- **에러 처리**: 알림 전송 실패 시 로그 기록 (예외 발생 안 함)
+- **Rate Limit**: Slack은 1초당 1개 메시지 권장
+
+---
+
+## Stop Loss & Take Profit (PaperTrader 통합)
+
+### 개요
+
+PaperTrader에 손절/익절 기능이 통합되어 자동으로 리스크 관리를 수행합니다.
+- **Stop Loss**: 손실이 일정 비율 도달 시 자동 매도
+- **Take Profit**: 수익이 일정 비율 도달 시 자동 매도
+- **포지션별 관리**: 각 종목마다 독립적으로 손익 추적
+
+### 기본 사용법
+
+```python
+from trading_bot.paper_trader import PaperTrader
+from trading_bot.strategies import RSIStrategy
+from dashboard.kis_broker import get_kis_broker
+
+# 1. PaperTrader 생성 시 손절/익절 설정
+trader = PaperTrader(
+    strategy=RSIStrategy(),
+    symbols=['AAPL', 'MSFT'],
+    broker=get_kis_broker(),
+    initial_capital=10000.0,
+    position_size=0.3,
+    stop_loss_pct=0.03,  # 3% 손절
+    take_profit_pct=0.06,  # 6% 익절
+    enable_stop_loss=True,
+    enable_take_profit=True
+)
+
+# 2. 실시간 실행 (손절/익절 자동 실행)
+trader.run_realtime(interval_seconds=60, timeframe='1d')
+```
+
+### 동작 원리
+
+1. **진입 가격 추적**: 매수 시 평균 진입 가격 기록
+2. **실시간 모니터링**: 매 iteration마다 현재가와 진입가 비교
+3. **자동 청산**:
+   - 손실률 >= `stop_loss_pct` → 자동 매도
+   - 수익률 >= `take_profit_pct` → 자동 매도
+4. **거래 로그**: 손절/익절 거래도 DB에 기록
+
+### 예시
+
+```python
+# 예시: AAPL 매수 후 손절/익절
+# 1. AAPL을 $150에 10주 매수 (진입가: $150)
+# 2. 손절: $145.50 (-3%) 도달 시 자동 매도
+# 3. 익절: $159.00 (+6%) 도달 시 자동 매도
+```
+
+### 주의사항
+
+- `enable_stop_loss=False`면 손절 비활성화
+- `enable_take_profit=False`면 익절 비활성화
+- 손절/익절은 전략 시그널보다 우선 실행됨
+- 평균 진입 가격은 `trader.avg_entry_prices` 딕셔너리에 저장
 
 ---
 

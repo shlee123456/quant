@@ -34,7 +34,11 @@ class PaperTrader:
         position_size: float = 0.95,
         commission: float = 0.001,
         log_file: Optional[str] = None,
-        db: Optional[TradingDatabase] = None
+        db: Optional[TradingDatabase] = None,
+        stop_loss_pct: float = 0.05,
+        take_profit_pct: float = 0.10,
+        enable_stop_loss: bool = True,
+        enable_take_profit: bool = True
     ):
         """
         Initialize paper trader
@@ -49,6 +53,10 @@ class PaperTrader:
             commission: Trading commission/fee
             log_file: Path to log file for trades (optional)
             db: TradingDatabase instance for persistent logging (optional)
+            stop_loss_pct: Stop loss percentage (default: 0.05 = 5%)
+            take_profit_pct: Take profit percentage (default: 0.10 = 10%)
+            enable_stop_loss: Enable stop loss feature (default: True)
+            enable_take_profit: Enable take profit feature (default: True)
         """
         self.strategy = strategy
 
@@ -67,6 +75,12 @@ class PaperTrader:
         self.commission = commission
         self.log_file = log_file
         self.db = db
+
+        # Risk management
+        self.stop_loss_pct = stop_loss_pct
+        self.take_profit_pct = take_profit_pct
+        self.enable_stop_loss = enable_stop_loss
+        self.enable_take_profit = enable_take_profit
 
         # Trading state - track positions per symbol
         self.capital = initial_capital
@@ -164,7 +178,7 @@ class PaperTrader:
         print(f"Size: {self.positions[symbol]:.6f}")
         print(f"Capital remaining: ${self.capital:.2f}")
 
-    def execute_sell(self, symbol: str, price: float, timestamp: datetime):
+    def execute_sell(self, symbol: str, price: float, timestamp: datetime, reason: str = 'signal'):
         """
         Execute a sell order
 
@@ -172,6 +186,7 @@ class PaperTrader:
             symbol: Trading symbol
             price: Sell price
             timestamp: Trade timestamp
+            reason: Reason for sell ('signal', 'stop_loss', 'take_profit')
         """
         if self.positions[symbol] == 0:
             print(f"No position to sell for {symbol}, skipping SELL signal")
@@ -193,7 +208,8 @@ class PaperTrader:
             'capital': self.capital,
             'pnl': pnl,
             'pnl_pct': pnl_pct,
-            'commission': self.positions[symbol] * price * self.commission
+            'commission': self.positions[symbol] * price * self.commission,
+            'reason': reason
         }
 
         self.trades.append(trade)
@@ -203,11 +219,26 @@ class PaperTrader:
         if self.db and self.session_id:
             self.db.log_trade(self.session_id, trade)
 
-        print(f"\n[SELL] {symbol} {timestamp}")
-        print(f"Price: ${price:.2f}")
-        print(f"Size: {self.positions[symbol]:.6f}")
-        print(f"P&L: ${pnl:.2f} ({pnl_pct:+.2f}%)")
-        print(f"Capital: ${self.capital:.2f}")
+        # Print with emoji based on reason
+        reason_emoji = {
+            'signal': '📊',
+            'stop_loss': '🛑',
+            'take_profit': '💰'
+        }
+        emoji = reason_emoji.get(reason, '📊')
+
+        reason_text = {
+            'signal': '전략 시그널',
+            'stop_loss': '손절매',
+            'take_profit': '익절매'
+        }
+        reason_kr = reason_text.get(reason, '매도')
+
+        print(f"\n{emoji} [매도 - {reason_kr}] {symbol} {timestamp}")
+        print(f"가격: ${price:.2f}")
+        print(f"수량: {self.positions[symbol]:.6f}")
+        print(f"손익: ${pnl:.2f} ({pnl_pct:+.2f}%)")
+        print(f"자본: ${self.capital:.2f}")
 
         self.positions[symbol] = 0
         self.entry_prices[symbol] = 0
@@ -325,6 +356,63 @@ class PaperTrader:
             traceback.print_exc()
             self.stop()
 
+    def _check_stop_loss_take_profit(self, symbol: str, current_price: float, timestamp: datetime) -> bool:
+        """
+        Check and execute stop loss or take profit if triggered
+
+        Args:
+            symbol: Trading symbol
+            current_price: Current market price
+            timestamp: Current timestamp
+
+        Returns:
+            True if stop loss or take profit was triggered, False otherwise
+        """
+        # Skip if no position
+        if self.positions[symbol] == 0:
+            return False
+
+        entry_price = self.entry_prices[symbol]
+        pnl_pct = (current_price - entry_price) / entry_price
+
+        # Check stop loss
+        if self.enable_stop_loss and pnl_pct <= -self.stop_loss_pct:
+            print(f"\n🛑 손절매 발동! {symbol}: {pnl_pct*100:.2f}% (기준: -{self.stop_loss_pct*100:.0f}%)")
+            self.execute_sell(symbol, current_price, timestamp, reason='stop_loss')
+
+            # Send notification
+            if hasattr(self, 'notifier') and self.notifier:
+                self.notifier.notify_trade({
+                    'type': 'SELL',
+                    'symbol': symbol,
+                    'price': current_price,
+                    'size': self.positions.get(symbol, 0),
+                    'timestamp': timestamp,
+                    'reason': f'손절매 ({pnl_pct*100:.2f}%)'
+                })
+
+            return True
+
+        # Check take profit
+        if self.enable_take_profit and pnl_pct >= self.take_profit_pct:
+            print(f"\n💰 익절매 발동! {symbol}: {pnl_pct*100:.2f}% (기준: +{self.take_profit_pct*100:.0f}%)")
+            self.execute_sell(symbol, current_price, timestamp, reason='take_profit')
+
+            # Send notification
+            if hasattr(self, 'notifier') and self.notifier:
+                self.notifier.notify_trade({
+                    'type': 'SELL',
+                    'symbol': symbol,
+                    'price': current_price,
+                    'size': self.positions.get(symbol, 0),
+                    'timestamp': timestamp,
+                    'reason': f'익절매 ({pnl_pct*100:.2f}%)'
+                })
+
+            return True
+
+        return False
+
     def _realtime_iteration(self, timeframe: str):
         """
         Execute one iteration of real-time paper trading
@@ -353,6 +441,14 @@ class PaperTrader:
                     current_price = ticker['last']
                     current_prices[symbol] = current_price
 
+                    timestamp = datetime.now()
+
+                    # ⭐ 손절매/익절매 먼저 체크 (우선순위 높음)
+                    if self._check_stop_loss_take_profit(symbol, current_price, timestamp):
+                        # 손절/익절 발생 시 전략 시그널 무시하고 다음 종목으로
+                        print(f"[{timestamp}] {symbol}: 손절/익절 실행됨, 전략 시그널 무시")
+                        continue
+
                     # Fetch historical OHLCV data for strategy indicator calculation
                     df = self.broker.fetch_ohlcv(symbol, timeframe, limit=100)
 
@@ -362,8 +458,6 @@ class PaperTrader:
 
                     # Get current signal from strategy
                     signal, info = self.strategy.get_current_signal(df)
-
-                    timestamp = datetime.now()
 
                     # Log signal to database
                     if self.db and self.session_id:
@@ -383,14 +477,15 @@ class PaperTrader:
                         self.execute_buy(symbol, current_price, timestamp)
                         executed = True
                     elif signal == -1 and self.last_signals.get(symbol, 0) != -1:  # New SELL signal
-                        self.execute_sell(symbol, current_price, timestamp)
+                        self.execute_sell(symbol, current_price, timestamp, reason='signal')
                         executed = True
 
                     # Update last signal
                     self.last_signals[symbol] = signal
 
                     # Print status for this symbol
-                    print(f"[{timestamp}] {symbol}: Price=${current_price:.2f}, Signal={signal}")
+                    status_emoji = '📊' if signal == 0 else ('🟢' if signal == 1 else '🔴')
+                    print(f"[{timestamp}] {status_emoji} {symbol}: 가격=${current_price:.2f}, 시그널={signal}")
 
                 except Exception as e:
                     print(f"[ERROR] Failed to process {symbol}: {e}")

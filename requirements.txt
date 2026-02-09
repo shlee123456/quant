@@ -5,6 +5,7 @@ numpy>=1.24.0
 # Broker connectivity (optional - not needed for simulation)
 ccxt>=4.0.0           # Cryptocurrency exchanges
 python-kis>=2.1.6     # Korea Investment Securities (stocks)
+yfinance>=0.2.50      # Yahoo Finance API for US stocks (all symbols)
 
 # Web dashboard
 streamlit>=1.28.0
@@ -21,3 +22,8 @@ seaborn>=0.12.0
 # Utilities
 python-dateutil>=2.8.0
 pytz>=2023.3          # Timezone handling for market hours
+python-dotenv>=1.0.0  # Environment variables
+
+# Scheduling & Automation (Phase 2)
+APScheduler>=3.10.0   # Task scheduling
+requests>=2.31.0      # HTTP requests for notifications

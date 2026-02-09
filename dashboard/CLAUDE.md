@@ -667,6 +667,153 @@ def fetch_ticker_cached(symbol):
 - 실시간 포트폴리오 모니터링 (10초 자동 새로고침)
 - 세션 시작/중지 제어
 - 데이터베이스 연동 (세션 추적)
+- **전략 프리셋 관리** (저장/불러오기)
+- **Stop Loss/Take Profit 설정**
+
+---
+
+### Strategy Preset Management (💾 전략 프리셋 관리)
+
+#### 개요
+
+전략 설정을 프리셋으로 저장하고 불러오는 기능으로, 매번 파라미터를 수동으로 조정할 필요가 없습니다.
+
+**위치**: Paper Trading 탭 상단
+
+**주요 기능**:
+- 현재 설정을 프리셋으로 저장
+- 저장된 프리셋 불러오기
+- 프리셋 삭제
+- 프리셋 상세 정보 표시
+
+#### UI 구성
+
+##### 1. 프리셋 불러오기
+
+```python
+# 드롭다운에서 프리셋 선택
+preset_names = manager.list_presets()
+selected_preset = st.selectbox(
+    "Select Preset",
+    ["(새 설정)"] + preset_names,
+    help="저장된 전략 프리셋을 선택하세요"
+)
+
+# 불러오기 버튼
+if st.button("불러오기", disabled=(selected_preset == "(새 설정)")):
+    preset = manager.load_preset(selected_preset)
+
+    # 프리셋 데이터를 세션 상태에 저장
+    st.session_state.preset_strategy = preset['strategy']
+    st.session_state.preset_params = preset['strategy_params']
+    st.session_state.preset_symbols = preset['symbols']
+    st.session_state.preset_capital = preset['initial_capital']
+    st.session_state.preset_position_size = preset['position_size']
+    st.session_state.preset_stop_loss = preset.get('stop_loss_pct', 0.0)
+    st.session_state.preset_take_profit = preset.get('take_profit_pct', 0.0)
+
+    st.success(f"프리셋 '{selected_preset}' 불러오기 완료")
+    st.rerun()  # UI 업데이트
+```
+
+##### 2. 프리셋 저장
+
+```python
+# 프리셋 이름 입력
+preset_name = st.text_input(
+    "Preset Name",
+    placeholder="예: 보수적 RSI 전략",
+    help="저장할 프리셋 이름을 입력하세요"
+)
+
+# 프리셋 설명 (선택)
+preset_description = st.text_area(
+    "Description (Optional)",
+    placeholder="예: 안정적 수익을 위한 보수적 RSI 설정",
+    help="프리셋 설명 (선택 사항)"
+)
+
+# 저장 버튼
+if st.button("프리셋 저장", disabled=(not preset_name)):
+    manager.save_preset(
+        name=preset_name,
+        description=preset_description or "",
+        strategy=st.session_state.strategy_name,
+        strategy_params=st.session_state.strategy_params,
+        symbols=st.session_state.selected_symbols,
+        initial_capital=st.session_state.initial_capital,
+        position_size=st.session_state.position_size,
+        stop_loss_pct=st.session_state.stop_loss_pct,
+        take_profit_pct=st.session_state.take_profit_pct,
+        enable_stop_loss=st.session_state.enable_stop_loss,
+        enable_take_profit=st.session_state.enable_take_profit
+    )
+    st.success(f"프리셋 '{preset_name}' 저장 완료")
+```
+
+##### 3. 프리셋 삭제
+
+```python
+# 삭제 버튼
+if st.button("프리셋 삭제", disabled=(selected_preset == "(새 설정)")):
+    # 확인 메시지
+    if st.checkbox(f"정말로 '{selected_preset}' 프리셋을 삭제하시겠습니까?"):
+        manager.delete_preset(selected_preset)
+        st.success(f"프리셋 '{selected_preset}' 삭제 완료")
+        st.rerun()
+```
+
+##### 4. 프리셋 상세 정보
+
+```python
+# 프리셋 선택 시 상세 정보 표시
+if selected_preset != "(새 설정)":
+    preset = manager.load_preset(selected_preset)
+
+    with st.expander("프리셋 상세 정보", expanded=False):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown(f"**전략**: {preset['strategy']}")
+            st.markdown(f"**종목**: {', '.join(preset['symbols'])}")
+            st.markdown(f"**초기 자본**: ${preset['initial_capital']:,.2f}")
+            st.markdown(f"**포지션 크기**: {preset['position_size']:.1%}")
+
+        with col2:
+            st.markdown(f"**손절**: {preset.get('stop_loss_pct', 0) * 100:.1f}%")
+            st.markdown(f"**익절**: {preset.get('take_profit_pct', 0) * 100:.1f}%")
+            st.markdown(f"**생성일**: {preset['created_at'][:10]}")
+            st.markdown(f"**최근 사용**: {preset.get('last_used', 'N/A')[:10]}")
+
+        # 전략 파라미터
+        st.markdown("**전략 파라미터**:")
+        st.json(preset['strategy_params'])
+
+        # 설명
+        if preset.get('description'):
+            st.markdown(f"**설명**: {preset['description']}")
+```
+
+#### 프리셋 데이터 저장 위치
+
+- 경로: `data/strategy_presets.json`
+- 형식: JSON
+- 자동 생성: 디렉토리가 없으면 자동 생성
+
+#### 프리셋 불러오기 시 동작
+
+1. 프리셋 선택 → "불러오기" 버튼 클릭
+2. 프리셋 데이터를 `st.session_state`에 저장
+3. 프리셋 심볼을 즐겨찾기에 자동 추가
+4. UI의 모든 입력 필드가 프리셋 값으로 자동 업데이트
+5. `last_used` 타임스탬프 자동 업데이트
+
+#### 주의사항
+
+- 같은 이름의 프리셋 저장 시 덮어쓰기 (확인 메시지 필요)
+- 프리셋 삭제 시 확인 체크박스 필수
+- 프리셋 불러오기 시 현재 입력 중인 값은 사라짐 (주의 필요)
+- 프리셋 저장 버튼은 프리셋 이름이 입력되어야 활성화
 
 ---
 
@@ -723,7 +870,53 @@ position_size = st.slider(
 )
 ```
 
-#### 4. 세션 제어
+#### 4. Stop Loss & Take Profit 설정
+
+```python
+# Stop Loss 설정
+col1, col2 = st.columns(2)
+
+with col1:
+    enable_stop_loss = st.checkbox(
+        "Enable Stop Loss",
+        value=False,
+        help="활성화 시 손실이 일정 비율 도달하면 자동 매도"
+    )
+
+    if enable_stop_loss:
+        stop_loss_pct = st.number_input(
+            "Stop Loss (%)",
+            min_value=0.5,
+            max_value=20.0,
+            value=3.0,
+            step=0.5,
+            help="손실률 (예: 3.0 = -3%)"
+        ) / 100  # 비율로 변환
+
+with col2:
+    enable_take_profit = st.checkbox(
+        "Enable Take Profit",
+        value=False,
+        help="활성화 시 수익이 일정 비율 도달하면 자동 매도"
+    )
+
+    if enable_take_profit:
+        take_profit_pct = st.number_input(
+            "Take Profit (%)",
+            min_value=1.0,
+            max_value=50.0,
+            value=6.0,
+            step=0.5,
+            help="수익률 (예: 6.0 = +6%)"
+        ) / 100  # 비율로 변환
+```
+
+**동작 설명**:
+- **Stop Loss**: 진입가 대비 `-3%` 손실 시 자동 매도
+- **Take Profit**: 진입가 대비 `+6%` 수익 시 자동 매도
+- PaperTrader가 매 iteration마다 자동으로 손익을 체크하고 조건 충족 시 청산
+
+#### 5. 세션 제어
 
 ```python
 # 시작 버튼

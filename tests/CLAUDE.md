@@ -617,6 +617,397 @@ class TestMultipleAPICalls:
 
 ---
 
+## Paper Trading 테스트 패턴
+
+### MockBroker 사용
+
+PaperTrader를 외부 API 없이 테스트하려면 MockBroker를 사용합니다.
+
+```python
+import pytest
+import pandas as pd
+from trading_bot.paper_trader import PaperTrader
+from trading_bot.strategies import RSIStrategy
+
+class MockBroker:
+    """테스트용 Mock Broker"""
+
+    def __init__(self):
+        self.fetch_ticker_calls = []
+        self.fetch_ohlcv_calls = []
+        self.current_price = 100.0
+
+    def fetch_ticker(self, symbol, overseas=True):
+        """현재가 조회 Mock"""
+        self.fetch_ticker_calls.append((symbol, overseas))
+        return {
+            'symbol': symbol,
+            'last': self.current_price,
+            'timestamp': '2026-02-09 10:30:00'
+        }
+
+    def fetch_ohlcv(self, symbol, timeframe, limit=100, overseas=True):
+        """OHLCV 데이터 Mock"""
+        self.fetch_ohlcv_calls.append((symbol, timeframe, limit, overseas))
+
+        # 간단한 시뮬레이션 데이터 생성
+        df = pd.DataFrame({
+            'open': [100] * limit,
+            'high': [105] * limit,
+            'low': [95] * limit,
+            'close': [102] * limit,
+            'volume': [1000] * limit
+        })
+        return df
+
+
+def test_paper_trader_initialization():
+    """PaperTrader 초기화 테스트"""
+    broker = MockBroker()
+    strategy = RSIStrategy()
+
+    trader = PaperTrader(
+        strategy=strategy,
+        symbols=['AAPL', 'MSFT'],
+        broker=broker,
+        initial_capital=10000.0,
+        position_size=0.3
+    )
+
+    assert trader.cash == 10000.0
+    assert len(trader.symbols) == 2
+    assert trader.positions == {}
+
+
+def test_paper_trader_buy():
+    """매수 테스트"""
+    broker = MockBroker()
+    strategy = RSIStrategy()
+
+    trader = PaperTrader(
+        strategy=strategy,
+        symbols=['AAPL'],
+        broker=broker,
+        initial_capital=10000.0,
+        position_size=0.3
+    )
+
+    # 매수 실행
+    trader._execute_trade('AAPL', 'BUY', 10.0)
+
+    assert trader.positions['AAPL'] == 10.0
+    assert trader.cash < 10000.0  # 현금 감소
+
+
+def test_paper_trader_stop_loss():
+    """손절 기능 테스트"""
+    broker = MockBroker()
+    strategy = RSIStrategy()
+
+    trader = PaperTrader(
+        strategy=strategy,
+        symbols=['AAPL'],
+        broker=broker,
+        initial_capital=10000.0,
+        stop_loss_pct=0.03,  # 3% 손절
+        enable_stop_loss=True
+    )
+
+    # 1. 매수 ($100)
+    broker.current_price = 100.0
+    trader._execute_trade('AAPL', 'BUY', 10.0)
+    assert trader.positions['AAPL'] == 10.0
+
+    # 2. 가격 하락 ($97, -3%)
+    broker.current_price = 97.0
+    trader._check_stop_loss_take_profit()
+
+    # 3. 손절 확인
+    assert trader.positions.get('AAPL', 0) == 0  # 포지션 청산
+
+
+def test_paper_trader_take_profit():
+    """익절 기능 테스트"""
+    broker = MockBroker()
+    strategy = RSIStrategy()
+
+    trader = PaperTrader(
+        strategy=strategy,
+        symbols=['AAPL'],
+        broker=broker,
+        initial_capital=10000.0,
+        take_profit_pct=0.06,  # 6% 익절
+        enable_take_profit=True
+    )
+
+    # 1. 매수 ($100)
+    broker.current_price = 100.0
+    trader._execute_trade('AAPL', 'BUY', 10.0)
+    assert trader.positions['AAPL'] == 10.0
+
+    # 2. 가격 상승 ($106, +6%)
+    broker.current_price = 106.0
+    trader._check_stop_loss_take_profit()
+
+    # 3. 익절 확인
+    assert trader.positions.get('AAPL', 0) == 0  # 포지션 청산
+```
+
+---
+
+## Database 테스트 패턴
+
+### 임시 데이터베이스 사용
+
+```python
+import pytest
+import tempfile
+import os
+import sqlite3
+from trading_bot.database import TradingDatabase
+
+@pytest.fixture
+def temp_db():
+    """임시 데이터베이스 fixture"""
+    # 임시 디렉토리 생성
+    temp_dir = tempfile.mkdtemp()
+    db_path = os.path.join(temp_dir, 'test.db')
+
+    # 데이터베이스 생성
+    db = TradingDatabase(db_path=db_path)
+
+    yield db
+
+    # 정리
+    db.close()
+    os.remove(db_path)
+    os.rmdir(temp_dir)
+
+
+def test_create_session(temp_db):
+    """세션 생성 테스트"""
+    session_id = temp_db.create_session(
+        strategy_name='RSI_14_70_30',
+        initial_capital=10000.0
+    )
+
+    assert session_id is not None
+    assert 'RSI' in session_id
+
+
+def test_log_trade(temp_db):
+    """거래 로그 테스트"""
+    # 세션 생성
+    session_id = temp_db.create_session('RSI_14_70_30', 10000.0)
+
+    # 거래 로그
+    temp_db.log_trade(session_id, {
+        'symbol': 'AAPL',
+        'type': 'BUY',
+        'price': 150.0,
+        'size': 10.0,
+        'commission': 1.5
+    })
+
+    # 거래 조회
+    trades = temp_db.get_session_trades(session_id)
+    assert len(trades) == 1
+    assert trades[0]['symbol'] == 'AAPL'
+
+
+def test_portfolio_snapshot(temp_db):
+    """포트폴리오 스냅샷 테스트"""
+    session_id = temp_db.create_session('RSI_14_70_30', 10000.0)
+
+    # 스냅샷 저장
+    temp_db.log_snapshot(session_id, {
+        'total_value': 10500.0,
+        'cash': 5000.0,
+        'positions': {'AAPL': 10.0, 'MSFT': 5.0}
+    })
+
+    # 스냅샷 조회
+    snapshots = temp_db.get_session_snapshots(session_id)
+    assert len(snapshots) == 1
+    assert snapshots[0]['total_value'] == 10500.0
+
+
+def test_update_session(temp_db):
+    """세션 업데이트 테스트"""
+    session_id = temp_db.create_session('RSI_14_70_30', 10000.0)
+
+    # 세션 업데이트
+    temp_db.update_session(session_id, {
+        'final_capital': 10500.0,
+        'total_return': 5.0,
+        'status': 'completed'
+    })
+
+    # 세션 조회
+    summary = temp_db.get_session_summary(session_id)
+    assert summary['final_capital'] == 10500.0
+    assert summary['status'] == 'completed'
+```
+
+### 데이터베이스 스키마 검증
+
+```python
+def test_database_schema(temp_db):
+    """데이터베이스 스키마 확인"""
+    # 직접 SQLite 연결로 스키마 확인
+    conn = sqlite3.connect(temp_db.db_path)
+    cursor = conn.cursor()
+
+    # 테이블 목록 조회
+    cursor.execute("""
+        SELECT name FROM sqlite_master
+        WHERE type='table'
+    """)
+    tables = [row[0] for row in cursor.fetchall()]
+
+    # 필수 테이블 확인
+    assert 'paper_trading_sessions' in tables
+    assert 'trades' in tables
+    assert 'portfolio_snapshots' in tables
+    assert 'strategy_signals' in tables
+
+    conn.close()
+```
+
+---
+
+## Strategy Preset 테스트 패턴
+
+```python
+import pytest
+import json
+import os
+import tempfile
+from trading_bot.strategy_presets import StrategyPresetManager
+
+@pytest.fixture
+def temp_preset_file():
+    """임시 프리셋 파일 fixture"""
+    temp_dir = tempfile.mkdtemp()
+    preset_file = os.path.join(temp_dir, 'presets.json')
+
+    yield preset_file
+
+    # 정리
+    if os.path.exists(preset_file):
+        os.remove(preset_file)
+    os.rmdir(temp_dir)
+
+
+def test_save_and_load_preset(temp_preset_file):
+    """프리셋 저장/불러오기 테스트"""
+    manager = StrategyPresetManager(presets_file=temp_preset_file)
+
+    # 저장
+    manager.save_preset(
+        name="테스트 전략",
+        strategy="RSI Strategy",
+        strategy_params={"period": 14},
+        symbols=["AAPL"],
+        initial_capital=10000.0
+    )
+
+    # 불러오기
+    preset = manager.load_preset("테스트 전략")
+    assert preset['strategy'] == "RSI Strategy"
+    assert preset['symbols'] == ["AAPL"]
+
+
+def test_list_presets(temp_preset_file):
+    """프리셋 목록 조회 테스트"""
+    manager = StrategyPresetManager(presets_file=temp_preset_file)
+
+    # 여러 프리셋 저장
+    manager.save_preset(name="전략1", strategy="RSI", symbols=["AAPL"])
+    manager.save_preset(name="전략2", strategy="MACD", symbols=["MSFT"])
+
+    # 목록 조회
+    presets = manager.list_presets()
+    assert len(presets) == 2
+    assert "전략1" in presets
+    assert "전략2" in presets
+
+
+def test_delete_preset(temp_preset_file):
+    """프리셋 삭제 테스트"""
+    manager = StrategyPresetManager(presets_file=temp_preset_file)
+
+    manager.save_preset(name="삭제할 전략", strategy="RSI", symbols=["AAPL"])
+    manager.delete_preset("삭제할 전략")
+
+    presets = manager.list_presets()
+    assert "삭제할 전략" not in presets
+```
+
+---
+
+## Notification 테스트 패턴 (Phase 2)
+
+```python
+import pytest
+from unittest.mock import Mock, patch
+from trading_bot.notifications import NotificationService
+
+@patch('requests.post')
+def test_slack_notification(mock_post):
+    """Slack 알림 테스트 (Mock)"""
+    # Mock 설정
+    mock_post.return_value.status_code = 200
+
+    # NotificationService 생성
+    notifier = NotificationService(
+        slack_webhook_url='https://hooks.slack.com/test'
+    )
+
+    # 거래 알림
+    notifier.notify_trade({
+        'type': 'BUY',
+        'symbol': 'AAPL',
+        'price': 150.0,
+        'size': 10.0
+    })
+
+    # Mock 호출 확인
+    assert mock_post.called
+    call_args = mock_post.call_args
+    assert 'AAPL' in str(call_args)
+
+
+@patch('smtplib.SMTP')
+def test_email_notification(mock_smtp):
+    """Email 알림 테스트 (Mock)"""
+    # Mock 설정
+    mock_server = Mock()
+    mock_smtp.return_value.__enter__.return_value = mock_server
+
+    # NotificationService 생성
+    notifier = NotificationService(
+        email_config={
+            'smtp_server': 'smtp.gmail.com',
+            'smtp_port': 587,
+            'sender_email': 'test@example.com',
+            'sender_password': 'password',
+            'receiver_email': 'receiver@example.com'
+        }
+    )
+
+    # 일일 리포트
+    notifier.notify_daily_report({
+        'strategy_name': 'RSI_14_70_30',
+        'total_return': 2.5
+    })
+
+    # Mock 호출 확인
+    assert mock_server.send_message.called
+```
+
+---
+
 ## 관련 문서
 
 - [../trading_bot/CLAUDE.md](../trading_bot/CLAUDE.md): 테스트 대상 모듈

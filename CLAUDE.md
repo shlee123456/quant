@@ -515,18 +515,72 @@ Small edges disappear with commissions. Always include realistic fees.
    - Tag releases
    - Update changelog
 
+## Current Development Status
+
+### Phase 1: Paper Trading End-to-End (✅ 완료 - 2026-02-08)
+- ✅ PaperTrader 구현 (멀티 심볼, 실시간 실행)
+- ✅ TradingDatabase (SQLite 세션 추적)
+- ✅ Dashboard Paper Trading 탭 통합
+- ✅ Strategy Comparison 탭
+- ✅ Strategy Preset Management (2026-02-09)
+- ✅ Stop Loss & Take Profit 기능
+
+### Phase 2: Automation Scheduler (🚧 진행중)
+- 🚧 APScheduler 통합 (`scheduler.py`)
+- 🚧 Slack/Email 알림 서비스 (`notifications.py`)
+- ⏳ 미국 시장 시간 자동 실행 (23:30-06:00 KST)
+- ⏳ 일일 리포트 자동 생성
+
+### Phase 3: Live Trading (계획중)
+- RiskManager 클래스 (일일 손실 제한, 포지션 크기 제한)
+- LiveTrader (실제 주문 실행)
+- 2단계 확인 UI
+- 상세 로깅 및 감사 추적
+
+### Phase 4: Advanced Features (계획중)
+- LLM 통합 (신호 개선)
+- 포트폴리오 최적화 (멀티 전략 배분)
+- 머신러닝 전략 (LSTM, XGBoost)
+
+## Project Root Files
+
+### `scheduler.py` - 자동화 스케줄러 (Phase 2)
+
+APScheduler를 사용하여 Paper Trading을 자동으로 실행합니다.
+
+**주요 기능**:
+- 미국 시장 시간에 자동 실행 (23:30-06:00 KST)
+- 장 시작 전 전략 최적화 (23:00 KST)
+- 장 마감 후 자동 종료 및 리포트 생성 (06:00 KST)
+- Slack/Email 알림 통합
+
+**실행 명령어**:
+```bash
+python scheduler.py
+```
+
+**환경 변수 요구사항**:
+- KIS API 인증 정보 (`.env`)
+- Slack Webhook URL (선택)
+- Email SMTP 설정 (선택)
+
+**스케줄**:
+- `23:00 KST`: 전략 최적화
+- `23:30 KST`: Paper Trading 시작 (미국 시장 개장)
+- `06:00 KST`: Paper Trading 종료 (미국 시장 마감)
+
+**로그 파일**:
+- 경로: `logs/scheduler.log`
+- 모든 스케줄 실행 기록 저장
+
 ## Future Enhancements
 
 ### Potential Features
 - Portfolio management (multiple assets)
-- Risk management (stop-loss, position limits)
 - Advanced order types (limit, stop-limit)
 - Walk-forward optimization
 - Monte Carlo simulation
 - Machine learning strategies
-- Real-time trading execution
-- Webhook notifications
-- Database integration for results
 
 ### Performance Improvements
 - Parallel backtesting

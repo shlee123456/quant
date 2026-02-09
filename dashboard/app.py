@@ -19,6 +19,7 @@ from trading_bot.paper_trader import PaperTrader
 from trading_bot.simulation_data import SimulationDataGenerator
 from trading_bot.database import TradingDatabase
 from trading_bot.strategy_presets import StrategyPresetManager
+from trading_bot.custom_combo_strategy import CustomComboStrategy
 from dashboard.charts import ChartGenerator
 import plotly.graph_objects as go
 from dashboard.translations import get_text, get_strategy_name, get_strategy_desc
@@ -171,7 +172,12 @@ def start_paper_trading(
     stop_loss_pct: float = 0.05,
     take_profit_pct: float = 0.10,
     enable_stop_loss: bool = True,
-    enable_take_profit: bool = True
+    enable_take_profit: bool = True,
+    use_custom_combo: bool = False,
+    combo_strategies: List[str] = None,
+    combo_strategy_params: Dict[str, Dict] = None,
+    combo_logic: str = 'MAJORITY',
+    combo_weights: List[float] = None
 ) -> Optional[str]:
     """
     Start paper trading session in background thread
@@ -186,27 +192,57 @@ def start_paper_trading(
         take_profit_pct: Take profit percentage (0.10 = 10%)
         enable_stop_loss: Enable stop loss feature
         enable_take_profit: Enable take profit feature
+        use_custom_combo: Use custom combo strategy
+        combo_strategies: List of strategy names for combo
+        combo_strategy_params: Parameters for each combo strategy
+        combo_logic: Combination logic (AND, OR, MAJORITY, WEIGHTED)
+        combo_weights: Weights for each strategy (for WEIGHTED mode)
 
     Returns:
         session_id if successful, None if failed
     """
     try:
-        # Create strategy instance with user-provided parameters
+        # Create strategy instance
         strategy: Any
-        if strategy_name == 'RSI Strategy':
-            strategy = RSIStrategy(**strategy_params)
-        elif strategy_name == 'MACD Strategy':
-            strategy = MACDStrategy(**strategy_params)
-        elif strategy_name == 'Moving Average Crossover':
-            strategy = MovingAverageCrossover(**strategy_params)
-        elif strategy_name == 'Bollinger Bands':
-            strategy = BollingerBandsStrategy(**strategy_params)
-        elif strategy_name == 'Stochastic Oscillator':
-            strategy = StochasticStrategy(**strategy_params)
-        elif strategy_name == 'RSI+MACD Combo':
-            strategy = RSIMACDComboStrategy(**strategy_params)
+
+        if use_custom_combo and combo_strategies and len(combo_strategies) >= 2:
+            # Create custom combo strategy
+            strategy_instances = []
+            for strat_name in combo_strategies:
+                params = combo_strategy_params.get(strat_name, {})
+                if strat_name == 'RSI Strategy':
+                    strategy_instances.append(RSIStrategy(**params))
+                elif strat_name == 'MACD Strategy':
+                    strategy_instances.append(MACDStrategy(**params))
+                elif strat_name == 'Moving Average Crossover':
+                    strategy_instances.append(MovingAverageCrossover(**params))
+                elif strat_name == 'Bollinger Bands':
+                    strategy_instances.append(BollingerBandsStrategy(**params))
+                elif strat_name == 'Stochastic Oscillator':
+                    strategy_instances.append(StochasticStrategy(**params))
+
+            strategy = CustomComboStrategy(
+                strategies=strategy_instances,
+                strategy_names=combo_strategies,
+                combination_logic=combo_logic,
+                weights=combo_weights
+            )
         else:
-            raise ValueError(f"Unknown strategy: {strategy_name}")
+            # Create single strategy instance with user-provided parameters
+            if strategy_name == 'RSI Strategy':
+                strategy = RSIStrategy(**strategy_params)
+            elif strategy_name == 'MACD Strategy':
+                strategy = MACDStrategy(**strategy_params)
+            elif strategy_name == 'Moving Average Crossover':
+                strategy = MovingAverageCrossover(**strategy_params)
+            elif strategy_name == 'Bollinger Bands':
+                strategy = BollingerBandsStrategy(**strategy_params)
+            elif strategy_name == 'Stochastic Oscillator':
+                strategy = StochasticStrategy(**strategy_params)
+            elif strategy_name == 'RSI+MACD Combo':
+                strategy = RSIMACDComboStrategy(**strategy_params)
+            else:
+                raise ValueError(f"Unknown strategy: {strategy_name}")
 
         # Get KIS broker for US stocks
         from dashboard.kis_broker import get_kis_broker
@@ -405,13 +441,23 @@ def sidebar_config():
 
     # Language Selection - Only thing that stays in sidebar
     st.sidebar.subheader("🌐 " + get_text('language', lang))
+
+    previous_lang = st.session_state.language
     language = st.sidebar.selectbox(
         "Language Selection",
         options=['한국어', 'English'],
         index=0 if st.session_state.language == 'ko' else 1,
-        label_visibility="collapsed"
+        label_visibility="collapsed",
+        key="language_selector"
     )
-    st.session_state.language = 'ko' if language == '한국어' else 'en'
+
+    new_lang = 'ko' if language == '한국어' else 'en'
+
+    # Trigger rerun if language changed
+    if new_lang != previous_lang:
+        st.session_state.language = new_lang
+        st.rerun()
+
     lang = st.session_state.language  # Update lang after selection
 
     st.sidebar.markdown("---")
@@ -1184,6 +1230,114 @@ def paper_trading_tab():
             help="모의투자에 사용할 전략을 선택하세요"
         )
 
+    # Custom Combo Strategy Builder
+    st.markdown("---")
+    use_custom_combo = st.checkbox(
+        "🎨 커스텀 콤보 전략 만들기",
+        value=False,
+        help="여러 전략을 조합하여 나만의 전략을 만들 수 있습니다"
+    )
+
+    # Initialize combo variables
+    selected_combo_strategies = []
+    combo_logic_name = 'MAJORITY'
+    combo_weights = []
+    combo_strategy_params = {}
+
+    if use_custom_combo:
+        with st.expander("⚙️ 커스텀 콤보 전략 설정", expanded=True):
+            st.info("💡 여러 전략을 선택하고 조합 로직을 설정하여 커스텀 전략을 만드세요!")
+
+            # Strategy selection for combo
+            combo_col1, combo_col2 = st.columns(2)
+
+            with combo_col1:
+                selected_combo_strategies = st.multiselect(
+                    "조합할 전략 선택 (최소 2개)",
+                    options=[s for s in strategy_options if s != 'RSI+MACD Combo'],  # Exclude existing combo
+                    default=['RSI Strategy', 'MACD Strategy'],
+                    help="최소 2개 이상의 전략을 선택하세요"
+                )
+
+            with combo_col2:
+                combo_logic = st.selectbox(
+                    "조합 로직",
+                    options=['AND (모두 동의)', 'OR (하나라도)', 'MAJORITY (과반수)', 'WEIGHTED (가중치)'],
+                    index=2,
+                    help="전략 신호를 어떻게 조합할지 선택하세요"
+                )
+
+            # Extract logic name
+            combo_logic_name = combo_logic.split()[0]
+
+            # Weights for WEIGHTED mode
+            combo_weights = []
+            if combo_logic_name == 'WEIGHTED' and len(selected_combo_strategies) > 0:
+                st.markdown("**가중치 설정**")
+                weight_cols = st.columns(len(selected_combo_strategies))
+                for idx, strat_name in enumerate(selected_combo_strategies):
+                    with weight_cols[idx]:
+                        weight = st.slider(
+                            strat_name.split()[0],
+                            min_value=0.0,
+                            max_value=1.0,
+                            value=1.0 / len(selected_combo_strategies),
+                            step=0.05,
+                            key=f"combo_weight_{idx}"
+                        )
+                        combo_weights.append(weight)
+
+                # Show normalized weights
+                total_weight = sum(combo_weights)
+                if total_weight > 0:
+                    normalized_weights = [w / total_weight for w in combo_weights]
+                    st.caption(f"정규화된 가중치: {', '.join([f'{w:.2f}' for w in normalized_weights])}")
+
+            # Parameters for each strategy
+            if len(selected_combo_strategies) >= 2:
+                st.markdown("---")
+                st.markdown("**각 전략의 파라미터 설정**")
+
+                combo_strategy_params = {}
+                for strat_name in selected_combo_strategies:
+                    with st.expander(f"📐 {strat_name}", expanded=False):
+                        strat_config = STRATEGY_CONFIGS[strat_name]
+                        params = {}
+
+                        param_cols = st.columns(min(len(strat_config['params']), 3))
+                        for idx, (param_name, param_config) in enumerate(strat_config['params'].items()):
+                            with param_cols[idx % 3]:
+                                if param_config.get('step'):
+                                    params[param_name] = st.slider(
+                                        param_config['label'],
+                                        min_value=param_config['min'],
+                                        max_value=param_config['max'],
+                                        value=float(param_config['default']),
+                                        step=param_config['step'],
+                                        key=f"combo_{strat_name}_{param_name}"
+                                    )
+                                else:
+                                    params[param_name] = st.slider(
+                                        param_config['label'],
+                                        min_value=param_config['min'],
+                                        max_value=param_config['max'],
+                                        value=int(param_config['default']),
+                                        key=f"combo_{strat_name}_{param_name}"
+                                    )
+
+                        combo_strategy_params[strat_name] = params
+
+                # Preview combo strategy name
+                strategy_short = '+'.join([name.split()[0][:3] for name in selected_combo_strategies])
+                logic_short = {'AND': 'ALL', 'OR': 'ANY', 'MAJORITY': 'MAJ', 'WEIGHTED': 'WGT'}
+                combo_name = f"Custom_{logic_short.get(combo_logic_name, 'CMB')}_{strategy_short}"
+                st.success(f"✅ 커스텀 전략 이름: **{combo_name}**")
+
+            elif len(selected_combo_strategies) < 2:
+                st.warning("⚠️ 최소 2개 이상의 전략을 선택해주세요")
+
+    st.markdown("---")
+
     with col2:
         # Initialize favorites in session state
         if 'favorite_stocks' not in st.session_state:
@@ -1692,6 +1846,12 @@ def paper_trading_tab():
 
     # Handle button clicks
     if start_button:
+        # Prepare custom combo parameters
+        combo_strats = selected_combo_strategies if use_custom_combo else None
+        combo_params = combo_strategy_params if use_custom_combo else None
+        combo_log = combo_logic_name if use_custom_combo else 'MAJORITY'
+        combo_wts = combo_weights if (use_custom_combo and combo_logic_name == 'WEIGHTED') else None
+
         session_id = start_paper_trading(
             strategy_name=selected_strategy,
             symbols=selected_symbols,
@@ -1701,7 +1861,12 @@ def paper_trading_tab():
             stop_loss_pct=stop_loss_pct,
             take_profit_pct=take_profit_pct,
             enable_stop_loss=enable_stop_loss,
-            enable_take_profit=enable_take_profit
+            enable_take_profit=enable_take_profit,
+            use_custom_combo=use_custom_combo,
+            combo_strategies=combo_strats,
+            combo_strategy_params=combo_params,
+            combo_logic=combo_log,
+            combo_weights=combo_wts
         )
 
         if session_id:
