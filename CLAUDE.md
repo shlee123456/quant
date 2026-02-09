@@ -528,6 +528,7 @@ Small edges disappear with commissions. Always include realistic fees.
 ### Phase 2: Automation Scheduler (✅ 완료 - 2026-02-09)
 - ✅ APScheduler 통합 (`scheduler.py`)
 - ✅ Slack/Email 알림 서비스 (`notifications.py`)
+- ✅ Slack 파일 업로드 기능 (Bot Token, 리포트 자동 전송)
 - ✅ 미국 시장 시간 자동 실행 (23:30-06:00 KST)
 - ✅ 일일 리포트 자동 생성 (CSV/JSON)
 - ✅ Parameter Persistence (최적화 결과 자동 저장)

@@ -42,6 +42,7 @@
    - `scheduler.py` - APScheduler 통합
    - 미국 장 시간대 자동 실행 (23:00, 23:30, 06:00 KST)
    - 알림 서비스 (`notifications.py`) - Slack/Email
+   - Slack 파일 업로드 (Bot Token) - 리포트 자동 전송
    - 거래 알림, 일일 리포트, 에러 알림
    - 로깅 시스템 (`logs/scheduler.log`)
 
@@ -438,9 +439,11 @@ class NotificationService:
 **산출물**:
 - [x] `notifications.py` 작성 ✅
 - [x] Slack Webhook 통합 ✅
+- [x] Slack Bot Token 통합 (파일 업로드) ✅
 - [x] 이메일 알림 기능 (SMTP) ✅
 - [x] 거래 발생 시 알림 ✅
 - [x] 일일 리포트 자동 전송 ✅
+- [x] 리포트 파일 자동 업로드 (CSV/JSON) ✅
 - [x] 에러 알림 ✅
 - [x] 세션 시작/종료 알림 ✅
 
@@ -451,10 +454,14 @@ class NotificationService:
 - [x] `scheduler.py` 작성
 - [x] 미국 장 시간대 자동 실행 (APScheduler 통합)
 - [x] `notifications.py` 작성 (Slack/이메일 알림)
+- [x] Slack 파일 업로드 기능 (Bot Token)
 - [x] 스케줄러에 알림 통합
-- [x] requirements.txt 업데이트 (APScheduler, requests 추가)
+- [x] 스케줄러에 파일 업로드 통합
+- [x] requirements.txt 업데이트 (APScheduler, requests, slack-sdk 추가)
 - [x] .env.example 업데이트 (알림 설정)
 - [x] 테스트 스크립트 작성 (examples/test_notifications.py)
+- [x] 테스트 스크립트 작성 (examples/test_slack_file_upload.py)
+- [x] 채널 ID 조회 도구 (examples/debug_slack_channels.py)
 - [ ] 로그 모니터링 (Sentry, CloudWatch 등) - 선택사항
 
 ---

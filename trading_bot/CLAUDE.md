@@ -435,13 +435,127 @@ notifier.notify_trade({...})
 notifier.notify_daily_report({...})
 ```
 
+### Slack 파일 업로드 (Phase 2 - 2026-02-09)
+
+#### 개요
+
+Slack Bot Token을 사용하여 리포트 파일을 Slack 채널에 자동 업로드합니다.
+- **단일 파일 업로드**: `upload_file_to_slack()`
+- **여러 파일 일괄 업로드**: `upload_reports_to_slack()`
+- **리포트 + 파일 통합**: `notify_daily_report_with_files()`
+
+#### 설정 방법
+
+1. **Slack Bot Token 발급**:
+   - [Slack API 앱](https://api.slack.com/apps) 생성
+   - **OAuth & Permissions** → Bot Token Scopes 추가:
+     - `files:write`: 파일 업로드 권한
+     - `chat:write`: 메시지 전송 권한
+   - **Install App to Workspace** → Bot User OAuth Token 복사
+
+2. **채널 ID 확인**:
+   - Slack 채널 우클릭 → **View channel details**
+   - 하단에 Channel ID 표시 (예: `C0123456789`)
+
+3. **환경 변수 설정** (`.env`):
+```bash
+# Slack Bot Token (파일 업로드용)
+SLACK_BOT_TOKEN=xoxb-your-bot-token-here
+SLACK_CHANNEL=C0123456789  # 채널 ID (# 기호 없음)
+
+# Slack Webhook (텍스트 메시지용 - 선택)
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+```
+
+4. **라이브러리 설치**:
+```bash
+pip install slack-sdk>=3.23.0
+```
+
+#### 사용 예시
+
+**단일 파일 업로드**:
+```python
+from trading_bot.notifications import NotificationService
+
+notifier = NotificationService(
+    slack_bot_token=os.getenv('SLACK_BOT_TOKEN'),
+    slack_channel=os.getenv('SLACK_CHANNEL')
+)
+
+# CSV 파일 업로드
+notifier.upload_file_to_slack(
+    file_path='reports/RSI_14_30_70_summary.csv',
+    initial_comment='📊 일일 트레이딩 요약',
+    title='Daily Trading Summary'
+)
+```
+
+**여러 파일 일괄 업로드**:
+```python
+# 세션 종료 후 리포트 파일들 업로드
+report_files = [
+    'reports/RSI_14_30_70_summary.csv',
+    'reports/RSI_14_30_70_snapshots.csv',
+    'reports/RSI_14_30_70_report.json'
+]
+
+session_summary = {
+    'strategy_name': 'RSI_14_70_30',
+    'total_return': 2.5,
+    'sharpe_ratio': 1.45,
+    'max_drawdown': -3.2,
+    'win_rate': 65.0,
+    'num_trades': 12
+}
+
+notifier.upload_reports_to_slack(report_files, session_summary)
+```
+
+**리포트 텍스트 + 파일 통합 전송**:
+```python
+# 일일 리포트 (텍스트 메시지) + 파일 첨부
+notifier.notify_daily_report_with_files(
+    session_summary={
+        'strategy_name': 'RSI_14_70_30',
+        'total_return': 2.5,
+        'win_rate': 65.0
+    },
+    report_files=[
+        'reports/RSI_14_30_70_summary.csv',
+        'reports/RSI_14_30_70_report.json'
+    ]
+)
+```
+
+#### Scheduler 통합
+
+`scheduler.py`에서 장 마감 시 자동으로 리포트 파일을 Slack에 업로드합니다:
+
+```python
+# scheduler.py 내부
+def stop_paper_trading():
+    """장 마감 후 세션 종료 및 리포트 전송"""
+    # ... 세션 종료 ...
+
+    # 리포트 생성
+    report_files = generate_daily_report(session_id)
+
+    # Slack에 파일 업로드
+    notifier.upload_reports_to_slack(report_files, session_summary)
+```
+
 ### 환경 변수 설정
 
 `.env` 파일에 다음 환경 변수를 설정하세요:
 
 ```bash
-# Slack Webhook
+# Slack Webhook (텍스트 메시지)
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+
+# Slack Bot Token (파일 업로드)
+SLACK_BOT_TOKEN=xoxb-your-bot-token-here
+SLACK_CHANNEL=C0123456789  # 채널 ID (# 없음)
 
 # Email SMTP
 EMAIL_SMTP_SERVER=smtp.gmail.com
@@ -454,6 +568,9 @@ EMAIL_RECEIVER=receiver@example.com
 ### 주의사항
 
 - **Slack Webhook**: [Slack 앱](https://api.slack.com/messaging/webhooks) 생성 후 Webhook URL 발급
+- **Slack Bot Token**: OAuth & Permissions에서 `files:write`, `chat:write` 권한 필요
+- **채널 ID**: 채널 이름이 아닌 ID 사용 (예: `C0123456789`, `#trading-alerts` 아님)
+- **Bot 초대**: 채널에 Bot을 먼저 초대해야 파일 업로드 가능 (`/invite @bot_name`)
 - **Gmail 사용 시**: 2단계 인증 활성화 후 앱 비밀번호 생성 필요
 - **에러 처리**: 알림 전송 실패 시 로그 기록 (예외 발생 안 함)
 - **Rate Limit**: Slack은 1초당 1개 메시지 권장

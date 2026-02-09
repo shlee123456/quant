@@ -27,7 +27,9 @@ examples/
 ├── test_strategy_presets.py         # 전략 프리셋 관리 테스트
 ├── test_stop_loss_take_profit.py    # 손절/익절 기능 테스트
 ├── test_notifications.py            # 알림 서비스 테스트 (Phase 2)
-└── test_scheduler.py                # 자동화 스케줄러 테스트 (Phase 2)
+├── test_scheduler.py                # 자동화 스케줄러 테스트 (Phase 2)
+├── test_slack_file_upload.py        # Slack 파일 업로드 테스트 (Phase 2)
+└── debug_slack_channels.py          # Slack 채널 ID 조회 도구 (Phase 2)
 ```
 
 ---
@@ -556,6 +558,210 @@ scheduler.add_job(
     CronTrigger(hour=6, minute=0)  # 06:00 KST (장 마감)
 )
 ```
+
+---
+
+### 10. `test_slack_file_upload.py` - Slack 파일 업로드 (Phase 2)
+
+**목적**: Slack Bot Token을 사용한 파일 업로드 기능 검증
+
+**실행 명령어**:
+```bash
+python examples/test_slack_file_upload.py 2>&1 | tee .context/terminal/test_slack_upload_$(date +%s).log
+```
+
+**주요 내용**:
+- Slack Bot Token 연결 확인
+- 단일 파일 업로드
+- 여러 파일 일괄 업로드
+- 리포트 + 파일 통합 전송
+
+**환경 변수 요구사항**:
+```bash
+# .env 파일
+SLACK_BOT_TOKEN=xoxb-your-bot-token-here
+SLACK_CHANNEL=C0123456789  # 채널 ID (# 없음)
+```
+
+**코드 구조**:
+```python
+import os
+from trading_bot.notifications import NotificationService
+from pathlib import Path
+
+def test_upload_single_file():
+    """단일 파일 업로드 테스트"""
+    notifier = NotificationService(
+        slack_bot_token=os.getenv('SLACK_BOT_TOKEN'),
+        slack_channel=os.getenv('SLACK_CHANNEL')
+    )
+
+    # 테스트 파일 생성
+    test_file = 'reports/test_report.txt'
+    Path('reports').mkdir(exist_ok=True)
+    with open(test_file, 'w') as f:
+        f.write('This is a test report\n')
+
+    # 파일 업로드
+    success = notifier.upload_file_to_slack(
+        file_path=test_file,
+        initial_comment='📊 테스트 리포트',
+        title='Test Report'
+    )
+
+    if success:
+        print("✅ 파일 업로드 성공")
+    else:
+        print("✗ 파일 업로드 실패")
+
+def test_upload_multiple_files():
+    """여러 파일 일괄 업로드 테스트"""
+    notifier = NotificationService(
+        slack_bot_token=os.getenv('SLACK_BOT_TOKEN'),
+        slack_channel=os.getenv('SLACK_CHANNEL')
+    )
+
+    # 테스트 파일 생성
+    test_files = [
+        'reports/summary.csv',
+        'reports/snapshots.csv',
+        'reports/report.json'
+    ]
+
+    for file_path in test_files:
+        with open(file_path, 'w') as f:
+            f.write(f'Test content for {Path(file_path).name}\n')
+
+    # 세션 요약
+    session_summary = {
+        'strategy_name': 'RSI_14_70_30',
+        'total_return': 2.5,
+        'sharpe_ratio': 1.45,
+        'max_drawdown': -3.2,
+        'win_rate': 65.0,
+        'num_trades': 12
+    }
+
+    # 파일 업로드
+    success = notifier.upload_reports_to_slack(test_files, session_summary)
+
+    if success:
+        print("✅ 여러 파일 업로드 성공")
+    else:
+        print("✗ 여러 파일 업로드 실패")
+
+def test_daily_report_with_files():
+    """일일 리포트 + 파일 통합 전송"""
+    notifier = NotificationService(
+        slack_webhook_url=os.getenv('SLACK_WEBHOOK_URL'),  # 텍스트 메시지
+        slack_bot_token=os.getenv('SLACK_BOT_TOKEN'),      # 파일 업로드
+        slack_channel=os.getenv('SLACK_CHANNEL')
+    )
+
+    session_summary = {
+        'strategy_name': 'RSI_14_70_30',
+        'total_return': 2.5,
+        'win_rate': 65.0
+    }
+
+    report_files = ['reports/summary.csv', 'reports/report.json']
+
+    success = notifier.notify_daily_report_with_files(
+        session_summary,
+        report_files
+    )
+
+    if success:
+        print("✅ 리포트 + 파일 전송 성공")
+    else:
+        print("✗ 리포트 + 파일 전송 실패")
+
+if __name__ == "__main__":
+    test_upload_single_file()
+    test_upload_multiple_files()
+    test_daily_report_with_files()
+```
+
+**Bot Token 발급 방법**:
+1. [Slack API 앱](https://api.slack.com/apps) 생성
+2. **OAuth & Permissions** → Bot Token Scopes 추가:
+   - `files:write`: 파일 업로드 권한
+   - `chat:write`: 메시지 전송 권한
+3. **Install App to Workspace** → Bot User OAuth Token 복사
+4. 채널에 Bot 초대: `/invite @bot_name`
+
+---
+
+### 11. `debug_slack_channels.py` - Slack 채널 ID 조회 도구
+
+**목적**: Slack 채널 목록 조회 및 채널 ID 확인
+
+**실행 명령어**:
+```bash
+python examples/debug_slack_channels.py 2>&1 | tee .context/terminal/debug_slack_$(date +%s).log
+```
+
+**주요 내용**:
+- Bot이 접근 가능한 모든 채널 목록 조회
+- 채널 이름과 ID 매핑 확인
+- Bot 권한 상태 확인
+
+**환경 변수 요구사항**:
+```bash
+# .env 파일
+SLACK_BOT_TOKEN=xoxb-your-bot-token-here
+```
+
+**코드 구조**:
+```python
+import os
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
+
+def list_slack_channels():
+    """Bot이 접근 가능한 채널 목록 조회"""
+    token = os.getenv('SLACK_BOT_TOKEN')
+
+    if not token:
+        print("✗ SLACK_BOT_TOKEN 환경 변수가 설정되지 않았습니다.")
+        return
+
+    try:
+        client = WebClient(token=token)
+
+        # 공개 채널 조회
+        response = client.conversations_list(types='public_channel,private_channel')
+
+        print("\n=== Slack 채널 목록 ===\n")
+        for channel in response['channels']:
+            channel_name = channel['name']
+            channel_id = channel['id']
+            is_member = channel.get('is_member', False)
+            member_status = "✓ Bot 참여중" if is_member else "✗ Bot 미참여"
+
+            print(f"이름: #{channel_name}")
+            print(f"ID: {channel_id}")
+            print(f"상태: {member_status}")
+            print("-" * 50)
+
+    except SlackApiError as e:
+        print(f"✗ Slack API 에러: {e.response['error']}")
+        if e.response['error'] == 'missing_scope':
+            print("권한이 부족합니다. channels:read 권한을 추가하세요.")
+
+if __name__ == "__main__":
+    list_slack_channels()
+```
+
+**사용 시나리오**:
+- Slack Bot Token은 있지만 채널 ID를 모를 때
+- Bot이 채널에 제대로 참여했는지 확인할 때
+- 여러 채널 중 어느 채널을 사용할지 선택할 때
+
+**Bot 권한 추가 (필요 시)**:
+- **OAuth & Permissions** → Bot Token Scopes:
+  - `channels:read`: 공개 채널 목록 조회
+  - `groups:read`: 비공개 채널 목록 조회
 
 ---
 
