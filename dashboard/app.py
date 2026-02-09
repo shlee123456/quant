@@ -482,7 +482,7 @@ def backtest_tab():
     st.header(get_text('backtest_title', lang))
 
     st.markdown("""
-    시뮬레이션 데이터로 전략을 테스트하고 성능을 분석합니다.
+    시뮬레이션 데이터 또는 실제 종목의 과거 데이터로 전략을 테스트하고 성능을 분석합니다.
     """)
 
     # Configuration section - all in one tab
@@ -547,27 +547,77 @@ def backtest_tab():
     st.markdown("---")
     st.subheader("📊 데이터 설정")
 
-    col1, col2 = st.columns(2)
+    # Data source selection
+    data_source = st.radio(
+        "데이터 소스",
+        ["🎲 시뮬레이션 데이터", "📈 실제 종목 (yfinance)"],
+        key="backtest_data_source",
+        help="시뮬레이션: 빠른 테스트용 가상 데이터 | 실제 종목: Yahoo Finance에서 실제 과거 데이터 조회"
+    )
 
-    with col1:
-        num_periods = st.number_input(
-            "데이터 포인트 수",
-            min_value=100,
-            max_value=5000,
-            value=1000,
-            step=100,
-            key="backtest_periods",
-            help="시뮬레이션 데이터 생성 시 사용할 데이터 포인트 수"
-        )
+    if data_source == "🎲 시뮬레이션 데이터":
+        # Simulation data configuration
+        col1, col2 = st.columns(2)
 
-    with col2:
-        trend_type = st.selectbox(
-            "시장 트렌드",
-            options=['bullish', 'bearish', 'sideways', 'volatile'],
-            index=0,
-            key="backtest_trend",
-            help="시뮬레이션 데이터의 트렌드 방향"
-        )
+        with col1:
+            num_periods = st.number_input(
+                "데이터 포인트 수",
+                min_value=100,
+                max_value=5000,
+                value=1000,
+                step=100,
+                key="backtest_periods",
+                help="시뮬레이션 데이터 생성 시 사용할 데이터 포인트 수"
+            )
+
+        with col2:
+            trend_type = st.selectbox(
+                "시장 트렌드",
+                options=['bullish', 'bearish', 'sideways', 'volatile'],
+                index=0,
+                key="backtest_trend",
+                help="시뮬레이션 데이터의 트렌드 방향"
+            )
+
+    else:  # 실제 종목
+        # Real stock data configuration
+        col1, col2 = st.columns(2)
+
+        with col1:
+            symbol = st.text_input(
+                "종목 심볼",
+                value="AAPL",
+                key="backtest_symbol",
+                help="미국 주식 심볼 (예: AAPL, MSFT, GOOGL, TSLA, PLTR)"
+            ).upper()
+
+            # Symbol validation
+            if symbol:
+                from dashboard.yfinance_helper import validate_symbol
+                if not validate_symbol(symbol):
+                    st.warning(f"⚠️ '{symbol}'은(는) 유효하지 않은 종목 심볼입니다.")
+
+        with col2:
+            period_option = st.selectbox(
+                "조회 기간",
+                options=['1개월', '3개월', '6개월', '1년', '2년', '3년', '5년', '최대'],
+                index=4,  # 기본값: 2년
+                key="backtest_period",
+                help="과거 데이터 조회 기간"
+            )
+
+            # Period mapping
+            period_mapping = {
+                '1개월': '1mo',
+                '3개월': '3mo',
+                '6개월': '6mo',
+                '1년': '1y',
+                '2년': '2y',
+                '3년': '3y',
+                '5년': '5y',
+                '최대': 'max'
+            }
+            yf_period = period_mapping[period_option]
 
     # Run Backtest Button
     st.markdown("---")
@@ -578,12 +628,37 @@ def backtest_tab():
                 # Create strategy instance
                 strategy_instance = create_strategy(selected_strategy, strategy_params)
 
-                # Generate simulation data
-                generator = SimulationDataGenerator(seed=42)
-                df = generator.generate_trend_data(periods=num_periods, trend=trend_type)
+                # Get data based on source
+                if data_source == "🎲 시뮬레이션 데이터":
+                    # Generate simulation data
+                    generator = SimulationDataGenerator(seed=42)
+                    df = generator.generate_trend_data(periods=num_periods, trend=trend_type)
+                    data_source_label = f"시뮬레이션 ({trend_type}, {num_periods}개)"
+
+                else:  # 실제 종목
+                    # Fetch real stock data
+                    from dashboard.yfinance_helper import fetch_ohlcv_yfinance, validate_symbol
+
+                    # Validate symbol first
+                    if not validate_symbol(symbol):
+                        st.error(f"❌ '{symbol}'은(는) 유효하지 않은 종목 심볼입니다.")
+                        return
+
+                    # Fetch OHLCV data
+                    with st.spinner(f"{symbol} 데이터 조회 중..."):
+                        df = fetch_ohlcv_yfinance(symbol, period=yf_period, interval='1d')
+
+                    if df is None or df.empty:
+                        st.error(f"❌ {symbol} 데이터를 조회할 수 없습니다.")
+                        return
+
+                    data_source_label = f"{symbol} (yfinance, {period_option})"
+
+                    # Display data info
+                    st.info(f"📊 조회된 데이터: {len(df)}개 일봉 ({df['timestamp'].min().date()} ~ {df['timestamp'].max().date()})")
 
                 if df.empty:
-                    st.error("데이터 생성에 실패했습니다.")
+                    st.error("데이터 생성/조회에 실패했습니다.")
                     return
 
                 # Run backtest
@@ -598,7 +673,9 @@ def backtest_tab():
                     'results': results,
                     'backtester': backtester,
                     'data': df,
-                    'strategy_name': selected_strategy
+                    'strategy_name': selected_strategy,
+                    'strategy_instance': strategy_instance,  # 전략 인스턴스 저장
+                    'data_source': data_source_label  # 데이터 소스 저장
                 }
 
                 st.success("✅ 백테스팅이 완료되었습니다!")
@@ -621,6 +698,11 @@ def display_backtest_results(backtest_data: Dict):
     backtester = backtest_data['backtester']
     data = backtest_data['data']
     strategy_name = backtest_data['strategy_name']
+    strategy_instance = backtest_data.get('strategy_instance', backtester.strategy)  # 전략 인스턴스 가져오기
+    data_source = backtest_data.get('data_source', '알 수 없음')  # 데이터 소스
+
+    # Data source info
+    st.info(f"📊 **데이터 소스**: {data_source}")
 
     # Performance Metrics
     st.subheader(get_text('performance_metrics', lang))
@@ -668,7 +750,7 @@ def display_backtest_results(backtest_data: Dict):
     translated_strategy_name = get_strategy_name(strategy_name, lang)
     st.subheader(f"{get_text('price_chart', lang)} - {translated_strategy_name}")
     trades_df = backtester.get_trades_df()
-    data_with_indicators = st.session_state.strategy_instance.calculate_indicators(data)
+    data_with_indicators = strategy_instance.calculate_indicators(data)
 
     # Use enhanced chart plotting based on strategy type
     fig = chart_gen.plot_strategy_chart(data_with_indicators, trades_df, strategy_name)
@@ -1085,9 +1167,8 @@ def paper_trading_tab():
     col1, col2 = st.columns(2)
 
     with col1:
-        # Strategy selector
-        strategy_options = ['RSI Strategy', 'MACD Strategy', 'Moving Average Crossover',
-                           'Bollinger Bands', 'Stochastic Oscillator']
+        # Strategy selector - use all strategies from STRATEGY_CONFIGS
+        strategy_options = list(STRATEGY_CONFIGS.keys())
 
         # Check if preset is loaded and use its strategy
         default_strategy_index = 0
