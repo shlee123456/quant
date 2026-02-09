@@ -1120,151 +1120,188 @@ def paper_trading_tab():
         # Stock Symbol Database
         stock_db = StockSymbolDB()
 
-        # Stock search and selection - Option C Style
-        st.write("**📈 종목 선택**")
+        # Stock selection - Tab Style (Simple & Clean)
+        st.write("**종목 선택**")
 
-        # Row 1: Search box with sector filter
-        col_search, col_sector = st.columns([3, 1])
-        with col_search:
+        # Initialize temporary selection state
+        if 'temp_selected_stocks' not in st.session_state:
+            st.session_state.temp_selected_stocks = []
+
+        # Create tabs for different categories
+        tab1, tab2, tab3, tab4 = st.tabs(["인기 종목", "섹터별", "ETF", "전체 검색"])
+
+        # Tab 1: Popular stocks
+        with tab1:
+            st.caption("자주 거래되는 인기 종목")
+
+            # Popular stock presets
+            popular_presets = {
+                'FAANG': stock_db.get_preset('FAANG'),
+                'Magnificent 7': stock_db.get_preset('Magnificent 7'),
+                'Tech Giants': stock_db.get_preset('Tech Giants'),
+                'Semiconductors': stock_db.get_preset('Semiconductors'),
+            }
+
+            for preset_name, symbols in popular_presets.items():
+                with st.expander(f"{preset_name} ({len(symbols)}개)", expanded=(preset_name == 'FAANG')):
+                    for symbol in symbols:
+                        stock_info = stock_db.get_by_symbol(symbol)
+                        if stock_info:
+                            is_checked = symbol in st.session_state.temp_selected_stocks
+                            if st.checkbox(
+                                f"{symbol} - {stock_info['name']}",
+                                value=is_checked,
+                                key=f"pop_{symbol}"
+                            ):
+                                if symbol not in st.session_state.temp_selected_stocks:
+                                    st.session_state.temp_selected_stocks.append(symbol)
+                            else:
+                                if symbol in st.session_state.temp_selected_stocks:
+                                    st.session_state.temp_selected_stocks.remove(symbol)
+
+        # Tab 2: By sector
+        with tab2:
+            st.caption("섹터별로 종목 선택")
+
+            sectors = [s for s in stock_db.get_all_sectors() if s != 'ETF']
+            selected_sector = st.selectbox(
+                "섹터 선택",
+                options=sectors,
+                key="sector_select_tab"
+            )
+
+            if selected_sector:
+                sector_stocks = stock_db.get_by_sector(selected_sector)
+                st.caption(f"{len(sector_stocks)}개 종목")
+
+                # Add "Select All" button
+                col_a, col_b = st.columns([1, 4])
+                with col_a:
+                    if st.button("전체 선택", key=f"select_all_{selected_sector}"):
+                        for stock in sector_stocks:
+                            if stock['symbol'] not in st.session_state.temp_selected_stocks:
+                                st.session_state.temp_selected_stocks.append(stock['symbol'])
+                        st.rerun()
+
+                st.markdown("---")
+
+                for stock in sector_stocks:
+                    is_checked = stock['symbol'] in st.session_state.temp_selected_stocks
+                    if st.checkbox(
+                        f"{stock['symbol']} - {stock['name']}",
+                        value=is_checked,
+                        key=f"sector_{stock['symbol']}"
+                    ):
+                        if stock['symbol'] not in st.session_state.temp_selected_stocks:
+                            st.session_state.temp_selected_stocks.append(stock['symbol'])
+                    else:
+                        if stock['symbol'] in st.session_state.temp_selected_stocks:
+                            st.session_state.temp_selected_stocks.remove(stock['symbol'])
+
+        # Tab 3: ETFs
+        with tab3:
+            st.caption("주요 ETF 선택")
+
+            etf_categories = {
+                'Index ETFs': stock_db.get_preset('Index ETFs'),
+                'Sector ETFs': stock_db.get_preset('Sector ETFs'),
+            }
+
+            # Also get all ETFs from database
+            all_etfs = stock_db.get_by_sector('ETF')
+            etf_symbols = [e['symbol'] for e in all_etfs]
+
+            for category_name, symbols in etf_categories.items():
+                with st.expander(f"{category_name} ({len(symbols)}개)", expanded=True):
+                    for symbol in symbols:
+                        stock_info = stock_db.get_by_symbol(symbol)
+                        if stock_info:
+                            is_checked = symbol in st.session_state.temp_selected_stocks
+                            if st.checkbox(
+                                f"{symbol} - {stock_info['name']}",
+                                value=is_checked,
+                                key=f"etf_{symbol}"
+                            ):
+                                if symbol not in st.session_state.temp_selected_stocks:
+                                    st.session_state.temp_selected_stocks.append(symbol)
+                            else:
+                                if symbol in st.session_state.temp_selected_stocks:
+                                    st.session_state.temp_selected_stocks.remove(symbol)
+
+        # Tab 4: Search all stocks
+        with tab4:
+            st.caption("전체 종목에서 검색")
+
             search_query = st.text_input(
-                "🔍 검색",
+                "검색",
                 placeholder="심볼 또는 회사명 입력 (예: AAPL, Apple, Tesla...)",
-                key="paper_stock_search",
-                label_visibility="collapsed"
-            )
-        with col_sector:
-            all_sectors = ['모든 섹터'] + stock_db.get_all_sectors()
-            sector_filter = st.selectbox(
-                "섹터 필터",
-                options=all_sectors,
-                key="paper_sector_filter",
-                label_visibility="collapsed"
+                key="paper_stock_search_tab"
             )
 
-        # Row 2: Quick add popular stocks
-        st.markdown("**인기 종목** (클릭하여 즐겨찾기에 추가)")
-        popular_stocks = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA', 'SPY', 'QQQ']
+            if search_query:
+                search_results = stock_db.search(search_query)
 
-        # Create button grid for popular stocks
-        cols_pop = st.columns(9)
-        for idx, symbol in enumerate(popular_stocks):
-            with cols_pop[idx]:
-                # Show checkmark if already in favorites
-                is_favorite = symbol in st.session_state.favorite_stocks
-                button_label = f"✓ {symbol}" if is_favorite else f"+ {symbol}"
-                button_type = "secondary" if is_favorite else "primary"
+                if search_results:
+                    st.caption(f"{len(search_results)}개 종목 발견")
 
-                if st.button(button_label, key=f"quick_add_{symbol}", type=button_type, use_container_width=True):
-                    if symbol not in st.session_state.favorite_stocks:
-                        st.session_state.favorite_stocks.append(symbol)
-                        st.rerun()
+                    for stock in search_results[:20]:  # Show up to 20 results
+                        is_checked = stock['symbol'] in st.session_state.temp_selected_stocks
+                        if st.checkbox(
+                            f"{stock['symbol']} - {stock['name']} ({stock['sector']})",
+                            value=is_checked,
+                            key=f"search_{stock['symbol']}"
+                        ):
+                            if stock['symbol'] not in st.session_state.temp_selected_stocks:
+                                st.session_state.temp_selected_stocks.append(stock['symbol'])
+                        else:
+                            if stock['symbol'] in st.session_state.temp_selected_stocks:
+                                st.session_state.temp_selected_stocks.remove(stock['symbol'])
+                else:
+                    st.caption("검색 결과가 없습니다")
+            else:
+                st.info("심볼이나 회사명을 입력하여 검색하세요")
 
-        # Row 3: Preset groups (add multiple stocks at once)
+        # Add selected stocks to favorites
         st.markdown("---")
-        st.markdown("**종목 그룹 추가**")
-
-        preset_names = stock_db.get_preset_names()
-        cols_preset = st.columns(3)
-
-        for idx, preset_name in enumerate(preset_names):
-            col_idx = idx % 3
-            with cols_preset[col_idx]:
-                preset_symbols = stock_db.get_preset(preset_name)
-                # Count how many are already in favorites
-                already_added = sum(1 for s in preset_symbols if s in st.session_state.favorite_stocks)
-                button_label = f"{preset_name} ({len(preset_symbols)}개)"
-                if already_added > 0:
-                    button_label += f" ✓{already_added}"
-
-                if st.button(button_label, key=f"preset_{preset_name}", use_container_width=True):
-                    # Add all preset symbols to favorites
+        col_add, col_clear = st.columns([3, 1])
+        with col_add:
+            if st.session_state.temp_selected_stocks:
+                st.caption(f"선택됨: {len(st.session_state.temp_selected_stocks)}개")
+                if st.button("선택한 종목 즐겨찾기에 추가", type="primary"):
                     added_count = 0
-                    for symbol in preset_symbols:
+                    for symbol in st.session_state.temp_selected_stocks:
                         if symbol not in st.session_state.favorite_stocks:
                             st.session_state.favorite_stocks.append(symbol)
                             added_count += 1
+
+                    st.session_state.temp_selected_stocks = []
+
                     if added_count > 0:
-                        st.toast(f"✅ {added_count}개 종목을 즐겨찾기에 추가했습니다", icon="⭐")
+                        st.success(f"{added_count}개 종목을 즐겨찾기에 추가했습니다")
                         st.rerun()
                     else:
-                        st.toast(f"ℹ️ 모든 종목이 이미 즐겨찾기에 있습니다", icon="ℹ️")
-
-        # Row 4: Sector-based bulk add
-        st.markdown("---")
-        st.markdown("**섹터별 추가**")
-
-        sectors = stock_db.get_all_sectors()
-        # Exclude ETF from sector bulk add (too many)
-        sectors = [s for s in sectors if s != 'ETF']
-
-        cols_sector_add = st.columns(4)
-        for idx, sector in enumerate(sectors):
-            col_idx = idx % 4
-            with cols_sector_add[col_idx]:
-                sector_stocks = stock_db.get_by_sector(sector)
-                sector_symbols = [s['symbol'] for s in sector_stocks]
-                already_added = sum(1 for s in sector_symbols if s in st.session_state.favorite_stocks)
-
-                button_label = f"{sector} ({len(sector_symbols)}개)"
-                if already_added > 0:
-                    button_label += f" ✓{already_added}"
-
-                if st.button(button_label, key=f"sector_add_{sector}", use_container_width=True):
-                    added_count = 0
-                    for symbol in sector_symbols:
-                        if symbol not in st.session_state.favorite_stocks:
-                            st.session_state.favorite_stocks.append(symbol)
-                            added_count += 1
-                    if added_count > 0:
-                        st.toast(f"✅ {added_count}개 종목을 즐겨찾기에 추가했습니다", icon="⭐")
-                        st.rerun()
-                    else:
-                        st.toast(f"ℹ️ 모든 종목이 이미 즐겨찾기에 있습니다", icon="ℹ️")
-
-        # Row 5: Search results (if user is searching)
-        if search_query:
-            st.markdown("---")
-            st.markdown("**🔍 검색 결과**")
-
-            # Apply sector filter if selected
-            if sector_filter != '모든 섹터':
-                search_results = stock_db.search(search_query)
-                search_results = [s for s in search_results if s['sector'] == sector_filter]
+                        st.info("모든 종목이 이미 즐겨찾기에 있습니다")
             else:
-                search_results = stock_db.search(search_query)
+                st.caption("선택된 종목이 없습니다")
 
-            if search_results:
-                st.caption(f"{len(search_results)}개 종목 발견")
-                # Show up to 10 results
-                for stock in search_results[:10]:
-                    col_a, col_b = st.columns([4, 1])
-                    with col_a:
-                        st.write(f"**{stock['symbol']}** - {stock['name'][:40]}")
-                        st.caption(f"{stock['sector']} | {stock['industry']} | {stock['exchange']}")
-                    with col_b:
-                        is_favorite = stock['symbol'] in st.session_state.favorite_stocks
-                        button_label = "⭐ 추가됨" if is_favorite else "⭐ 추가"
-                        button_disabled = is_favorite
-
-                        if st.button(button_label, key=f"add_search_{stock['symbol']}", disabled=button_disabled):
-                            st.session_state.favorite_stocks.append(stock['symbol'])
-                            st.rerun()
-            else:
-                st.caption("검색 결과가 없습니다")
+        with col_clear:
+            if st.session_state.temp_selected_stocks:
+                if st.button("선택 초기화"):
+                    st.session_state.temp_selected_stocks = []
+                    st.rerun()
 
         # Favorites section
         st.markdown("---")
-        st.write("**⭐ 즐겨찾기**")
+        st.write("**즐겨찾기**")
 
-        # Manage favorites
         col_fav1, col_fav2 = st.columns([3, 1])
         with col_fav1:
             if st.session_state.favorite_stocks:
-                st.caption(f"✓ {len(st.session_state.favorite_stocks)}개 종목")
+                st.caption(f"{len(st.session_state.favorite_stocks)}개 종목")
             else:
                 st.caption("즐겨찾기가 비어있습니다")
         with col_fav2:
-            if st.button("🗑️ 전체 삭제", key="clear_favorites", disabled=not st.session_state.favorite_stocks):
+            if st.button("전체 삭제", key="clear_favorites", disabled=not st.session_state.favorite_stocks):
                 st.session_state.favorite_stocks = []
                 st.rerun()
 
@@ -1287,7 +1324,7 @@ def paper_trading_tab():
                 format_func=lambda x: f"{x} - {stock_db.get_by_symbol(x)['name'][:25] if stock_db.get_by_symbol(x) else x}"
             )
         else:
-            st.info("💡 위의 버튼을 사용하여 즐겨찾기에 종목을 추가하세요")
+            st.info("위의 탭에서 종목을 선택한 후 '즐겨찾기에 추가' 버튼을 클릭하세요")
             selected_symbols = []
 
     # Additional configuration column
