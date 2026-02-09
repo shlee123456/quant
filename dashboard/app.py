@@ -13,11 +13,12 @@ sys.path.append(str(Path(__file__).parent.parent))
 from trading_bot.config import Config
 from trading_bot.data_handler import DataHandler
 from trading_bot.strategy import MovingAverageCrossover
-from trading_bot.strategies import RSIStrategy, MACDStrategy, BollingerBandsStrategy, StochasticStrategy
+from trading_bot.strategies import RSIStrategy, MACDStrategy, BollingerBandsStrategy, StochasticStrategy, RSIMACDComboStrategy
 from trading_bot.backtester import Backtester
 from trading_bot.paper_trader import PaperTrader
 from trading_bot.simulation_data import SimulationDataGenerator
 from trading_bot.database import TradingDatabase
+from trading_bot.strategy_presets import StrategyPresetManager
 from dashboard.charts import ChartGenerator
 import plotly.graph_objects as go
 from dashboard.translations import get_text, get_strategy_name, get_strategy_desc
@@ -108,6 +109,18 @@ STRATEGY_CONFIGS = {
             'oversold': {'min': 10, 'max': 40, 'default': 20, 'label': 'Oversold Level'}
         },
         'description': 'Generates BUY when %K crosses above %D in oversold zone, SELL when %K crosses below %D in overbought zone'
+    },
+    'RSI+MACD Combo': {
+        'class': RSIMACDComboStrategy,
+        'params': {
+            'rsi_period': {'min': 5, 'max': 30, 'default': 14, 'label': 'RSI Period'},
+            'rsi_oversold': {'min': 20, 'max': 40, 'default': 35, 'label': 'RSI Oversold'},
+            'rsi_overbought': {'min': 60, 'max': 85, 'default': 70, 'label': 'RSI Overbought'},
+            'macd_fast': {'min': 8, 'max': 20, 'default': 12, 'label': 'MACD Fast'},
+            'macd_slow': {'min': 20, 'max': 40, 'default': 26, 'label': 'MACD Slow'},
+            'macd_signal': {'min': 5, 'max': 15, 'default': 9, 'label': 'MACD Signal'}
+        },
+        'description': '🔥 기술주 반등 전략: RSI 과매도(35 이하) + MACD 골든크로스 시 BUY, RSI 과매수(70 이상) 또는 MACD 데드크로스 시 SELL'
     }
 }
 
@@ -153,7 +166,12 @@ def start_paper_trading(
     strategy_name: str,
     symbols: list,
     initial_capital: float,
-    position_size: float
+    position_size: float,
+    strategy_params: Dict[str, Any],
+    stop_loss_pct: float = 0.05,
+    take_profit_pct: float = 0.10,
+    enable_stop_loss: bool = True,
+    enable_take_profit: bool = True
 ) -> Optional[str]:
     """
     Start paper trading session in background thread
@@ -163,23 +181,30 @@ def start_paper_trading(
         symbols: List of stock symbols to trade
         initial_capital: Starting capital
         position_size: Position size fraction (0.1 to 1.0)
+        strategy_params: Dictionary of strategy parameters
+        stop_loss_pct: Stop loss percentage (0.05 = 5%)
+        take_profit_pct: Take profit percentage (0.10 = 10%)
+        enable_stop_loss: Enable stop loss feature
+        enable_take_profit: Enable take profit feature
 
     Returns:
         session_id if successful, None if failed
     """
     try:
-        # Create strategy instance
+        # Create strategy instance with user-provided parameters
         strategy: Any
         if strategy_name == 'RSI Strategy':
-            strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+            strategy = RSIStrategy(**strategy_params)
         elif strategy_name == 'MACD Strategy':
-            strategy = MACDStrategy(fast_period=12, slow_period=26, signal_period=9)
+            strategy = MACDStrategy(**strategy_params)
         elif strategy_name == 'Moving Average Crossover':
-            strategy = MovingAverageCrossover(fast_period=10, slow_period=30)
+            strategy = MovingAverageCrossover(**strategy_params)
         elif strategy_name == 'Bollinger Bands':
-            strategy = BollingerBandsStrategy(period=20, num_std=2.0)
+            strategy = BollingerBandsStrategy(**strategy_params)
         elif strategy_name == 'Stochastic Oscillator':
-            strategy = StochasticStrategy(k_period=14, d_period=3, overbought=80, oversold=20)
+            strategy = StochasticStrategy(**strategy_params)
+        elif strategy_name == 'RSI+MACD Combo':
+            strategy = RSIMACDComboStrategy(**strategy_params)
         else:
             raise ValueError(f"Unknown strategy: {strategy_name}")
 
@@ -201,6 +226,10 @@ def start_paper_trading(
             broker=broker,
             initial_capital=initial_capital,
             position_size=position_size,
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
+            enable_stop_loss=enable_stop_loss,
+            enable_take_profit=enable_take_profit,
             db=db
         )
 
@@ -232,9 +261,23 @@ def start_paper_trading(
         return None
 
 
-def stop_paper_trading():
-    """Stop paper trading session"""
-    if st.session_state.paper_trader:
+def stop_paper_trading(session_id: Optional[str] = None):
+    """
+    Stop paper trading session
+
+    Args:
+        session_id: Optional session ID to stop. If None, stops current session.
+    """
+    if session_id:
+        # Stop specific session by ID
+        db = TradingDatabase()
+        db.update_session(session_id, {
+            'status': 'stopped',
+            'end_time': datetime.now().isoformat()
+        })
+        st.success(f"✅ 세션 {session_id[:16]}...이 중지되었습니다.")
+    elif st.session_state.paper_trader:
+        # Stop current session
         st.session_state.paper_trader.stop()
         st.session_state.paper_trading_active = False
 
@@ -247,6 +290,35 @@ def stop_paper_trading():
         st.success("✅ 모의투자가 중지되었습니다.")
     else:
         st.warning("⚠️ 실행 중인 모의투자 세션이 없습니다.")
+
+
+def stop_all_active_sessions():
+    """Stop all active paper trading sessions"""
+    db = TradingDatabase()
+    all_sessions = db.get_all_sessions()
+
+    # Filter active sessions
+    active_sessions = [s for s in all_sessions if s['status'] == 'active']
+
+    if not active_sessions:
+        st.info("ℹ️ 활성화된 세션이 없습니다.")
+        return
+
+    # Stop all active sessions
+    stopped_count = 0
+    for session in active_sessions:
+        db.update_session(session['session_id'], {
+            'status': 'stopped',
+            'end_time': datetime.now().isoformat()
+        })
+        stopped_count += 1
+
+    # Also stop current session in session state
+    if st.session_state.paper_trader:
+        st.session_state.paper_trading_active = False
+        st.session_state.paper_trader = None
+
+    st.success(f"✅ {stopped_count}개의 활성 세션이 중지되었습니다.")
 
 
 def create_equity_comparison_chart(session_ids: list, db: TradingDatabase) -> Optional[go.Figure]:
@@ -326,10 +398,13 @@ def sidebar_config():
     """Render configuration sidebar"""
     lang = st.session_state.language
 
-    st.sidebar.title(get_text('configuration', lang))
+    # ============================================================================
+    # SIMPLIFIED SIDEBAR - Only Language and Quick Info
+    # ============================================================================
+    st.sidebar.title("⚙️ 설정" if lang == 'ko' else "⚙️ Settings")
 
-    # Language Selection
-    st.sidebar.subheader(get_text('language', lang))
+    # Language Selection - Only thing that stays in sidebar
+    st.sidebar.subheader("🌐 " + get_text('language', lang))
     language = st.sidebar.selectbox(
         "Language Selection",
         options=['한국어', 'English'],
@@ -341,235 +416,63 @@ def sidebar_config():
 
     st.sidebar.markdown("---")
 
-    # Market Type Selection
-    st.sidebar.subheader(get_text('market_type', lang))
-    market_options = {
-        get_text('stock_market', lang): 'stock',
-        get_text('crypto_market', lang): 'crypto'
-    }
-    selected_market_display = st.sidebar.radio(
-        "Market Type Selection",
-        options=list(market_options.keys()),
-        index=0,  # Default to stocks
-        label_visibility="collapsed"
-    )
-    st.session_state.market_type = market_options[selected_market_display]
+    # Quick info section
+    st.sidebar.subheader("📌 빠른 안내" if lang == 'ko' else "📌 Quick Guide")
+
+    if lang == 'ko':
+        st.sidebar.info("""
+        **주요 기능**
+
+        🎮 **모의투자**
+        실시간 시장 데이터로 모의투자를 실행하세요.
+
+        📊 **전략 & 세션 비교**
+        여러 전략과 세션의 성과를 비교하세요.
+
+        📈 **실시간 시세**
+        미국 주식의 실시간 시세를 확인하세요.
+
+        📉 **백테스팅**
+        과거 데이터로 전략을 테스트하세요.
+
+        🔴 **라이브 모니터**
+        실시간 전략 신호를 모니터링하세요.
+        """)
+    else:
+        st.sidebar.info("""
+        **Main Features**
+
+        🎮 **Paper Trading**
+        Run simulated trading with real market data.
+
+        📊 **Strategy & Session Comparison**
+        Compare performance of strategies and sessions.
+
+        📈 **Real-time Quotes**
+        Check live quotes for US stocks.
+
+        📉 **Backtesting**
+        Test strategies on historical data.
+
+        🔴 **Live Monitor**
+        Monitor real-time strategy signals.
+        """)
 
     st.sidebar.markdown("---")
 
-    # Data Source Selection
-    st.sidebar.subheader(get_text('data_source', lang))
-    use_simulation = st.sidebar.checkbox(
-        get_text('use_simulation', lang),
-        value=st.session_state.use_simulation,
-        help=get_text('use_simulation_help', lang)
-    )
-    st.session_state.use_simulation = use_simulation
+    # Market status (minimal info)
+    if lang == 'ko':
+        st.sidebar.caption("💡 각 탭에서 필요한 설정을 직접 구성할 수 있습니다.")
+    else:
+        st.sidebar.caption("💡 Configure settings in each tab as needed.")
 
-    # Market Settings (only for real data)
-    if not use_simulation:
-        st.sidebar.subheader(get_text('market_settings', lang))
+    # Initialize market type if not set
+    if 'market_type' not in st.session_state:
+        st.session_state.market_type = 'stock'
 
-        if st.session_state.market_type == 'stock':
-            # Display market status for stocks
-            market_hours = MarketHours()
-            status_text, status_color = market_hours.format_status_message(lang)
-            st.sidebar.info(status_text)
-
-            # Show market hours in expander
-            with st.sidebar.expander(get_text('market_hours', lang)):
-                hours_display = market_hours.get_market_hours_display()
-                st.markdown(f"**{get_text('pre_market', lang)}**")
-                st.markdown(f"🇺🇸 {hours_display['pre_market_est']}")
-                st.markdown(f"🇰🇷 {hours_display['pre_market_kst']}")
-                st.markdown("---")
-                st.markdown(f"**{get_text('regular_hours', lang)}**")
-                st.markdown(f"🇺🇸 {hours_display['regular_est']}")
-                st.markdown(f"🇰🇷 {hours_display['regular_kst']}")
-                st.markdown("---")
-                st.markdown(f"**{get_text('after_hours', lang)}**")
-                st.markdown(f"🇺🇸 {hours_display['after_hours_est']}")
-                st.markdown(f"🇰🇷 {hours_display['after_hours_kst']}")
-
-            # Initialize stock database
-            if 'stock_db' not in st.session_state:
-                st.session_state.stock_db = StockSymbolDB()
-
-            stock_db = st.session_state.stock_db
-
-            # Stock search
-            search_query = st.sidebar.text_input(
-                get_text('stock_search', lang),
-                placeholder='AAPL, Apple, Tesla...',
-                key='stock_search_input'
-            )
-
-            # Show search results
-            if search_query:
-                matches = stock_db.search(search_query)
-                if matches:
-                    st.sidebar.markdown(f"**{len(matches)} {get_text('popular_stocks', lang)}**")
-                    for match in matches[:5]:  # Limit to 5 results
-                        if st.sidebar.button(
-                            f"{match['symbol']} - {match['name'][:30]}",
-                            key=f"search_{match['symbol']}"
-                        ):
-                            symbol = match['symbol']
-                            st.session_state.selected_stock = match
-                else:
-                    st.sidebar.info("No matches found")
-
-            # Symbol input
-            symbol = st.sidebar.text_input(
-                get_text('stock_symbol', lang),
-                value=st.session_state.get('selected_stock', {}).get('symbol', 'AAPL'),
-                placeholder='AAPL, TSLA, NVDA...'
-            )
-
-            # Show stock info if available
-            if symbol:
-                stock_info = stock_db.get_by_symbol(symbol)
-                if stock_info:
-                    st.sidebar.info(
-                        f"**{stock_info['name']}**\n\n"
-                        f"{get_text('sector', lang)}: {stock_info['sector']}\n\n"
-                        f"{get_text('industry', lang)}: {stock_info['industry']}"
-                    )
-
-            # Popular stocks by sector
-            with st.sidebar.expander(f"{get_text('popular_stocks', lang)} ({get_text('sector', lang)})"):
-                sectors = stock_db.get_all_sectors()
-                selected_sector = st.selectbox(
-                    get_text('sector', lang),
-                    sectors,
-                    key='sector_filter',
-                    label_visibility="collapsed"
-                )
-                sector_stocks = stock_db.get_by_sector(selected_sector)
-                cols = st.columns(2)
-                for idx, stock in enumerate(sector_stocks[:10]):
-                    if cols[idx % 2].button(
-                        stock['symbol'],
-                        key=f"sector_{stock['symbol']}"
-                    ):
-                        symbol = stock['symbol']
-                        st.session_state.selected_stock = stock
-
-            timeframe = st.sidebar.selectbox(
-                get_text('timeframe', lang),
-                ['1m', '5m', '15m', '1h', '1d'],
-                index=3
-            )
-        else:
-            # Crypto market settings
-            symbol = st.sidebar.text_input(
-                get_text('symbol', lang),
-                value=st.session_state.config.get('symbol', 'BTC/USDT')
-            )
-            timeframe = st.sidebar.selectbox(
-                get_text('timeframe', lang),
-                ['1m', '5m', '15m', '1h', '4h', '1d'],
-                index=3
-            )
-
-        st.session_state.config['symbol'] = symbol
-        st.session_state.config['timeframe'] = timeframe
-
-    # Strategy Selection
-    st.sidebar.subheader(get_text('strategy_selection', lang))
-
-    # Translate strategy names for display
-    strategy_display_names = {k: get_strategy_name(k, lang) for k in STRATEGY_CONFIGS.keys()}
-    reverse_strategy_names = {v: k for k, v in strategy_display_names.items()}
-
-    current_display_name = strategy_display_names[st.session_state.selected_strategy]
-
-    selected_display_name = st.sidebar.selectbox(
-        get_text('select_strategy', lang),
-        options=list(strategy_display_names.values()),
-        index=list(strategy_display_names.values()).index(current_display_name)
-    )
-
-    strategy_name = reverse_strategy_names[selected_display_name]
-    st.session_state.selected_strategy = strategy_name
-
-    # Display strategy description
-    st.sidebar.info(f"ℹ️ {get_strategy_desc(strategy_name, lang)}")
-
-    # Strategy Parameters
-    st.sidebar.subheader(get_text('strategy_parameters', lang))
-    params = {}
-    for param_name, param_config in STRATEGY_CONFIGS[strategy_name]['params'].items():
-        # Translate parameter label
-        translated_label = get_text(param_config['label'], lang)
-
-        if param_config.get('step'):
-            # Float parameter
-            params[param_name] = st.sidebar.slider(
-                translated_label,
-                min_value=param_config['min'],
-                max_value=param_config['max'],
-                value=param_config['default'],
-                step=param_config['step']
-            )
-        else:
-            # Integer parameter
-            params[param_name] = st.sidebar.slider(
-                translated_label,
-                min_value=param_config['min'],
-                max_value=param_config['max'],
-                value=param_config['default']
-            )
-
-    st.session_state.strategy_params = params
-
-    # Trading Parameters
-    st.sidebar.subheader(get_text('trading_parameters', lang))
-    initial_capital = st.sidebar.number_input(
-        get_text('initial_capital', lang),
-        min_value=100.0,
-        value=st.session_state.config['initial_capital'],
-        step=100.0
-    )
-    st.session_state.config['initial_capital'] = initial_capital
-
-    # Initialize System Button
-    if st.sidebar.button(get_text('initialize_system', lang), type="primary"):
-        with st.spinner(get_text('running_backtest', lang)):
-            if not use_simulation:
-                # Create data handler based on market type
-                if st.session_state.market_type == 'stock':
-                    # Import and initialize KIS broker for stocks
-                    try:
-                        from dashboard.kis_broker import get_kis_broker
-                        kis_broker = get_kis_broker()
-                        
-                        if kis_broker:
-                            # Create DataHandler with KIS broker
-                            st.session_state.data_handler = DataHandler(broker=kis_broker)
-                            st.sidebar.success("✅ " + get_text('system_initialized', lang) + " (KIS Broker)")
-                        else:
-                            st.sidebar.error("❌ KIS Broker initialization failed. Using simulation mode.")
-                            st.session_state.use_simulation = True
-                            st.session_state.data_handler = None
-                            return
-                    except Exception as e:
-                        st.sidebar.error(f"❌ KIS Broker error: {str(e)}")
-                        st.session_state.use_simulation = True
-                        st.session_state.data_handler = None
-                        return
-                else:
-                    # Use CCXT for crypto
-                    st.session_state.data_handler = DataHandler(
-                        exchange_name=st.session_state.config['exchange']
-                    )
-                    st.sidebar.success("✅ " + get_text('system_initialized', lang) + " (CCXT)")
-            else:
-                st.session_state.data_handler = None
-            
-            st.session_state.strategy_instance = create_strategy(strategy_name, params)
-            if use_simulation:
-                st.sidebar.success(get_text('system_initialized', lang))
+    # Initialize use_simulation if not set
+    if 'use_simulation' not in st.session_state:
+        st.session_state.use_simulation = False
 
 
 def backtest_tab():
@@ -578,52 +481,115 @@ def backtest_tab():
 
     st.header(get_text('backtest_title', lang))
 
-    if st.session_state.strategy_instance is None:
-        st.warning(get_text('init_warning', lang))
-        return
+    st.markdown("""
+    시뮬레이션 데이터로 전략을 테스트하고 성능을 분석합니다.
+    """)
 
-    # Data source selection
-    col1, col2 = st.columns([2, 1])
+    # Configuration section - all in one tab
+    st.markdown("---")
+    st.subheader("⚙️ 백테스팅 설정")
+
+    col1, col2 = st.columns(2)
 
     with col1:
-        if st.session_state.use_simulation:
-            st.info(get_text('using_simulation', lang))
-        else:
-            start_date = st.date_input(get_text('start_date', lang), value=pd.to_datetime("2024-01-01"))
-            end_date = st.date_input(get_text('end_date', lang), value=pd.to_datetime("2024-12-31"))
+        # Strategy selection
+        strategy_options = list(STRATEGY_CONFIGS.keys())
+        selected_strategy = st.selectbox(
+            "전략 선택",
+            options=strategy_options,
+            index=0,
+            key="backtest_strategy_select"
+        )
+
+        # Display strategy description
+        st.info(f"ℹ️ {STRATEGY_CONFIGS[selected_strategy]['description']}")
 
     with col2:
-        if st.session_state.use_simulation:
-            num_periods = st.number_input(get_text('num_periods', lang), min_value=100, max_value=5000, value=1000)
+        # Initial capital
+        initial_capital = st.number_input(
+            "초기 자본 ($)",
+            min_value=100.0,
+            max_value=1000000.0,
+            value=10000.0,
+            step=1000.0,
+            key="backtest_capital"
+        )
+
+    # Strategy parameters
+    st.markdown("---")
+    st.subheader("📐 전략 파라미터")
+
+    strategy_params = {}
+    param_config = STRATEGY_CONFIGS[selected_strategy]['params']
+    param_cols = st.columns(min(len(param_config), 3))
+
+    for idx, (param_name, config) in enumerate(param_config.items()):
+        with param_cols[idx % 3]:
+            if config.get('step'):
+                strategy_params[param_name] = st.slider(
+                    config['label'],
+                    min_value=config['min'],
+                    max_value=config['max'],
+                    value=config['default'],
+                    step=config['step'],
+                    key=f"backtest_{param_name}"
+                )
+            else:
+                strategy_params[param_name] = st.slider(
+                    config['label'],
+                    min_value=config['min'],
+                    max_value=config['max'],
+                    value=config['default'],
+                    key=f"backtest_{param_name}"
+                )
+
+    # Data configuration
+    st.markdown("---")
+    st.subheader("📊 데이터 설정")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        num_periods = st.number_input(
+            "데이터 포인트 수",
+            min_value=100,
+            max_value=5000,
+            value=1000,
+            step=100,
+            key="backtest_periods",
+            help="시뮬레이션 데이터 생성 시 사용할 데이터 포인트 수"
+        )
+
+    with col2:
+        trend_type = st.selectbox(
+            "시장 트렌드",
+            options=['bullish', 'bearish', 'sideways', 'volatile'],
+            index=0,
+            key="backtest_trend",
+            help="시뮬레이션 데이터의 트렌드 방향"
+        )
 
     # Run Backtest Button
-    if st.button(get_text('run_backtest', lang), type="primary"):
-        with st.spinner(get_text('running_backtest', lang)):
-            try:
-                # Get data
-                if st.session_state.use_simulation:
-                    generator = SimulationDataGenerator(seed=42)
-                    df = generator.generate_ohlcv(periods=num_periods)
-                else:
-                    if st.session_state.data_handler is None:
-                        st.error("Data handler not initialized. Please initialize the system.")
-                        return
+    st.markdown("---")
 
-                    df = st.session_state.data_handler.fetch_historical_data(
-                        symbol=st.session_state.config['symbol'],
-                        timeframe=st.session_state.config['timeframe'],
-                        start_date=start_date.strftime('%Y-%m-%d'),
-                        end_date=end_date.strftime('%Y-%m-%d')
-                    )
+    if st.button("🚀 백테스팅 실행", type="primary", use_container_width=True, key="run_backtest_btn"):
+        with st.spinner("백테스팅 실행 중..."):
+            try:
+                # Create strategy instance
+                strategy_instance = create_strategy(selected_strategy, strategy_params)
+
+                # Generate simulation data
+                generator = SimulationDataGenerator(seed=42)
+                df = generator.generate_trend_data(periods=num_periods, trend=trend_type)
 
                 if df.empty:
-                    st.error("No data retrieved. Please check your parameters.")
+                    st.error("데이터 생성에 실패했습니다.")
                     return
 
                 # Run backtest
                 backtester = Backtester(
-                    strategy=st.session_state.strategy_instance,
-                    initial_capital=st.session_state.config['initial_capital']
+                    strategy=strategy_instance,
+                    initial_capital=initial_capital
                 )
                 results = backtester.run(df)
 
@@ -632,13 +598,13 @@ def backtest_tab():
                     'results': results,
                     'backtester': backtester,
                     'data': df,
-                    'strategy_name': st.session_state.selected_strategy
+                    'strategy_name': selected_strategy
                 }
 
-                st.success(get_text('backtest_completed', lang))
+                st.success("✅ 백테스팅이 완료되었습니다!")
 
             except Exception as e:
-                st.error(f"{get_text('backtest_error', lang)}{e}")
+                st.error(f"❌ 백테스팅 실행 중 오류 발생: {e}")
                 import traceback
                 st.code(traceback.format_exc())
                 return
@@ -1024,6 +990,95 @@ def paper_trading_tab():
     실시간 모의투자 기능입니다. 전략과 종목을 선택하여 실제 시장 데이터로 모의투자를 실행할 수 있습니다.
     """)
 
+    # Strategy Preset Management Section
+    st.markdown("---")
+    st.subheader("💾 전략 프리셋 관리")
+
+    # Initialize preset manager
+    preset_manager = StrategyPresetManager()
+
+    # Initialize session state for loaded preset
+    if 'loaded_preset' not in st.session_state:
+        st.session_state.loaded_preset = None
+
+    col_preset1, col_preset2 = st.columns([2, 1])
+
+    with col_preset1:
+        # Load existing presets
+        st.write("**📂 저장된 프리셋 불러오기**")
+
+        all_presets = preset_manager.list_presets()
+
+        if all_presets:
+            preset_options = {p['name']: p for p in all_presets}
+            preset_names = list(preset_options.keys())
+
+            selected_preset_name = st.selectbox(
+                "프리셋 선택",
+                options=["-- 선택하세요 --"] + preset_names,
+                key="preset_selector"
+            )
+
+            if selected_preset_name != "-- 선택하세요 --":
+                col_load, col_delete = st.columns([1, 1])
+
+                with col_load:
+                    if st.button("📥 불러오기", key="load_preset_btn", use_container_width=True):
+                        loaded = preset_manager.load_preset(selected_preset_name)
+                        if loaded:
+                            st.session_state.loaded_preset = loaded
+                            st.success(f"✅ '{selected_preset_name}' 프리셋을 불러왔습니다!")
+                            st.rerun()
+
+                with col_delete:
+                    if st.button("🗑️ 삭제", key="delete_preset_btn", type="secondary", use_container_width=True):
+                        if preset_manager.delete_preset(selected_preset_name):
+                            st.success(f"✅ '{selected_preset_name}' 프리셋이 삭제되었습니다!")
+                            st.session_state.loaded_preset = None
+                            st.rerun()
+
+                # Show preset details
+                if selected_preset_name in preset_options:
+                    preset = preset_options[selected_preset_name]
+                    with st.expander("📋 프리셋 상세 정보", expanded=False):
+                        st.write(f"**전략:** {preset['strategy']}")
+                        st.write(f"**종목:** {', '.join(preset['symbols']) if preset['symbols'] else '없음'}")
+                        st.write(f"**초기 자본:** ${preset['initial_capital']:,.2f}")
+                        st.write(f"**포지션 크기:** {preset['position_size']:.0%}")
+                        st.write(f"**손절매:** {preset['stop_loss_pct']:.0%} ({'활성' if preset['enable_stop_loss'] else '비활성'})")
+                        st.write(f"**익절매:** {preset['take_profit_pct']:.0%} ({'활성' if preset['enable_take_profit'] else '비활성'})")
+                        st.write(f"**파라미터:** {preset['strategy_params']}")
+                        if preset.get('description'):
+                            st.write(f"**설명:** {preset['description']}")
+                        st.caption(f"생성일: {preset.get('created_at', 'N/A')[:19]}")
+                        if preset.get('last_used'):
+                            st.caption(f"최근 사용: {preset['last_used'][:19]}")
+        else:
+            st.info("💡 저장된 프리셋이 없습니다. 설정을 구성한 후 저장해보세요!")
+
+    with col_preset2:
+        # Save current settings as preset
+        st.write("**💾 현재 설정 저장**")
+
+        preset_name = st.text_input(
+            "프리셋 이름",
+            placeholder="예: 보수적 RSI 전략",
+            key="new_preset_name"
+        )
+
+        preset_description = st.text_area(
+            "설명 (선택사항)",
+            placeholder="이 프리셋에 대한 간단한 설명을 입력하세요",
+            key="preset_description",
+            height=100
+        )
+
+        # Note: Save button will be added after configuration section
+        # so we can capture all the current settings
+        st.info("ℹ️ 아래 설정을 완료한 후 이 섹션으로 돌아와서 프리셋을 저장하세요")
+
+    st.markdown("---")
+
     # Configuration Section
     st.subheader("⚙️ 모의투자 설정")
 
@@ -1033,47 +1088,449 @@ def paper_trading_tab():
         # Strategy selector
         strategy_options = ['RSI Strategy', 'MACD Strategy', 'Moving Average Crossover',
                            'Bollinger Bands', 'Stochastic Oscillator']
+
+        # Check if preset is loaded and use its strategy
+        default_strategy_index = 0
+        if st.session_state.loaded_preset:
+            preset_strategy = st.session_state.loaded_preset.get('strategy')
+            if preset_strategy in strategy_options:
+                default_strategy_index = strategy_options.index(preset_strategy)
+
         selected_strategy = st.selectbox(
             "전략 선택",
             options=strategy_options,
-            index=0,
+            index=default_strategy_index,
             help="모의투자에 사용할 전략을 선택하세요"
         )
 
-        # Multi-select for US stocks
-        us_stocks = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA']
-        selected_symbols = st.multiselect(
-            "미국 주식 선택",
-            options=us_stocks,
-            default=['AAPL'],
-            help="모의투자할 미국 주식을 선택하세요 (여러 종목 선택 가능)"
-        )
-
     with col2:
-        # Initial capital input
+        # Initialize favorites in session state
+        if 'favorite_stocks' not in st.session_state:
+            st.session_state.favorite_stocks = ['AAPL', 'MSFT', 'GOOGL']  # Default favorites
+
+        # Load preset symbols into favorites if available
+        if st.session_state.loaded_preset:
+            preset_symbols = st.session_state.loaded_preset.get('symbols', [])
+            if preset_symbols:
+                # Add preset symbols to favorites if not already there
+                for symbol in preset_symbols:
+                    if symbol not in st.session_state.favorite_stocks:
+                        st.session_state.favorite_stocks.append(symbol)
+
+        # Stock Symbol Database
+        stock_db = StockSymbolDB()
+
+        # Stock search and selection - Option C Style
+        st.write("**📈 종목 선택**")
+
+        # Row 1: Search box with sector filter
+        col_search, col_sector = st.columns([3, 1])
+        with col_search:
+            search_query = st.text_input(
+                "🔍 검색",
+                placeholder="심볼 또는 회사명 입력 (예: AAPL, Apple, Tesla...)",
+                key="paper_stock_search",
+                label_visibility="collapsed"
+            )
+        with col_sector:
+            all_sectors = ['모든 섹터'] + stock_db.get_all_sectors()
+            sector_filter = st.selectbox(
+                "섹터 필터",
+                options=all_sectors,
+                key="paper_sector_filter",
+                label_visibility="collapsed"
+            )
+
+        # Row 2: Quick add popular stocks
+        st.markdown("**인기 종목** (클릭하여 즐겨찾기에 추가)")
+        popular_stocks = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA', 'SPY', 'QQQ']
+
+        # Create button grid for popular stocks
+        cols_pop = st.columns(9)
+        for idx, symbol in enumerate(popular_stocks):
+            with cols_pop[idx]:
+                # Show checkmark if already in favorites
+                is_favorite = symbol in st.session_state.favorite_stocks
+                button_label = f"✓ {symbol}" if is_favorite else f"+ {symbol}"
+                button_type = "secondary" if is_favorite else "primary"
+
+                if st.button(button_label, key=f"quick_add_{symbol}", type=button_type, use_container_width=True):
+                    if symbol not in st.session_state.favorite_stocks:
+                        st.session_state.favorite_stocks.append(symbol)
+                        st.rerun()
+
+        # Row 3: Preset groups (add multiple stocks at once)
+        st.markdown("---")
+        st.markdown("**종목 그룹 추가**")
+
+        preset_names = stock_db.get_preset_names()
+        cols_preset = st.columns(3)
+
+        for idx, preset_name in enumerate(preset_names):
+            col_idx = idx % 3
+            with cols_preset[col_idx]:
+                preset_symbols = stock_db.get_preset(preset_name)
+                # Count how many are already in favorites
+                already_added = sum(1 for s in preset_symbols if s in st.session_state.favorite_stocks)
+                button_label = f"{preset_name} ({len(preset_symbols)}개)"
+                if already_added > 0:
+                    button_label += f" ✓{already_added}"
+
+                if st.button(button_label, key=f"preset_{preset_name}", use_container_width=True):
+                    # Add all preset symbols to favorites
+                    added_count = 0
+                    for symbol in preset_symbols:
+                        if symbol not in st.session_state.favorite_stocks:
+                            st.session_state.favorite_stocks.append(symbol)
+                            added_count += 1
+                    if added_count > 0:
+                        st.toast(f"✅ {added_count}개 종목을 즐겨찾기에 추가했습니다", icon="⭐")
+                        st.rerun()
+                    else:
+                        st.toast(f"ℹ️ 모든 종목이 이미 즐겨찾기에 있습니다", icon="ℹ️")
+
+        # Row 4: Sector-based bulk add
+        st.markdown("---")
+        st.markdown("**섹터별 추가**")
+
+        sectors = stock_db.get_all_sectors()
+        # Exclude ETF from sector bulk add (too many)
+        sectors = [s for s in sectors if s != 'ETF']
+
+        cols_sector_add = st.columns(4)
+        for idx, sector in enumerate(sectors):
+            col_idx = idx % 4
+            with cols_sector_add[col_idx]:
+                sector_stocks = stock_db.get_by_sector(sector)
+                sector_symbols = [s['symbol'] for s in sector_stocks]
+                already_added = sum(1 for s in sector_symbols if s in st.session_state.favorite_stocks)
+
+                button_label = f"{sector} ({len(sector_symbols)}개)"
+                if already_added > 0:
+                    button_label += f" ✓{already_added}"
+
+                if st.button(button_label, key=f"sector_add_{sector}", use_container_width=True):
+                    added_count = 0
+                    for symbol in sector_symbols:
+                        if symbol not in st.session_state.favorite_stocks:
+                            st.session_state.favorite_stocks.append(symbol)
+                            added_count += 1
+                    if added_count > 0:
+                        st.toast(f"✅ {added_count}개 종목을 즐겨찾기에 추가했습니다", icon="⭐")
+                        st.rerun()
+                    else:
+                        st.toast(f"ℹ️ 모든 종목이 이미 즐겨찾기에 있습니다", icon="ℹ️")
+
+        # Row 5: Search results (if user is searching)
+        if search_query:
+            st.markdown("---")
+            st.markdown("**🔍 검색 결과**")
+
+            # Apply sector filter if selected
+            if sector_filter != '모든 섹터':
+                search_results = stock_db.search(search_query)
+                search_results = [s for s in search_results if s['sector'] == sector_filter]
+            else:
+                search_results = stock_db.search(search_query)
+
+            if search_results:
+                st.caption(f"{len(search_results)}개 종목 발견")
+                # Show up to 10 results
+                for stock in search_results[:10]:
+                    col_a, col_b = st.columns([4, 1])
+                    with col_a:
+                        st.write(f"**{stock['symbol']}** - {stock['name'][:40]}")
+                        st.caption(f"{stock['sector']} | {stock['industry']} | {stock['exchange']}")
+                    with col_b:
+                        is_favorite = stock['symbol'] in st.session_state.favorite_stocks
+                        button_label = "⭐ 추가됨" if is_favorite else "⭐ 추가"
+                        button_disabled = is_favorite
+
+                        if st.button(button_label, key=f"add_search_{stock['symbol']}", disabled=button_disabled):
+                            st.session_state.favorite_stocks.append(stock['symbol'])
+                            st.rerun()
+            else:
+                st.caption("검색 결과가 없습니다")
+
+        # Favorites section
+        st.markdown("---")
+        st.write("**⭐ 즐겨찾기**")
+
+        # Manage favorites
+        col_fav1, col_fav2 = st.columns([3, 1])
+        with col_fav1:
+            if st.session_state.favorite_stocks:
+                st.caption(f"✓ {len(st.session_state.favorite_stocks)}개 종목")
+            else:
+                st.caption("즐겨찾기가 비어있습니다")
+        with col_fav2:
+            if st.button("🗑️ 전체 삭제", key="clear_favorites", disabled=not st.session_state.favorite_stocks):
+                st.session_state.favorite_stocks = []
+                st.rerun()
+
+        # Select stocks for trading from favorites
+        if st.session_state.favorite_stocks:
+            # Use preset symbols as default if available
+            default_symbols = [st.session_state.favorite_stocks[0]] if st.session_state.favorite_stocks else []
+            if st.session_state.loaded_preset:
+                preset_symbols = st.session_state.loaded_preset.get('symbols', [])
+                # Only use symbols that exist in favorites
+                default_symbols = [s for s in preset_symbols if s in st.session_state.favorite_stocks]
+                if not default_symbols and st.session_state.favorite_stocks:
+                    default_symbols = [st.session_state.favorite_stocks[0]]
+
+            selected_symbols = st.multiselect(
+                "거래할 종목 선택",
+                options=st.session_state.favorite_stocks,
+                default=default_symbols,
+                help="즐겨찾기에서 거래할 종목을 선택하세요 (최대 7개 권장)",
+                format_func=lambda x: f"{x} - {stock_db.get_by_symbol(x)['name'][:25] if stock_db.get_by_symbol(x) else x}"
+            )
+        else:
+            st.info("💡 위의 버튼을 사용하여 즐겨찾기에 종목을 추가하세요")
+            selected_symbols = []
+
+    # Additional configuration column
+    st.markdown("---")
+    col3, col4 = st.columns(2)
+
+    with col3:
+        # Initial capital input - use preset value if available
+        default_capital = 10000.0
+        if st.session_state.loaded_preset:
+            default_capital = st.session_state.loaded_preset.get('initial_capital', 10000.0)
+
         initial_capital = st.number_input(
             "초기 자본 ($)",
             min_value=1000.0,
             max_value=1000000.0,
-            value=10000.0,
+            value=default_capital,
             step=1000.0,
             help="모의투자 시작 자본금"
         )
 
-        # Position size slider
+    with col4:
+        # Position size slider - use preset value if available
+        default_position = 0.95
+        if st.session_state.loaded_preset:
+            default_position = st.session_state.loaded_preset.get('position_size', 0.95)
+
         position_size = st.slider(
             "포지션 크기",
             min_value=0.1,
             max_value=1.0,
-            value=0.95,
+            value=default_position,
             step=0.05,
             help="각 거래에 사용할 자본 비율 (0.1 = 10%, 1.0 = 100%)"
         )
+
+    # Risk Management Section
+    st.markdown("---")
+    st.subheader("🛡️ 리스크 관리")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    # Load risk management defaults from preset if available
+    default_enable_stop_loss = True
+    default_stop_loss_pct = 5.0
+    default_enable_take_profit = True
+    default_take_profit_pct = 10.0
+
+    if st.session_state.loaded_preset:
+        default_enable_stop_loss = st.session_state.loaded_preset.get('enable_stop_loss', True)
+        default_stop_loss_pct = st.session_state.loaded_preset.get('stop_loss_pct', 0.05) * 100
+        default_enable_take_profit = st.session_state.loaded_preset.get('enable_take_profit', True)
+        default_take_profit_pct = st.session_state.loaded_preset.get('take_profit_pct', 0.10) * 100
+
+    with col1:
+        enable_stop_loss = st.checkbox(
+            "손절매 활성화",
+            value=default_enable_stop_loss,
+            help="일정 손실 시 자동 매도"
+        )
+
+    with col2:
+        stop_loss_pct = st.slider(
+            "손절매 (%)",
+            min_value=1.0,
+            max_value=10.0,
+            value=default_stop_loss_pct,
+            step=0.5,
+            disabled=not enable_stop_loss,
+            help="손실이 이 비율에 도달하면 자동 매도 (예: 5% = -5% 손실 시 매도)"
+        ) / 100.0  # Convert to decimal
+
+    with col3:
+        enable_take_profit = st.checkbox(
+            "익절매 활성화",
+            value=default_enable_take_profit,
+            help="일정 수익 시 자동 매도"
+        )
+
+    with col4:
+        take_profit_pct = st.slider(
+            "익절매 (%)",
+            min_value=2.0,
+            max_value=20.0,
+            value=default_take_profit_pct,
+            step=1.0,
+            disabled=not enable_take_profit,
+            help="수익이 이 비율에 도달하면 자동 매도 (예: 10% = +10% 수익 시 매도)"
+        ) / 100.0  # Convert to decimal
+
+    # Show risk/reward ratio
+    if enable_stop_loss and enable_take_profit:
+        risk_reward_ratio = take_profit_pct / stop_loss_pct
+        st.info(f"📊 리스크/보상 비율: 1:{risk_reward_ratio:.1f} (손실 ${stop_loss_pct*100:.1f}% 대비 수익 ${take_profit_pct*100:.1f}%)")
+
+    # Strategy Parameters Section
+    st.markdown("---")
+    st.subheader("📐 전략 파라미터")
+
+    # Get strategy config
+    strategy_config = STRATEGY_CONFIGS.get(selected_strategy, {})
+    strategy_params_config = strategy_config.get('params', {})
+
+    # Create parameters input dynamically
+    strategy_params = {}
+    if strategy_params_config:
+        # Get preset strategy params if available
+        preset_params = {}
+        if st.session_state.loaded_preset:
+            preset_params = st.session_state.loaded_preset.get('strategy_params', {})
+
+        # Create columns for parameter inputs
+        param_cols = st.columns(min(len(strategy_params_config), 3))
+
+        for idx, (param_name, param_config) in enumerate(strategy_params_config.items()):
+            # Use preset value if available, otherwise use default
+            default_value = preset_params.get(param_name, param_config['default'])
+
+            with param_cols[idx % 3]:
+                if param_config.get('step'):
+                    # Float parameter
+                    strategy_params[param_name] = st.slider(
+                        param_config['label'],
+                        min_value=param_config['min'],
+                        max_value=param_config['max'],
+                        value=float(default_value),
+                        step=param_config['step'],
+                        key=f"paper_{param_name}"
+                    )
+                else:
+                    # Integer parameter
+                    strategy_params[param_name] = st.slider(
+                        param_config['label'],
+                        min_value=param_config['min'],
+                        max_value=param_config['max'],
+                        value=int(default_value),
+                        key=f"paper_{param_name}"
+                    )
+
+        # Display strategy description
+        st.info(f"ℹ️ {strategy_config.get('description', '')}")
+    else:
+        st.warning("⚠️ 선택한 전략의 파라미터 설정이 없습니다.")
+
+    # Save Preset Button
+    st.markdown("---")
+    st.subheader("💾 현재 설정을 프리셋으로 저장")
+
+    col_save1, col_save2 = st.columns([3, 1])
+
+    with col_save1:
+        # Retrieve preset name and description from earlier inputs
+        preset_name_input = st.session_state.get('new_preset_name', '')
+        preset_desc_input = st.session_state.get('preset_description', '')
+
+        if preset_name_input:
+            st.info(f"📝 프리셋 이름: **{preset_name_input}**")
+            if preset_desc_input:
+                st.caption(f"설명: {preset_desc_input}")
+        else:
+            st.warning("⚠️ 위 '전략 프리셋 관리' 섹션에서 프리셋 이름을 입력하세요")
+
+    with col_save2:
+        save_preset_btn = st.button(
+            "💾 프리셋 저장",
+            type="primary",
+            use_container_width=True,
+            disabled=not preset_name_input
+        )
+
+        if save_preset_btn:
+            # Save current configuration as preset
+            success = preset_manager.save_preset(
+                name=preset_name_input,
+                strategy=selected_strategy,
+                strategy_params=strategy_params,
+                initial_capital=initial_capital,
+                position_size=position_size,
+                symbols=selected_symbols,
+                stop_loss_pct=stop_loss_pct,
+                take_profit_pct=take_profit_pct,
+                enable_stop_loss=enable_stop_loss,
+                enable_take_profit=enable_take_profit,
+                description=preset_desc_input
+            )
+
+            if success:
+                st.success(f"✅ '{preset_name_input}' 프리셋이 저장되었습니다!")
+                # Clear the input fields
+                st.session_state.new_preset_name = ""
+                st.session_state.preset_description = ""
+                st.rerun()
+            else:
+                st.error("❌ 프리셋 저장에 실패했습니다.")
 
     # Validation
     if not selected_symbols:
         st.warning("⚠️ 최소 1개 이상의 종목을 선택해주세요.")
         return
+
+    st.markdown("---")
+
+    # Session Management Section
+    with st.expander("📊 실행 중인 세션 관리", expanded=False):
+        db = TradingDatabase()
+        all_sessions = db.get_all_sessions()
+        active_sessions = [s for s in all_sessions if s['status'] == 'active']
+
+        if active_sessions:
+            st.write(f"**활성 세션: {len(active_sessions)}개**")
+
+            for session in active_sessions:
+                col1, col2, col3 = st.columns([3, 1, 1])
+
+                with col1:
+                    session_info = f"**{session['strategy_name']}** | "
+                    session_info += f"시작: {session['start_time'][11:19]} | "
+                    session_info += f"자본: ${session['initial_capital']:,.0f}"
+                    st.write(session_info)
+                    st.caption(f"Session ID: {session['session_id']}")
+
+                with col2:
+                    if st.button("📈 상세", key=f"detail_{session['session_id']}"):
+                        # Show session details
+                        summary = db.get_session_summary(session['session_id'])
+                        trades = db.get_session_trades(session['session_id'])
+                        st.write(f"거래 수: {len(trades)}")
+                        if summary.get('final_capital'):
+                            st.write(f"현재 자본: ${summary['final_capital']:,.2f}")
+
+                with col3:
+                    if st.button("⏹️ 중지", key=f"stop_{session['session_id']}", type="secondary"):
+                        stop_paper_trading(session['session_id'])
+                        st.rerun()
+
+                st.markdown("---")
+
+            # Bulk stop button
+            if st.button("🗑️ 모든 세션 중지", type="secondary", use_container_width=True):
+                stop_all_active_sessions()
+                st.rerun()
+        else:
+            st.info("ℹ️ 현재 활성화된 세션이 없습니다.")
 
     st.markdown("---")
 
@@ -1085,6 +1542,8 @@ def paper_trading_tab():
         st.session_state.paper_trading_active = False
     if 'paper_trader' not in st.session_state:
         st.session_state.paper_trader = None
+    if 'paper_auto_refresh' not in st.session_state:
+        st.session_state.paper_auto_refresh = False
 
     col1, col2, col3 = st.columns([1, 1, 2])
 
@@ -1119,7 +1578,12 @@ def paper_trading_tab():
             strategy_name=selected_strategy,
             symbols=selected_symbols,
             initial_capital=initial_capital,
-            position_size=position_size
+            position_size=position_size,
+            strategy_params=strategy_params,
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
+            enable_stop_loss=enable_stop_loss,
+            enable_take_profit=enable_take_profit
         )
 
         if session_id:
@@ -1169,8 +1633,19 @@ def paper_trading_tab():
         st.markdown("---")
         st.subheader("💼 실시간 포트폴리오 현황")
 
-        # Auto-refresh every 10 seconds
-        time.sleep(0.1)  # Brief pause to allow UI to render
+        # Auto-refresh control
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            auto_refresh = st.checkbox(
+                "자동 새로고침",
+                value=st.session_state.paper_auto_refresh,
+                help="10초마다 포트폴리오를 자동으로 업데이트합니다",
+                key="paper_auto_refresh_checkbox"
+            )
+            st.session_state.paper_auto_refresh = auto_refresh
+        with col2:
+            if st.button("🔄 수동 새로고침", key="manual_refresh_portfolio"):
+                st.rerun()
 
         # Get current prices for all symbols
         try:
@@ -1248,11 +1723,12 @@ def paper_trading_tab():
                 else:
                     st.info("현재 보유 중인 포지션이 없습니다.")
 
-                # Auto-refresh trigger
-                st.markdown("---")
-                st.caption("🔄 자동 새로고침: 10초마다 업데이트")
-                time.sleep(10)
-                st.rerun()
+                # Auto-refresh trigger (only if enabled)
+                if st.session_state.paper_auto_refresh:
+                    st.markdown("---")
+                    st.caption("🔄 자동 새로고침 활성화: 10초마다 업데이트")
+                    time.sleep(10)
+                    st.rerun()
 
             else:
                 st.warning("⚠️ 브로커 연결 실패. 포트폴리오 정보를 가져올 수 없습니다.")
@@ -1270,144 +1746,125 @@ def live_monitor_tab():
     lang = st.session_state.language
     st.header(get_text('live_title', lang))
 
-    if st.session_state.strategy_instance is None:
-        st.warning(get_text('init_warning', lang))
-        return
+    st.markdown("""
+    시뮬레이션 데이터로 전략 신호를 실시간으로 모니터링합니다.
+    실제 시장 데이터 모니터링은 '모의투자' 탭을 사용하세요.
+    """)
 
-    # Show data source mode indicator
-    if st.session_state.use_simulation:
-        st.info(f"📊 {get_text('simulation_mode', lang)} - {get_text('market_data_from', lang)}: {get_text('simulated_data', lang)}")
-    else:
-        # Determine data source based on market type
-        if st.session_state.market_type == 'stock':
-            data_source = get_text('kis_broker', lang)
-        else:
-            data_source = get_text('exchange_data', lang)
-        st.success(f"📡 {get_text('real_time_mode', lang)} - {get_text('market_data_from', lang)}: {data_source}")
+    # Configuration section
+    st.markdown("---")
+    st.subheader("⚙️ 모니터링 설정")
 
-    # Current Market Price Section (US-008) - Only show for stock market and non-simulation mode
-    if st.session_state.market_type == 'stock' and not st.session_state.use_simulation:
-        st.markdown("---")
-        st.subheader(f"💰 {get_text('current_market_price', lang)}")
+    col1, col2 = st.columns(2)
 
-        # Try to get KIS broker for real-time quote
-        try:
-            from dashboard.kis_broker import get_kis_broker
-            kis_broker = get_kis_broker()
+    with col1:
+        # Strategy selection
+        strategy_options = list(STRATEGY_CONFIGS.keys())
+        selected_strategy = st.selectbox(
+            "전략 선택",
+            options=strategy_options,
+            index=0,
+            key="monitor_strategy_select"
+        )
 
-            if kis_broker:
-                # Get the current symbol from config
-                symbol = st.session_state.config.get('symbol', 'AAPL')
+    with col2:
+        # Number of data points
+        num_points = st.number_input(
+            "데이터 포인트 수",
+            min_value=50,
+            max_value=500,
+            value=100,
+            key="monitor_points"
+        )
 
-                # For US stocks, we need to remove the market suffix (e.g., AAPL.US -> AAPL)
-                if '.' in symbol:
-                    symbol = symbol.split('.')[0]
+    # Strategy parameters
+    strategy_params = {}
+    param_config = STRATEGY_CONFIGS[selected_strategy]['params']
+    param_cols = st.columns(min(len(param_config), 3))
 
-                # Fetch real-time quote
-                with st.spinner(get_text('fetching_quote', lang)):
-                    try:
-                        ticker = kis_broker.fetch_ticker(symbol, overseas=True, market='NASDAQ')
-
-                        if ticker:
-                            # Display current market price with change info
-                            col1, col2, col3, col4, col5 = st.columns(5)
-
-                            with col1:
-                                st.metric(
-                                    get_text('current_price', lang),
-                                    f"${ticker['last']:.2f}",
-                                    delta=f"{ticker['rate']:.2f}%",
-                                    delta_color="normal"
-                                )
-
-                            with col2:
-                                st.metric(get_text('open_price', lang), f"${ticker['open']:.2f}")
-
-                            with col3:
-                                st.metric(get_text('high_price', lang), f"${ticker['high']:.2f}")
-
-                            with col4:
-                                st.metric(get_text('low_price', lang), f"${ticker['low']:.2f}")
-
-                            with col5:
-                                volume_str = f"{int(ticker['volume']):,}"
-                                st.metric(get_text('volume', lang), volume_str)
-
-                            # Display last updated time
-                            st.caption(f"⏰ {get_text('last_updated', lang)}: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-                    except Exception as e:
-                        # Use centralized error handler (US-009)
-                        from dashboard.error_handler import handle_kis_broker_error
-                        handle_kis_broker_error(e, lang=lang, symbol=symbol)
+    for idx, (param_name, config) in enumerate(param_config.items()):
+        with param_cols[idx % 3]:
+            if config.get('step'):
+                strategy_params[param_name] = st.slider(
+                    config['label'],
+                    min_value=config['min'],
+                    max_value=config['max'],
+                    value=config['default'],
+                    step=config['step'],
+                    key=f"monitor_{param_name}"
+                )
             else:
-                st.info(f"ℹ️ {get_text('kis_not_available', lang)}")
-
-        except ImportError:
-            st.warning("⚠️ KIS broker module not available")
-
-        st.markdown("---")
-
-    # Strategy Signal Section
-    # Auto-refresh toggle
-    auto_refresh = st.checkbox(get_text('auto_refresh', lang), value=False)
-
-    if st.button(get_text('refresh_now', lang)) or auto_refresh:
-        with st.spinner(get_text('fetching_data', lang)):
-            try:
-                df = st.session_state.data_handler.fetch_ohlcv(
-                    symbol=st.session_state.config['symbol'],
-                    timeframe=st.session_state.config['timeframe'],
-                    limit=100
+                strategy_params[param_name] = st.slider(
+                    config['label'],
+                    min_value=config['min'],
+                    max_value=config['max'],
+                    value=config['default'],
+                    key=f"monitor_{param_name}"
                 )
 
+    st.markdown("---")
+
+    # Generate and display signal
+    if st.button("🔄 신호 생성", type="primary", use_container_width=True, key="generate_signal_btn"):
+        with st.spinner("신호 생성 중..."):
+            try:
+                # Create strategy instance
+                strategy_instance = create_strategy(selected_strategy, strategy_params)
+
+                # Generate simulation data
+                generator = SimulationDataGenerator(seed=42)
+                df = generator.generate_ohlcv(periods=num_points)
+
                 if df.empty:
-                    st.error("No data retrieved.")
+                    st.error("데이터 생성에 실패했습니다.")
                     return
 
                 # Calculate indicators and signals
-                data = st.session_state.strategy_instance.calculate_indicators(df)
-                signal, info = st.session_state.strategy_instance.get_current_signal(df)
+                data = strategy_instance.calculate_indicators(df)
+                signal, info = strategy_instance.get_current_signal(df)
 
-                # Display current status
-                st.subheader(f"{get_text('current_signal', lang)} - {get_strategy_name(st.session_state.selected_strategy, lang)}")
+                # Display current signal
+                st.subheader(f"📊 현재 신호 - {selected_strategy}")
 
                 col1, col2, col3, col4 = st.columns(4)
 
                 with col1:
-                    st.metric(get_text('current_price', lang), f"${info.get('close', 0):.2f}")
+                    st.metric("현재가", f"${info.get('close', 0):.2f}")
 
                 with col2:
                     signal_text = "🟢 BUY" if signal == 1 else "🔴 SELL" if signal == -1 else "⚪ HOLD"
-                    st.metric(get_text('signal', lang), signal_text)
+                    st.metric("신호", signal_text)
 
                 with col3:
                     position = info.get('position', 0)
                     position_text = "LONG" if position == 1 else "FLAT"
-                    st.metric(get_text('position', lang), position_text)
+                    st.metric("포지션", position_text)
 
                 with col4:
-                    st.metric(get_text('timestamp', lang), pd.Timestamp.now().strftime('%H:%M:%S'))
+                    st.metric("타임스탬프", pd.Timestamp.now().strftime('%H:%M:%S'))
 
                 # Display strategy-specific indicators
+                st.markdown("---")
+                st.subheader("📈 지표 상세")
                 display_strategy_indicators(info)
 
                 # Price chart
+                st.markdown("---")
+                st.subheader("📉 차트")
                 chart_gen = ChartGenerator()
-                fig = chart_gen.plot_strategy_chart(data, pd.DataFrame(), st.session_state.selected_strategy)
+                fig = chart_gen.plot_strategy_chart(data, pd.DataFrame(), selected_strategy)
                 st.plotly_chart(fig, use_container_width=True)
 
                 # Recent data table
-                st.subheader(get_text('recent_data', lang))
+                st.markdown("---")
+                st.subheader("📊 최근 데이터")
                 display_cols = ['open', 'high', 'low', 'close', 'volume']
                 st.dataframe(data[display_cols].tail(20), use_container_width=True)
 
-                if auto_refresh:
-                    time.sleep(30)
-                    st.rerun()
-
             except Exception as e:
-                st.error(f"Error fetching data: {e}")
+                st.error(f"❌ 신호 생성 중 오류 발생: {e}")
+                import traceback
+                st.code(traceback.format_exc())
 
 
 def realtime_quotes_tab():
@@ -1436,6 +1893,15 @@ def realtime_quotes_tab():
     col1, col2 = st.columns([2, 1])
 
     with col1:
+        # Selection method: List or Direct Input
+        selection_method = st.radio(
+            "종목 선택 방법" if lang == 'ko' else "Selection Method",
+            ["📋 목록에서 선택" if lang == 'ko' else "📋 Select from List",
+             "⌨️ 직접 입력 (모든 미국 주식)" if lang == 'ko' else "⌨️ Direct Input (All US Stocks)"],
+            horizontal=True,
+            key='quote_selection_method'
+        )
+
         # Get all stocks for dropdown
         all_stocks = stock_db.stocks
 
@@ -1443,22 +1909,53 @@ def realtime_quotes_tab():
         stock_options = [f"{stock['symbol']} - {stock['name']}" for stock in all_stocks]
         stock_symbols = [stock['symbol'] for stock in all_stocks]
 
-        # Find current selection index
-        try:
-            default_idx = stock_symbols.index(st.session_state.selected_quote_symbol)
-        except ValueError:
-            default_idx = 0
+        if selection_method.startswith("📋"):
+            # List selection mode
+            # Find current selection index
+            try:
+                default_idx = stock_symbols.index(st.session_state.selected_quote_symbol)
+            except ValueError:
+                default_idx = 0
 
-        # Stock selectbox
-        selected_option = st.selectbox(
-            get_text('stock_symbol', lang),
-            stock_options,
-            index=default_idx,
-            help=get_text('select_stock_help', lang)
-        )
+            # Stock selectbox
+            selected_option = st.selectbox(
+                get_text('stock_symbol', lang),
+                stock_options,
+                index=default_idx,
+                help=get_text('select_stock_help', lang)
+            )
 
-        # Extract symbol from selection
-        selected_symbol = selected_option.split(' - ')[0]
+            # Extract symbol from selection
+            selected_symbol = selected_option.split(' - ')[0]
+
+        else:
+            # Direct input mode (yfinance)
+            st.info("💡 " + ("PLTR, SHOP, COIN, UBER, ABNB, RBLX 등 모든 미국 주식 심볼을 입력하세요." if lang == 'ko' else "Enter any US stock symbol: PLTR, SHOP, COIN, UBER, ABNB, RBLX, etc."))
+
+            # Text input for custom symbol
+            custom_symbol = st.text_input(
+                "종목 심볼 입력" if lang == 'ko' else "Enter Symbol",
+                value=st.session_state.get('selected_quote_symbol', 'PLTR'),
+                placeholder="예: PLTR, SHOP, COIN" if lang == 'ko' else "e.g., PLTR, SHOP, COIN",
+                help="미국 주식 심볼을 입력하세요 (대소문자 무관)" if lang == 'ko' else "Enter US stock symbol (case insensitive)",
+                key='custom_quote_symbol'
+            ).strip().upper()
+
+            # Validate symbol
+            if custom_symbol:
+                from dashboard.yfinance_helper import validate_symbol
+
+                with st.spinner(f"'{custom_symbol}' 종목 확인 중..." if lang == 'ko' else f"Validating '{custom_symbol}'..."):
+                    is_valid = validate_symbol(custom_symbol)
+
+                if is_valid:
+                    selected_symbol = custom_symbol
+                    st.success(f"✅ {selected_symbol} " + ("종목을 찾았습니다!" if lang == 'ko' else "found!"))
+                else:
+                    st.error(f"❌ '{custom_symbol}' " + ("종목을 찾을 수 없습니다. 다른 심볼을 입력하세요." if lang == 'ko' else "not found. Please enter a valid symbol."))
+                    selected_symbol = st.session_state.get('selected_quote_symbol', 'AAPL')
+            else:
+                selected_symbol = st.session_state.get('selected_quote_symbol', 'AAPL')
 
         # Update session state
         st.session_state.selected_quote_symbol = selected_symbol
@@ -1540,73 +2037,92 @@ def realtime_quotes_tab():
     st.divider()
     st.subheader(get_text('current_price', lang))
 
-    # Import KIS broker helper
+    # Try KIS broker first, fallback to yfinance
+    ticker = None
+    data_source = None
+
+    # Import helpers
     from dashboard.kis_broker import get_kis_broker
+    from dashboard.yfinance_helper import fetch_ticker_yfinance
 
-    # Initialize KIS broker
-    broker = get_kis_broker()
+    # Try KIS broker first (for list selection)
+    if selection_method.startswith("📋"):
+        broker = get_kis_broker()
 
-    if broker is None:
-        # Broker initialization failed (error already shown by get_kis_broker)
-        st.warning(get_text('kis_not_available', lang))
-        return
+        if broker is not None:
+            try:
+                with st.spinner(get_text('fetching_quote', lang)):
+                    ticker = broker.fetch_ticker(selected_symbol, overseas=True, market='NASDAQ')
+                    data_source = "KIS API"
+            except Exception as e:
+                st.warning(f"⚠️ KIS API 조회 실패, yfinance로 시도합니다..." if lang == 'ko' else f"⚠️ KIS API failed, trying yfinance...")
+                ticker = None
 
-    try:
-        # Fetch current ticker data
-        with st.spinner(get_text('fetching_quote', lang)):
-            ticker = broker.fetch_ticker(selected_symbol, overseas=True, market='NASDAQ')
+    # Fallback to yfinance or Direct input mode
+    if ticker is None:
+        try:
+            with st.spinner(("yfinance로 조회 중..." if lang == 'ko' else "Fetching from yfinance...") if data_source is None else get_text('fetching_quote', lang)):
+                ticker = fetch_ticker_yfinance(selected_symbol)
+                data_source = "Yahoo Finance (yfinance)"
 
-        # Display metrics in columns
-        col1, col2, col3, col4, col5 = st.columns(5)
+                if ticker is None:
+                    st.error(f"❌ '{selected_symbol}' " + ("시세를 조회할 수 없습니다." if lang == 'ko' else "quote not available."))
+                    return
 
-        with col1:
-            # Current price with change rate
-            change_rate = ticker.get('rate', 0.0)
-            delta_color = "normal" if change_rate >= 0 else "inverse"
-            st.metric(
-                label=get_text('current_price', lang),
-                value=f"${ticker['last']:.2f}",
-                delta=f"{change_rate:+.2f}%",
-                delta_color=delta_color
-            )
+        except Exception as e:
+            st.error(f"❌ " + ("시세 조회 실패:" if lang == 'ko' else "Quote fetch failed:") + f" {str(e)}")
+            return
 
-        with col2:
-            st.metric(
-                label=get_text('open_price', lang),
-                value=f"${ticker['open']:.2f}"
-            )
+    # Show data source
+    if data_source:
+        st.caption(f"📊 " + ("데이터 소스:" if lang == 'ko' else "Data source:") + f" {data_source}")
 
-        with col3:
-            st.metric(
-                label=get_text('high_price', lang),
-                value=f"${ticker['high']:.2f}"
-            )
+    # Display metrics in columns
+    col1, col2, col3, col4, col5 = st.columns(5)
 
-        with col4:
-            st.metric(
-                label=get_text('low_price', lang),
-                value=f"${ticker['low']:.2f}"
-            )
+    with col1:
+        # Current price with change rate
+        change_rate = ticker.get('rate', 0.0)
+        delta_color = "normal" if change_rate >= 0 else "inverse"
+        st.metric(
+            label=get_text('current_price', lang),
+            value=f"${ticker['last']:.2f}",
+            delta=f"{change_rate:+.2f}%",
+            delta_color=delta_color
+        )
 
-        with col5:
-            # Format volume with commas
-            volume = ticker.get('volume', 0)
-            st.metric(
-                label=get_text('volume', lang),
-                value=f"{int(volume):,}"
-            )
+    with col2:
+        st.metric(
+            label=get_text('open_price', lang),
+            value=f"${ticker['open']:.2f}"
+        )
 
-        # Additional info: Change amount
-        change_amount = ticker.get('change', 0.0)
-        change_sign = "+" if change_amount >= 0 else ""
-        change_color = "🔴" if change_amount >= 0 else "🔵"
+    with col3:
+        st.metric(
+            label=get_text('high_price', lang),
+            value=f"${ticker['high']:.2f}"
+        )
 
-        st.info(f"{change_color} {get_text('change_amount', lang)}: {change_sign}${change_amount:.2f} ({change_rate:+.2f}%)")
+    with col4:
+        st.metric(
+            label=get_text('low_price', lang),
+            value=f"${ticker['low']:.2f}"
+        )
 
-    except Exception as e:
-        # Use centralized error handler (US-009)
-        from dashboard.error_handler import handle_kis_broker_error
-        handle_kis_broker_error(e, lang=lang, symbol=selected_symbol)
+    with col5:
+        # Format volume with commas
+        volume = ticker.get('volume', 0)
+        st.metric(
+            label=get_text('volume', lang),
+            value=f"{int(volume):,}"
+        )
+
+    # Additional info: Change amount
+    change_amount = ticker.get('change', 0.0)
+    change_sign = "+" if change_amount >= 0 else ""
+    change_color = "🔴" if change_amount >= 0 else "🔵"
+
+    st.info(f"{change_color} {get_text('change_amount', lang)}: {change_sign}${change_amount:.2f} ({change_rate:+.2f}%)")
 
     # OHLCV Chart (US-006)
     st.divider()
@@ -1633,14 +2149,53 @@ def realtime_quotes_tab():
 
     try:
         # Fetch OHLCV data
-        with st.spinner(get_text('loading_chart', lang)):
-            ohlcv_df = broker.fetch_ohlcv(
-                selected_symbol,
-                timeframe='1d',
-                limit=selected_period,
-                overseas=True,
-                market='NASDAQ'
-            )
+        ohlcv_df = None
+
+        # Import yfinance helper
+        from dashboard.yfinance_helper import fetch_ohlcv_yfinance
+
+        # Try KIS broker first (for list selection)
+        if selection_method.startswith("📋"):
+            broker = get_kis_broker()
+
+            if broker is not None:
+                try:
+                    with st.spinner(get_text('loading_chart', lang)):
+                        ohlcv_df = broker.fetch_ohlcv(
+                            selected_symbol,
+                            timeframe='1d',
+                            limit=selected_period,
+                            overseas=True,
+                            market='NASDAQ'
+                        )
+                except Exception as e:
+                    st.warning(f"⚠️ KIS API OHLCV 조회 실패, yfinance로 시도합니다..." if lang == 'ko' else f"⚠️ KIS API OHLCV failed, trying yfinance...")
+                    ohlcv_df = None
+
+        # Fallback to yfinance or Direct input mode
+        if ohlcv_df is None:
+            # Convert days to yfinance period format
+            period_map = {
+                30: '1mo',
+                90: '3mo',
+                180: '6mo'
+            }
+            yf_period = period_map.get(selected_period, '3mo')
+
+            with st.spinner(("yfinance로 OHLCV 조회 중..." if lang == 'ko' else "Fetching OHLCV from yfinance...") if ohlcv_df is None else get_text('loading_chart', lang)):
+                ohlcv_df = fetch_ohlcv_yfinance(
+                    selected_symbol,
+                    period=yf_period,
+                    interval='1d'
+                )
+
+                if ohlcv_df is None or ohlcv_df.empty:
+                    st.error(f"❌ '{selected_symbol}' " + ("OHLCV 데이터를 조회할 수 없습니다." if lang == 'ko' else "OHLCV data not available."))
+                    return
+
+        # Ensure index is set to timestamp column for charting
+        if 'timestamp' in ohlcv_df.columns:
+            ohlcv_df = ohlcv_df.set_index('timestamp')
 
         # Create candlestick chart with volume subplot
         from plotly.subplots import make_subplots
@@ -1745,32 +2300,44 @@ def main():
     sidebar_config()
 
     # Main tabs
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        get_text('tab_comparison', lang),
-        get_text('tab_backtest', lang),
-        get_text('tab_live', lang),
-        get_text('tab_quotes', lang),
-        get_text('tab_paper', lang),
-        "📊 Session Comparison"  # New tab for US-109
+    # Reordered tabs - Paper Trading is the main feature, so it comes first
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🎮 " + get_text('tab_paper', lang),           # Main feature: Paper Trading
+        "📊 전략 & 세션 비교",                          # Combined comparison
+        "📈 " + get_text('tab_quotes', lang),          # Real-time quotes
+        "📉 " + get_text('tab_backtest', lang),        # Advanced: Backtesting
+        "🔴 " + get_text('tab_live', lang),            # Advanced: Live Monitor
     ])
 
     with tab1:
-        strategy_comparison_tab()
-
-    with tab2:
-        backtest_tab()
-
-    with tab3:
-        live_monitor_tab()
-
-    with tab4:
-        realtime_quotes_tab()
-
-    with tab5:
         paper_trading_tab()
 
-    with tab6:
-        paper_trading_comparison_tab()
+    with tab2:
+        # Combined tab: Strategy Comparison + Session Comparison
+        st.header("📊 전략 & 세션 비교")
+
+        comparison_type = st.radio(
+            "비교 유형 선택",
+            ["세션 비교 (Paper Trading)", "전략 비교 (시뮬레이션)"],
+            horizontal=True,
+            help="Paper Trading 세션을 비교하거나, 시뮬레이션 데이터로 여러 전략을 비교할 수 있습니다"
+        )
+
+        st.markdown("---")
+
+        if comparison_type == "세션 비교 (Paper Trading)":
+            paper_trading_comparison_tab()
+        else:
+            strategy_comparison_tab()
+
+    with tab3:
+        realtime_quotes_tab()
+
+    with tab4:
+        backtest_tab()
+
+    with tab5:
+        live_monitor_tab()
 
     # Footer
     st.markdown("---")
