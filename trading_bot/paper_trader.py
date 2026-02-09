@@ -9,9 +9,14 @@ from .strategy import MovingAverageCrossover
 from .data_handler import DataHandler
 from .brokers.base_broker import BaseBroker
 from .database import TradingDatabase
+from .retry_utils import retry_with_backoff
 import time
 import json
 import numpy as np
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 class PaperTrader:
@@ -413,6 +418,49 @@ class PaperTrader:
 
         return False
 
+    def _fetch_ticker_with_retry(self, symbol: str, overseas: bool = False):
+        """
+        Fetch ticker with retry logic
+
+        Args:
+            symbol: Trading symbol
+            overseas: Whether to use overseas parameter (for KIS broker)
+
+        Returns:
+            Ticker dict with 'last' price
+        """
+        @retry_with_backoff(max_retries=3, backoff_factor=2.0, initial_delay=2.0)
+        def _fetch():
+            if overseas:
+                return self.broker.fetch_ticker(symbol, overseas=True)
+            else:
+                return self.broker.fetch_ticker(symbol)
+
+        return _fetch()
+
+    def _fetch_ohlcv_with_retry(self, symbol: str, timeframe: str, limit: int = 100):
+        """
+        Fetch OHLCV with retry logic
+
+        Args:
+            symbol: Trading symbol
+            timeframe: Timeframe (e.g., '1d', '1h')
+            limit: Number of bars to fetch
+
+        Returns:
+            DataFrame with OHLCV data
+        """
+        @retry_with_backoff(max_retries=3, backoff_factor=2.0, initial_delay=2.0)
+        def _fetch():
+            # Check if broker supports overseas parameter (KIS broker)
+            from .brokers.korea_investment_broker import KoreaInvestmentBroker
+            if isinstance(self.broker, KoreaInvestmentBroker):
+                return self.broker.fetch_ohlcv(symbol, timeframe, limit=limit, overseas=True)
+            else:
+                return self.broker.fetch_ohlcv(symbol, timeframe, limit=limit)
+
+        return _fetch()
+
     def _realtime_iteration(self, timeframe: str):
         """
         Execute one iteration of real-time paper trading
@@ -430,13 +478,13 @@ class PaperTrader:
             # Process each symbol
             for symbol in self.symbols:
                 try:
-                    # Fetch current ticker
+                    # Fetch current ticker (with retry)
                     # Check if broker supports overseas parameter (KoreaInvestmentBroker)
                     from .brokers.korea_investment_broker import KoreaInvestmentBroker
                     if isinstance(self.broker, KoreaInvestmentBroker):
-                        ticker = self.broker.fetch_ticker(symbol, overseas=True)
+                        ticker = self._fetch_ticker_with_retry(symbol, overseas=True)
                     else:
-                        ticker = self.broker.fetch_ticker(symbol)
+                        ticker = self._fetch_ticker_with_retry(symbol)
 
                     current_price = ticker['last']
                     current_prices[symbol] = current_price
@@ -449,8 +497,8 @@ class PaperTrader:
                         print(f"[{timestamp}] {symbol}: 손절/익절 실행됨, 전략 시그널 무시")
                         continue
 
-                    # Fetch historical OHLCV data for strategy indicator calculation
-                    df = self.broker.fetch_ohlcv(symbol, timeframe, limit=100)
+                    # Fetch historical OHLCV data for strategy indicator calculation (with retry)
+                    df = self._fetch_ohlcv_with_retry(symbol, timeframe, limit=100)
 
                     if df.empty:
                         print(f"[WARNING] No OHLCV data for {symbol}, skipping")

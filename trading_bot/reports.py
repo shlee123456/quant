@@ -1,0 +1,285 @@
+"""
+Trading Report Generator
+
+일일 트레이딩 리포트를 CSV, JSON 형식으로 생성합니다.
+
+Usage:
+    from trading_bot.reports import ReportGenerator
+    from trading_bot.database import TradingDatabase
+
+    db = TradingDatabase()
+    generator = ReportGenerator(db)
+
+    # CSV 리포트 생성
+    generator.generate_session_report(session_id, output_dir='reports/')
+"""
+
+import os
+import csv
+import json
+import logging
+from pathlib import Path
+from datetime import datetime
+from typing import Optional, Dict, List
+
+from trading_bot.database import TradingDatabase
+
+
+logger = logging.getLogger(__name__)
+
+
+class ReportGenerator:
+    """
+    트레이딩 세션 리포트 생성기
+
+    세션 데이터를 CSV, JSON 형식으로 내보냅니다.
+    """
+
+    def __init__(self, db: TradingDatabase):
+        """
+        Initialize report generator
+
+        Args:
+            db: TradingDatabase instance
+        """
+        self.db = db
+
+    def generate_session_report(
+        self,
+        session_id: str,
+        output_dir: str = 'reports/',
+        formats: Optional[List[str]] = None
+    ) -> Dict[str, str]:
+        """
+        세션 리포트 생성
+
+        Args:
+            session_id: Session ID
+            output_dir: Output directory for reports
+            formats: List of formats to generate ['csv', 'json']
+                     If None, generates both
+
+        Returns:
+            Dict mapping format to file path
+            Example: {'csv': 'reports/session_123.csv', 'json': 'reports/session_123.json'}
+        """
+        if formats is None:
+            formats = ['csv', 'json']
+
+        # Create output directory if not exists
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+        # Get session data
+        summary = self.db.get_session_summary(session_id)
+        if not summary:
+            logger.error(f"Session {session_id} not found")
+            return {}
+
+        trades = self.db.get_session_trades(session_id)
+        snapshots = self.db.get_session_snapshots(session_id)
+
+        # Generate reports
+        output_files = {}
+
+        if 'csv' in formats:
+            csv_path = self._generate_csv_report(
+                session_id, summary, trades, snapshots, output_dir
+            )
+            output_files['csv'] = csv_path
+
+        if 'json' in formats:
+            json_path = self._generate_json_report(
+                session_id, summary, trades, snapshots, output_dir
+            )
+            output_files['json'] = json_path
+
+        logger.info(f"✓ Reports generated for session {session_id}")
+        for format_name, path in output_files.items():
+            logger.info(f"  {format_name.upper()}: {path}")
+
+        return output_files
+
+    def _generate_csv_report(
+        self,
+        session_id: str,
+        summary: Dict,
+        trades: List[Dict],
+        snapshots: List[Dict],
+        output_dir: str
+    ) -> str:
+        """
+        Generate CSV report
+
+        Creates two CSV files:
+        - {session_id}_trades.csv: Trade history
+        - {session_id}_snapshots.csv: Portfolio snapshots
+        """
+        # Sanitize session_id for filename
+        safe_session_id = session_id.replace(':', '_').replace(' ', '_')
+
+        # 1. Generate trades CSV
+        trades_file = os.path.join(output_dir, f'{safe_session_id}_trades.csv')
+
+        if trades:
+            with open(trades_file, 'w', newline='', encoding='utf-8') as f:
+                # Define columns
+                fieldnames = [
+                    'timestamp', 'symbol', 'type', 'price', 'size',
+                    'commission', 'pnl', 'portfolio_value'
+                ]
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+
+                writer.writeheader()
+                for trade in trades:
+                    writer.writerow({
+                        'timestamp': trade['timestamp'],
+                        'symbol': trade['symbol'],
+                        'type': trade['type'],
+                        'price': trade['price'],
+                        'size': trade['size'],
+                        'commission': trade.get('commission', 0),
+                        'pnl': trade.get('pnl', 0),
+                        'portfolio_value': trade.get('portfolio_value', 0)
+                    })
+
+            logger.info(f"  Trades CSV: {trades_file}")
+
+        # 2. Generate snapshots CSV
+        snapshots_file = os.path.join(output_dir, f'{safe_session_id}_snapshots.csv')
+
+        if snapshots:
+            with open(snapshots_file, 'w', newline='', encoding='utf-8') as f:
+                fieldnames = ['timestamp', 'total_value', 'cash', 'positions']
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+
+                writer.writeheader()
+                for snapshot in snapshots:
+                    writer.writerow({
+                        'timestamp': snapshot['timestamp'],
+                        'total_value': snapshot['total_value'],
+                        'cash': snapshot['cash'],
+                        'positions': snapshot['positions']  # JSON string
+                    })
+
+            logger.info(f"  Snapshots CSV: {snapshots_file}")
+
+        # 3. Generate summary CSV
+        summary_file = os.path.join(output_dir, f'{safe_session_id}_summary.csv')
+
+        with open(summary_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+
+            # Write summary as key-value pairs
+            writer.writerow(['Metric', 'Value'])
+            writer.writerow(['Session ID', session_id])
+            writer.writerow(['Strategy', summary.get('strategy_name', 'N/A')])
+            writer.writerow(['Start Time', summary.get('start_time', 'N/A')])
+            writer.writerow(['End Time', summary.get('end_time', 'N/A')])
+            writer.writerow(['Initial Capital', f"${summary.get('initial_capital', 0):,.2f}"])
+            writer.writerow(['Final Capital', f"${summary.get('final_capital', 0):,.2f}"])
+            writer.writerow(['Total Return', f"{summary.get('total_return', 0):.2f}%"])
+            writer.writerow(['Sharpe Ratio', f"{summary.get('sharpe_ratio', 0):.2f}"])
+            writer.writerow(['Max Drawdown', f"{summary.get('max_drawdown', 0):.2f}%"])
+            writer.writerow(['Win Rate', f"{summary.get('win_rate', 0):.2f}%"])
+            writer.writerow(['Total Trades', len(trades)])
+
+        logger.info(f"  Summary CSV: {summary_file}")
+
+        return summary_file
+
+    def _generate_json_report(
+        self,
+        session_id: str,
+        summary: Dict,
+        trades: List[Dict],
+        snapshots: List[Dict],
+        output_dir: str
+    ) -> str:
+        """
+        Generate JSON report
+
+        Creates a single JSON file with all session data
+        """
+        safe_session_id = session_id.replace(':', '_').replace(' ', '_')
+        json_file = os.path.join(output_dir, f'{safe_session_id}_report.json')
+
+        # Combine all data
+        report_data = {
+            'session_id': session_id,
+            'summary': summary,
+            'trades': trades,
+            'snapshots': snapshots,
+            'generated_at': datetime.now().isoformat()
+        }
+
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(report_data, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"  JSON Report: {json_file}")
+
+        return json_file
+
+    def generate_daily_summary(
+        self,
+        output_dir: str = 'reports/',
+        date: Optional[str] = None
+    ) -> str:
+        """
+        일일 전체 세션 요약 리포트 생성
+
+        Args:
+            output_dir: Output directory
+            date: Date string (YYYY-MM-DD). If None, uses today
+
+        Returns:
+            Path to summary CSV file
+        """
+        if date is None:
+            date = datetime.now().strftime('%Y-%m-%d')
+
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+        # Get all sessions
+        all_sessions = self.db.get_all_sessions()
+
+        # Filter sessions by date
+        daily_sessions = [
+            s for s in all_sessions
+            if s.get('start_time', '').startswith(date)
+        ]
+
+        if not daily_sessions:
+            logger.warning(f"No sessions found for date {date}")
+            return ''
+
+        # Generate summary CSV
+        summary_file = os.path.join(output_dir, f'daily_summary_{date}.csv')
+
+        with open(summary_file, 'w', newline='', encoding='utf-8') as f:
+            fieldnames = [
+                'session_id', 'strategy_name', 'start_time', 'end_time',
+                'initial_capital', 'final_capital', 'total_return',
+                'sharpe_ratio', 'max_drawdown', 'win_rate', 'status'
+            ]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+
+            writer.writeheader()
+            for session in daily_sessions:
+                writer.writerow({
+                    'session_id': session.get('session_id', ''),
+                    'strategy_name': session.get('strategy_name', ''),
+                    'start_time': session.get('start_time', ''),
+                    'end_time': session.get('end_time', ''),
+                    'initial_capital': session.get('initial_capital', 0),
+                    'final_capital': session.get('final_capital', 0),
+                    'total_return': session.get('total_return', 0),
+                    'sharpe_ratio': session.get('sharpe_ratio', 0),
+                    'max_drawdown': session.get('max_drawdown', 0),
+                    'win_rate': session.get('win_rate', 0),
+                    'status': session.get('status', '')
+                })
+
+        logger.info(f"✓ Daily summary generated: {summary_file}")
+        logger.info(f"  Sessions: {len(daily_sessions)}")
+
+        return summary_file

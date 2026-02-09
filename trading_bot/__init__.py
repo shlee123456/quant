@@ -15,6 +15,16 @@ from .notifications import NotificationService
 from .strategy_presets import StrategyPresetManager
 from .custom_combo_strategy import CustomComboStrategy
 
+# Phase 2 automation modules
+try:
+    from .database import TradingDatabase
+    from .reports import ReportGenerator
+    _has_automation = True
+except ImportError:
+    TradingDatabase = None
+    ReportGenerator = None
+    _has_automation = False
+
 # Optional imports (require additional dependencies)
 try:
     from .data_handler import DataHandler
@@ -48,3 +58,5 @@ if _has_ccxt:
     __all__.append('DataHandler')
 if _has_paper_trader:
     __all__.append('PaperTrader')
+if _has_automation:
+    __all__.extend(['TradingDatabase', 'ReportGenerator'])

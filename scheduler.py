@@ -34,6 +34,8 @@ from trading_bot.database import TradingDatabase
 from trading_bot.optimizer import StrategyOptimizer
 from trading_bot.simulation_data import SimulationDataGenerator
 from trading_bot.notifications import NotificationService
+from trading_bot.strategy_presets import StrategyPresetManager
+from trading_bot.reports import ReportGenerator
 from dashboard.kis_broker import get_kis_broker
 
 # Load environment variables
@@ -56,12 +58,20 @@ current_trader: Optional[PaperTrader] = None
 # Global notification service
 notifier = NotificationService()
 
+# Global preset manager
+preset_manager = StrategyPresetManager()
+
+# Optimized parameters (loaded from optimization)
+optimized_params = None
+
 
 def optimize_strategy():
     """
     장전 작업: 전략 파라미터 최적화
     장 시작 30분 전 실행
     """
+    global optimized_params
+
     logger.info("=" * 60)
     logger.info("전략 최적화 시작...")
     logger.info("=" * 60)
@@ -101,8 +111,26 @@ def optimize_strategy():
             color='good'
         )
 
-        # 다음 트레이딩 세션을 위한 최적 파라미터 저장
-        # TODO: 파라미터 영속성 구현
+        # 최적 파라미터를 전역 변수에 저장 (다음 트레이딩 세션에서 사용)
+        optimized_params = best_result['params']
+
+        # 프리셋으로 저장 (영속성)
+        preset_name = f"자동최적화_{datetime.now().strftime('%Y%m%d_%H%M')}"
+        preset_manager.save_preset(
+            name=preset_name,
+            description=f"자동 최적화 결과 (Sharpe: {best_result['sharpe_ratio']:.2f})",
+            strategy="RSI Strategy",
+            strategy_params=best_result['params'],
+            symbols=['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META'],
+            initial_capital=10000.0,
+            position_size=0.3,
+            stop_loss_pct=0.05,
+            take_profit_pct=0.10,
+            enable_stop_loss=True,
+            enable_take_profit=True
+        )
+
+        logger.info(f"✓ 최적 파라미터 프리셋 저장: {preset_name}")
 
     except Exception as e:
         logger.error(f"✗ 최적화 실패: {e}", exc_info=True)
@@ -130,8 +158,14 @@ def start_paper_trading():
         # 데이터베이스 초기화
         db = TradingDatabase()
 
-        # 전략 생성 (TODO: 최적화된 파라미터 로드)
-        strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+        # 전략 생성 (최적화된 파라미터 사용)
+        if optimized_params:
+            logger.info(f"최적화된 파라미터 사용: {optimized_params}")
+            strategy = RSIStrategy(**optimized_params)
+        else:
+            logger.info("기본 파라미터 사용 (최적화 안 됨)")
+            strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+
         logger.info(f"전략: {strategy.name}")
 
         # 거래할 종목 선택
@@ -225,7 +259,28 @@ def stop_paper_trading():
                     'num_trades': len(trades)
                 })
 
-                # TODO: CSV 리포트 생성
+                # CSV 리포트 생성
+                try:
+                    report_gen = ReportGenerator(current_trader.db)
+                    report_files = report_gen.generate_session_report(
+                        current_trader.session_id,
+                        output_dir='reports/',
+                        formats=['csv', 'json']
+                    )
+
+                    logger.info("✓ 리포트 생성 완료:")
+                    for format_name, file_path in report_files.items():
+                        logger.info(f"  {format_name.upper()}: {file_path}")
+
+                    # 리포트 파일 경로를 Slack으로 전송
+                    report_msg = "📄 *리포트 생성 완료*\n\n"
+                    for format_name, file_path in report_files.items():
+                        report_msg += f"{format_name.upper()}: {file_path}\n"
+
+                    notifier.send_slack(report_msg, color='good')
+
+                except Exception as e:
+                    logger.error(f"✗ 리포트 생성 실패: {e}", exc_info=True)
 
         current_trader = None
 
