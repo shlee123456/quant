@@ -5,6 +5,13 @@ Stock Symbol Database and Search Utilities
 from typing import List, Dict, Optional
 import pandas as pd
 
+# Import yfinance helper (optional - fallback if not available)
+try:
+    from dashboard.yfinance_helper import get_company_info
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
+
 
 class StockSymbolDB:
     """Database of popular US stock symbols with sector/industry info"""
@@ -46,6 +53,16 @@ class StockSymbolDB:
             {'symbol': 'IBM', 'name': 'IBM', 'sector': 'Technology', 'industry': 'IT Services', 'exchange': 'NYSE'},
             {'symbol': 'PANW', 'name': 'Palo Alto Networks', 'sector': 'Technology', 'industry': 'Cybersecurity', 'exchange': 'NASDAQ'},
             {'symbol': 'CRWD', 'name': 'CrowdStrike Holdings', 'sector': 'Technology', 'industry': 'Cybersecurity', 'exchange': 'NASDAQ'},
+            {'symbol': 'PLTR', 'name': 'Palantir Technologies', 'sector': 'Technology', 'industry': 'Software', 'exchange': 'NYSE'},
+            {'symbol': 'SHOP', 'name': 'Shopify Inc.', 'sector': 'Technology', 'industry': 'E-commerce', 'exchange': 'NYSE'},
+            {'symbol': 'SQ', 'name': 'Block Inc. (Square)', 'sector': 'Technology', 'industry': 'Fintech', 'exchange': 'NYSE'},
+            {'symbol': 'UBER', 'name': 'Uber Technologies', 'sector': 'Technology', 'industry': 'Ride Sharing', 'exchange': 'NYSE'},
+            {'symbol': 'ABNB', 'name': 'Airbnb Inc.', 'sector': 'Technology', 'industry': 'Travel Tech', 'exchange': 'NASDAQ'},
+            {'symbol': 'RBLX', 'name': 'Roblox Corporation', 'sector': 'Technology', 'industry': 'Gaming', 'exchange': 'NYSE'},
+            {'symbol': 'U', 'name': 'Unity Software', 'sector': 'Technology', 'industry': 'Gaming Software', 'exchange': 'NYSE'},
+            {'symbol': 'DDOG', 'name': 'Datadog Inc.', 'sector': 'Technology', 'industry': 'Cloud Monitoring', 'exchange': 'NASDAQ'},
+            {'symbol': 'ZS', 'name': 'Zscaler Inc.', 'sector': 'Technology', 'industry': 'Cybersecurity', 'exchange': 'NASDAQ'},
+            {'symbol': 'OKTA', 'name': 'Okta Inc.', 'sector': 'Technology', 'industry': 'Identity Management', 'exchange': 'NASDAQ'},
 
             # E-commerce & Retail
             {'symbol': 'WMT', 'name': 'Walmart Inc.', 'sector': 'Consumer Defensive', 'industry': 'Retail', 'exchange': 'NYSE'},
@@ -175,12 +192,13 @@ class StockSymbolDB:
             'Sector ETFs': ['XLK', 'XLF', 'XLE', 'XLV', 'XLI', 'XLP'],
         }
 
-    def search(self, query: str) -> List[Dict]:
+    def search(self, query: str, use_yfinance: bool = True) -> List[Dict]:
         """
         Search stocks by symbol or name
 
         Args:
             query: Search query (symbol or company name)
+            use_yfinance: If True, search yfinance if no local matches found
 
         Returns:
             List of matching stock dictionaries
@@ -199,7 +217,45 @@ class StockSymbolDB:
         # Combine and remove duplicates
         matches = pd.concat([symbol_matches, name_matches]).drop_duplicates()
 
-        return matches.to_dict('records')
+        results = matches.to_dict('records')
+
+        # If no local matches and yfinance is available, try yfinance
+        if not results and use_yfinance and YFINANCE_AVAILABLE:
+            # Assume query is a symbol and try yfinance
+            yf_result = self._search_yfinance(query)
+            if yf_result:
+                results = [yf_result]
+
+        return results
+
+    def _search_yfinance(self, symbol: str) -> Optional[Dict]:
+        """
+        Search for a stock using yfinance
+
+        Args:
+            symbol: Stock symbol to search
+
+        Returns:
+            Stock info dict or None if not found
+        """
+        if not YFINANCE_AVAILABLE:
+            return None
+
+        try:
+            info = get_company_info(symbol)
+            if info:
+                # Convert yfinance format to our format
+                return {
+                    'symbol': info['symbol'],
+                    'name': info['name'],
+                    'sector': info['sector'],
+                    'industry': info['industry'],
+                    'exchange': info['exchange']
+                }
+        except Exception as e:
+            print(f"yfinance search failed for {symbol}: {e}")
+
+        return None
 
     def get_by_symbol(self, symbol: str) -> Optional[Dict]:
         """
