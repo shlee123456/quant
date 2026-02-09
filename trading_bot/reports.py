@@ -170,6 +170,12 @@ class ReportGenerator:
             writer = csv.writer(f)
 
             # Write summary as key-value pairs
+            # Handle None values from database
+            total_return = summary.get('total_return') or 0.0
+            sharpe_ratio = summary.get('sharpe_ratio') or 0.0
+            max_drawdown = summary.get('max_drawdown') or 0.0
+            win_rate = summary.get('win_rate') or 0.0
+
             writer.writerow(['Metric', 'Value'])
             writer.writerow(['Session ID', session_id])
             writer.writerow(['Strategy', summary.get('strategy_name', 'N/A')])
@@ -177,10 +183,10 @@ class ReportGenerator:
             writer.writerow(['End Time', summary.get('end_time', 'N/A')])
             writer.writerow(['Initial Capital', f"${summary.get('initial_capital', 0):,.2f}"])
             writer.writerow(['Final Capital', f"${summary.get('final_capital', 0):,.2f}"])
-            writer.writerow(['Total Return', f"{summary.get('total_return', 0):.2f}%"])
-            writer.writerow(['Sharpe Ratio', f"{summary.get('sharpe_ratio', 0):.2f}"])
-            writer.writerow(['Max Drawdown', f"{summary.get('max_drawdown', 0):.2f}%"])
-            writer.writerow(['Win Rate', f"{summary.get('win_rate', 0):.2f}%"])
+            writer.writerow(['Total Return', f"{total_return:.2f}%"])
+            writer.writerow(['Sharpe Ratio', f"{sharpe_ratio:.2f}"])
+            writer.writerow(['Max Drawdown', f"{max_drawdown:.2f}%"])
+            writer.writerow(['Win Rate', f"{win_rate:.2f}%"])
             writer.writerow(['Total Trades', len(trades)])
 
         logger.info(f"  Summary CSV: {summary_file}")
