@@ -249,17 +249,8 @@ def stop_paper_trading():
                 trades = current_trader.db.get_session_trades(current_trader.session_id)
                 logger.info(f"  총 거래: {len(trades)}회")
 
-                # 세션 종료 알림 전송
-                notifier.notify_session_end({
-                    'strategy_name': summary.get('strategy_name', 'Unknown'),
-                    'total_return': summary['total_return'],
-                    'sharpe_ratio': summary['sharpe_ratio'],
-                    'max_drawdown': summary['max_drawdown'],
-                    'win_rate': summary['win_rate'],
-                    'num_trades': len(trades)
-                })
-
-                # CSV 리포트 생성
+                # 리포트 생성 및 Slack 업로드
+                # (세션 종료 알림은 리포트 업로드와 함께 전송됨)
                 try:
                     report_gen = ReportGenerator(current_trader.db)
                     report_files = report_gen.generate_session_report(
@@ -272,12 +263,29 @@ def stop_paper_trading():
                     for format_name, file_path in report_files.items():
                         logger.info(f"  {format_name.upper()}: {file_path}")
 
-                    # 리포트 파일 경로를 Slack으로 전송
-                    report_msg = "📄 *리포트 생성 완료*\n\n"
-                    for format_name, file_path in report_files.items():
-                        report_msg += f"{format_name.upper()}: {file_path}\n"
+                    # 리포트 파일을 Slack에 업로드
+                    # report_files는 {'summary': 'path1', 'snapshots': 'path2', 'report': 'path3'} 형태
+                    file_paths = list(report_files.values())
 
-                    notifier.send_slack(report_msg, color='good')
+                    logger.info(f"📤 Slack으로 리포트 파일 업로드 중... ({len(file_paths)}개)")
+
+                    # 세션 요약과 함께 파일 업로드
+                    upload_success = notifier.notify_daily_report_with_files(
+                        session_summary={
+                            'strategy_name': summary.get('strategy_name', 'Unknown'),
+                            'total_return': summary['total_return'],
+                            'sharpe_ratio': summary['sharpe_ratio'],
+                            'max_drawdown': summary['max_drawdown'],
+                            'win_rate': summary['win_rate'],
+                            'num_trades': len(trades)
+                        },
+                        report_files=file_paths
+                    )
+
+                    if upload_success:
+                        logger.info("✓ Slack 리포트 업로드 완료")
+                    else:
+                        logger.warning("⚠ Slack 리포트 업로드 실패 (Bot Token/Channel 확인 필요)")
 
                 except Exception as e:
                     logger.error(f"✗ 리포트 생성 실패: {e}", exc_info=True)
