@@ -27,7 +27,7 @@ from dashboard.market_hours import MarketHours
 from dashboard.stock_symbols import StockSymbolDB
 import time
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import threading
 
 
