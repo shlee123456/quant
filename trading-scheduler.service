@@ -1,0 +1,19 @@
+[Unit]
+Description=Trading Bot Scheduler
+After=network.target
+
+[Service]
+Type=simple
+User=shlee
+WorkingDirectory=/Users/shlee/Documents/S/shlee-Source/crypto-trading-bot
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/bin/python3 /Users/shlee/Documents/S/shlee-Source/crypto-trading-bot/scheduler.py
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=append:/Users/shlee/Documents/S/shlee-Source/crypto-trading-bot/logs/scheduler_output.log
+StandardError=append:/Users/shlee/Documents/S/shlee-Source/crypto-trading-bot/logs/scheduler_error.log
+
+[Install]
+WantedBy=multi-user.target
