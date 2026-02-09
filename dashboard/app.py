@@ -1151,7 +1151,7 @@ def paper_trading_tab():
                             if st.checkbox(
                                 f"{symbol} - {stock_info['name']}",
                                 value=is_checked,
-                                key=f"pop_{symbol}"
+                                key=f"pop_{preset_name}_{symbol}"
                             ):
                                 if symbol not in st.session_state.temp_selected_stocks:
                                     st.session_state.temp_selected_stocks.append(symbol)
@@ -1220,7 +1220,7 @@ def paper_trading_tab():
                             if st.checkbox(
                                 f"{symbol} - {stock_info['name']}",
                                 value=is_checked,
-                                key=f"etf_{symbol}"
+                                key=f"etf_{category_name}_{symbol}"
                             ):
                                 if symbol not in st.session_state.temp_selected_stocks:
                                     st.session_state.temp_selected_stocks.append(symbol)
