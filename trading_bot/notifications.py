@@ -36,8 +36,9 @@ import requests
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from datetime import datetime
+from pathlib import Path
 
 
 logger = logging.getLogger(__name__)
@@ -55,14 +56,20 @@ class NotificationService:
     def __init__(
         self,
         slack_webhook_url: Optional[str] = None,
+        slack_bot_token: Optional[str] = None,
+        slack_channel: Optional[str] = None,
         email_config: Optional[Dict] = None
     ):
         """
         Initialize notification service
 
         Args:
-            slack_webhook_url: Slack incoming webhook URL
+            slack_webhook_url: Slack incoming webhook URL (for text messages)
                 Get from: https://api.slack.com/messaging/webhooks
+            slack_bot_token: Slack Bot User OAuth Token (for file uploads)
+                Get from: https://api.slack.com/apps → OAuth & Permissions
+                Required scopes: files:write, chat:write
+            slack_channel: Slack channel to post to (e.g., '#trading-alerts')
             email_config: Email SMTP configuration dict with keys:
                 - smtp_server: SMTP server address (e.g., 'smtp.gmail.com')
                 - smtp_port: SMTP port (e.g., 587 for TLS)
@@ -73,15 +80,22 @@ class NotificationService:
         """
         # Slack configuration
         self.slack_webhook_url = slack_webhook_url or os.getenv('SLACK_WEBHOOK_URL')
+        self.slack_bot_token = slack_bot_token or os.getenv('SLACK_BOT_TOKEN')
+        self.slack_channel = slack_channel or os.getenv('SLACK_CHANNEL', '#trading-alerts')
 
         # Email configuration
         self.email_config = email_config or self._load_email_config()
 
         # Log configuration
         if self.slack_webhook_url:
-            logger.info("✓ Slack notifications enabled")
+            logger.info("✓ Slack webhook enabled (text messages)")
         else:
-            logger.info("⚪ Slack notifications disabled (no webhook URL)")
+            logger.info("⚪ Slack webhook disabled (no webhook URL)")
+
+        if self.slack_bot_token:
+            logger.info("✓ Slack bot token enabled (file uploads)")
+        else:
+            logger.info("⚪ Slack bot token disabled (no bot token)")
 
         if self.email_config:
             logger.info("✓ Email notifications enabled")
@@ -429,3 +443,192 @@ class NotificationService:
             True if at least one notification sent successfully
         """
         return self.notify_daily_report(session_summary)
+
+    def upload_file_to_slack(
+        self,
+        file_path: str,
+        initial_comment: Optional[str] = None,
+        title: Optional[str] = None
+    ) -> bool:
+        """
+        Upload a file to Slack using Bot Token
+
+        Args:
+            file_path: Path to the file to upload
+            initial_comment: Optional message to include with the file
+            title: Optional title for the file (defaults to filename)
+
+        Returns:
+            True if uploaded successfully, False otherwise
+
+        Example:
+            notifier.upload_file_to_slack(
+                'reports/RSI_14_30_70_20260209_report.json',
+                initial_comment='📊 일일 트레이딩 리포트',
+                title='Daily Trading Report'
+            )
+        """
+        if not self.slack_bot_token:
+            logger.debug("Slack bot token not configured, skipping file upload")
+            return False
+
+        # Check if file exists
+        file_path_obj = Path(file_path)
+        if not file_path_obj.exists():
+            logger.error(f"✗ File not found: {file_path}")
+            return False
+
+        try:
+            # Import slack_sdk (lazy import to avoid dependency if not used)
+            try:
+                from slack_sdk import WebClient
+                from slack_sdk.errors import SlackApiError
+            except ImportError:
+                logger.error("✗ slack-sdk not installed. Run: pip install slack-sdk")
+                return False
+
+            client = WebClient(token=self.slack_bot_token)
+
+            # Use filename as title if not provided
+            if title is None:
+                title = file_path_obj.name
+
+            # Upload file
+            response = client.files_upload_v2(
+                channel=self.slack_channel,
+                file=str(file_path),
+                title=title,
+                initial_comment=initial_comment
+            )
+
+            if response['ok']:
+                logger.debug(f"✓ File uploaded to Slack: {file_path}")
+                return True
+            else:
+                logger.error(f"✗ Slack file upload failed: {response}")
+                return False
+
+        except Exception as e:
+            logger.error(f"✗ Slack file upload error: {e}")
+            return False
+
+    def upload_reports_to_slack(
+        self,
+        report_files: List[str],
+        session_summary: Optional[Dict] = None
+    ) -> bool:
+        """
+        Upload multiple report files to Slack with a summary message
+
+        Args:
+            report_files: List of file paths to upload
+            session_summary: Optional session summary dict for message formatting
+
+        Returns:
+            True if at least one file uploaded successfully
+
+        Example:
+            notifier.upload_reports_to_slack(
+                report_files=[
+                    'reports/RSI_14_30_70_summary.csv',
+                    'reports/RSI_14_30_70_snapshots.csv',
+                    'reports/RSI_14_30_70_report.json'
+                ],
+                session_summary={'total_return': 2.5, 'win_rate': 65.0}
+            )
+        """
+        if not self.slack_bot_token:
+            logger.debug("Slack bot token not configured, skipping file upload")
+            return False
+
+        # Format initial comment
+        if session_summary:
+            strategy = session_summary.get('strategy_name', 'Unknown')
+            total_return = session_summary.get('total_return', 0.0)
+            sharpe = session_summary.get('sharpe_ratio', 0.0)
+            max_dd = session_summary.get('max_drawdown', 0.0)
+            win_rate = session_summary.get('win_rate', 0.0)
+            num_trades = session_summary.get('num_trades', 0)
+
+            # Determine performance emoji
+            if total_return > 2:
+                emoji = '🚀'
+            elif total_return > 0:
+                emoji = '📈'
+            elif total_return > -2:
+                emoji = '📊'
+            else:
+                emoji = '📉'
+
+            comment = f"""
+{emoji} *일일 트레이딩 리포트*
+
+전략: {strategy}
+총 수익률: {total_return:+.2f}%
+샤프 비율: {sharpe:.2f}
+최대 낙폭: {max_dd:.2f}%
+승률: {win_rate:.1f}%
+총 거래: {num_trades}회
+
+날짜: {datetime.now().strftime('%Y-%m-%d')}
+파일 수: {len(report_files)}개
+            """.strip()
+        else:
+            comment = f"📊 트레이딩 리포트 ({len(report_files)}개 파일)"
+
+        # Upload each file
+        success_count = 0
+        for file_path in report_files:
+            if self.upload_file_to_slack(
+                file_path,
+                initial_comment=comment if success_count == 0 else None,  # Only first file gets comment
+                title=Path(file_path).name
+            ):
+                success_count += 1
+
+        if success_count > 0:
+            logger.info(f"✓ Uploaded {success_count}/{len(report_files)} files to Slack")
+            return True
+        else:
+            logger.error(f"✗ Failed to upload any files to Slack")
+            return False
+
+    def notify_daily_report_with_files(
+        self,
+        session_summary: Dict,
+        report_files: Optional[List[str]] = None
+    ) -> bool:
+        """
+        Send daily report notification with file attachments
+
+        Combines text notification (Webhook/Email) with file uploads (Bot Token)
+
+        Args:
+            session_summary: Session summary dict
+            report_files: Optional list of report file paths to upload
+
+        Returns:
+            True if at least one notification sent successfully
+
+        Example:
+            notifier.notify_daily_report_with_files(
+                session_summary={
+                    'strategy_name': 'RSI_14_70_30',
+                    'total_return': 2.5,
+                    'win_rate': 65.0
+                },
+                report_files=[
+                    'reports/RSI_14_30_70_summary.csv',
+                    'reports/RSI_14_30_70_report.json'
+                ]
+            )
+        """
+        # Send text notification (webhook or email)
+        text_sent = self.notify_daily_report(session_summary)
+
+        # Upload files if provided
+        files_sent = False
+        if report_files:
+            files_sent = self.upload_reports_to_slack(report_files, session_summary)
+
+        return text_sent or files_sent
