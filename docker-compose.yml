@@ -1,10 +1,10 @@
 services:
-  trading-bot:
+  trading-bot-dashboard:
     build:
       context: .
       dockerfile: Dockerfile
     image: trading-bot:latest
-    container_name: trading-bot
+    container_name: trading-bot-dashboard
 
     # Restart policy
     restart: unless-stopped
@@ -19,6 +19,8 @@ services:
       - ./data:/app/data
       # Log persistence
       - ./logs:/app/logs
+      # Reports persistence
+      - ./reports:/app/reports
       # Configuration files (optional)
       - ./config:/app/config:ro
       # Environment variables (read-only for security)
@@ -52,6 +54,58 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  trading-bot-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: trading-bot:latest
+    container_name: trading-bot-scheduler
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Override default command to run scheduler
+    command: ["python", "scheduler.py"]
+
+    # Volume mounts (same as dashboard for data sharing)
+    volumes:
+      # Data persistence (shared with dashboard)
+      - ./data:/app/data
+      # Log persistence
+      - ./logs:/app/logs
+      # Reports persistence
+      - ./reports:/app/reports
+      # Configuration files (optional)
+      - ./config:/app/config:ro
+      # Environment variables (read-only for security)
+      - ./.env:/app/.env:ro
+
+    # Environment variables from .env file
+    env_file:
+      - .env
+
+    # Additional environment variables
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Asia/Seoul  # Set timezone for scheduler
+
+    # Resource limits (optional, uncomment if needed)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1.0'
+    #       memory: 1G
+    #     reservations:
+    #       cpus: '0.25'
+    #       memory: 256M
 
     # Logging configuration
     logging:

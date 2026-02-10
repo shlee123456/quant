@@ -61,13 +61,10 @@ class ReportGenerator:
 
         Returns:
             Dict mapping format to file path
-            Example: {'csv': 'reports/session_123.csv', 'json': 'reports/session_123.json'}
+            Example: {'csv': 'reports/2026-02-09/session_123.csv', 'json': 'reports/2026-02-09/session_123.json'}
         """
         if formats is None:
             formats = ['csv', 'json']
-
-        # Create output directory if not exists
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
 
         # Get session data
         summary = self.db.get_session_summary(session_id)
@@ -78,18 +75,31 @@ class ReportGenerator:
         trades = self.db.get_session_trades(session_id)
         snapshots = self.db.get_session_snapshots(session_id)
 
+        # Extract date from session start_time and create date-based directory
+        start_time = summary.get('start_time', '')
+        if start_time:
+            # Parse date from start_time (format: YYYY-MM-DD HH:MM:SS)
+            date_str = start_time.split()[0]  # Extract YYYY-MM-DD
+        else:
+            # Fallback to current date
+            date_str = datetime.now().strftime('%Y-%m-%d')
+
+        # Create date-based subdirectory
+        date_output_dir = os.path.join(output_dir, date_str)
+        Path(date_output_dir).mkdir(parents=True, exist_ok=True)
+
         # Generate reports
         output_files = {}
 
         if 'csv' in formats:
             csv_path = self._generate_csv_report(
-                session_id, summary, trades, snapshots, output_dir
+                session_id, summary, trades, snapshots, date_output_dir
             )
             output_files['csv'] = csv_path
 
         if 'json' in formats:
             json_path = self._generate_json_report(
-                session_id, summary, trades, snapshots, output_dir
+                session_id, summary, trades, snapshots, date_output_dir
             )
             output_files['json'] = json_path
 
@@ -243,7 +253,9 @@ class ReportGenerator:
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
 
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        # Create date-based subdirectory
+        date_output_dir = os.path.join(output_dir, date)
+        Path(date_output_dir).mkdir(parents=True, exist_ok=True)
 
         # Get all sessions
         all_sessions = self.db.get_all_sessions()
@@ -259,7 +271,7 @@ class ReportGenerator:
             return ''
 
         # Generate summary CSV
-        summary_file = os.path.join(output_dir, f'daily_summary_{date}.csv')
+        summary_file = os.path.join(date_output_dir, f'daily_summary_{date}.csv')
 
         with open(summary_file, 'w', newline='', encoding='utf-8') as f:
             fieldnames = [

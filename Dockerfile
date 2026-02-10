@@ -42,9 +42,10 @@ COPY --from=builder /root/.local /usr/local
 COPY trading_bot/ ./trading_bot/
 COPY dashboard/ ./dashboard/
 COPY examples/ ./examples/
+COPY scheduler.py ./scheduler.py
 
-# Create directories for data and logs
-RUN mkdir -p /app/data /app/logs /app/config
+# Create directories for data, logs, and reports
+RUN mkdir -p /app/data /app/logs /app/config /app/reports
 
 # Create non-root user for security
 RUN useradd -m -u 1000 trader && \

@@ -59,9 +59,10 @@ docs/
 *.md
 !README.md
 
-# Data and logs (should be mounted as volumes)
+# Data, logs, and reports (should be mounted as volumes)
 data/
 logs/
+reports/
 *.log
 
 # Environment files
