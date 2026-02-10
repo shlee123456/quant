@@ -284,9 +284,12 @@ class TradingDatabase:
             return dict(row)
         return None
 
-    def get_all_sessions(self) -> List[Dict[str, Any]]:
+    def get_all_sessions(self, status_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Get all paper trading sessions
+
+        Args:
+            status_filter: Optional status filter ('active', 'completed', 'interrupted')
 
         Returns:
             List of session dictionaries
@@ -295,9 +298,16 @@ class TradingDatabase:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT * FROM paper_trading_sessions ORDER BY start_time DESC
-        """)
+        if status_filter:
+            cursor.execute("""
+                SELECT * FROM paper_trading_sessions
+                WHERE status = ?
+                ORDER BY start_time DESC
+            """, (status_filter,))
+        else:
+            cursor.execute("""
+                SELECT * FROM paper_trading_sessions ORDER BY start_time DESC
+            """)
 
         rows = cursor.fetchall()
         conn.close()
@@ -410,3 +420,101 @@ class TradingDatabase:
             signals.append(signal)
 
         return signals
+
+    def recover_zombie_sessions(self) -> int:
+        """
+        Recover zombie sessions (sessions that are 'active' but not running)
+
+        This should be called when the application starts to mark any
+        sessions that were interrupted by container restart or crash.
+
+        Returns:
+            Number of sessions recovered
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # Find all active sessions
+        cursor.execute("""
+            SELECT session_id FROM paper_trading_sessions
+            WHERE status = 'active'
+        """)
+
+        active_sessions = cursor.fetchall()
+        count = len(active_sessions)
+
+        if count > 0:
+            # Mark them as interrupted
+            cursor.execute("""
+                UPDATE paper_trading_sessions
+                SET status = 'interrupted',
+                    end_time = ?
+                WHERE status = 'active'
+            """, (datetime.now().isoformat(),))
+
+            conn.commit()
+
+        conn.close()
+        return count
+
+    def terminate_session(self, session_id: str, final_metrics: Optional[Dict[str, Any]] = None):
+        """
+        Manually terminate a session
+
+        Args:
+            session_id: Session identifier
+            final_metrics: Optional final performance metrics
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        updates = {
+            'status': 'terminated',
+            'end_time': datetime.now().isoformat()
+        }
+
+        if final_metrics:
+            updates.update(final_metrics)
+
+        # Build SET clause
+        set_clause = ", ".join([f"{key} = ?" for key in updates.keys()])
+        values = list(updates.values()) + [session_id]
+
+        cursor.execute(f"""
+            UPDATE paper_trading_sessions
+            SET {set_clause}
+            WHERE session_id = ?
+        """, values)
+
+        conn.commit()
+        conn.close()
+
+    def get_session_status_counts(self) -> Dict[str, int]:
+        """
+        Get count of sessions by status
+
+        Returns:
+            Dictionary mapping status to count
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT status, COUNT(*) as count
+            FROM paper_trading_sessions
+            GROUP BY status
+        """)
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return {row[0]: row[1] for row in rows}
+
+    def get_active_sessions(self) -> List[Dict[str, Any]]:
+        """
+        Get all currently active sessions
+
+        Returns:
+            List of active session dictionaries
+        """
+        return self.get_all_sessions(status_filter='active')

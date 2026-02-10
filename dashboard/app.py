@@ -29,6 +29,7 @@ from dashboard.scheduler_manager import SchedulerManager
 from dashboard.portfolio_summary import render_portfolio_summary
 from dashboard.market_timer import render_market_timer
 from dashboard.favorites import render_favorites_widget
+from dashboard.session_manager import render_session_manager
 import time
 from datetime import datetime, time as time_type
 from typing import Dict, Any, Optional, List
@@ -132,6 +133,17 @@ STRATEGY_CONFIGS = {
 
 def init_session_state():
     """Initialize session state variables"""
+    # Recover zombie sessions on first load
+    if 'zombie_recovered' not in st.session_state:
+        try:
+            db = TradingDatabase()
+            recovered = db.recover_zombie_sessions()
+            if recovered > 0:
+                st.toast(f"⚠️ 비정상 종료된 세션 {recovered}개를 감지하여 'interrupted' 처리했습니다.")
+        except Exception:
+            pass
+        st.session_state.zombie_recovered = True
+
     if 'config' not in st.session_state:
         st.session_state.config = Config()
     if 'data_handler' not in st.session_state:
@@ -3002,6 +3014,11 @@ def scheduler_tab():
     if auto_refresh:
         time.sleep(5)
         st.rerun()
+
+    st.markdown("---")
+
+    # 세션 관리 섹션
+    render_session_manager(lang)
 
 
 def main():
