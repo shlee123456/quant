@@ -28,9 +28,22 @@ def render_portfolio_summary(lang: str = 'ko') -> None:
     st.sidebar.markdown(f"### {title}")
 
     try:
+        # Get current prices for portfolio value calculation
+        broker = st.session_state.get('broker')
+        current_prices = {}
+
+        if broker:
+            for symbol in trader.positions.keys():
+                try:
+                    ticker = broker.fetch_ticker(symbol, overseas=True)
+                    if ticker and 'last' in ticker:
+                        current_prices[symbol] = ticker['last']
+                except Exception:
+                    pass
+
         # Get portfolio metrics
-        total_value = trader.get_portfolio_value()
-        cash_balance = trader.cash
+        total_value = trader.get_portfolio_value(current_prices)
+        cash_balance = trader.capital  # PaperTrader uses 'capital', not 'cash'
         initial_capital = trader.initial_capital
 
         # Calculate returns
@@ -75,12 +88,13 @@ def render_portfolio_summary(lang: str = 'ko') -> None:
     st.sidebar.markdown("---")
 
 
-def get_portfolio_details(trader: Any) -> Dict[str, Any]:
+def get_portfolio_details(trader: Any, current_prices: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
     """
     Get detailed portfolio information
 
     Args:
         trader: PaperTrader instance
+        current_prices: Optional dict of symbol to current price
 
     Returns:
         Dictionary with portfolio details
@@ -88,8 +102,11 @@ def get_portfolio_details(trader: Any) -> Dict[str, Any]:
     if trader is None:
         return {}
 
-    total_value = trader.get_portfolio_value()
-    cash_balance = trader.cash
+    if current_prices is None:
+        current_prices = {}
+
+    total_value = trader.get_portfolio_value(current_prices)
+    cash_balance = trader.capital  # PaperTrader uses 'capital', not 'cash'
     initial_capital = trader.initial_capital
 
     # Calculate metrics
