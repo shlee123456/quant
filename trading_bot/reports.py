@@ -44,6 +44,18 @@ class ReportGenerator:
         """
         self.db = db
 
+    def _sanitize_session_id(self, session_id: str) -> str:
+        """
+        세션 ID를 파일명에 안전한 형식으로 변환
+
+        Args:
+            session_id: Original session ID
+
+        Returns:
+            Sanitized session ID safe for filenames
+        """
+        return session_id.replace(':', '_').replace(' ', '_')
+
     def generate_session_report(
         self,
         session_id: str,
@@ -78,8 +90,17 @@ class ReportGenerator:
         # Extract date from session start_time and create date-based directory
         start_time = summary.get('start_time', '')
         if start_time:
-            # Parse date from start_time (format: YYYY-MM-DD HH:MM:SS)
-            date_str = start_time.split()[0]  # Extract YYYY-MM-DD
+            # Parse date from start_time (handles both ISO format and regular format)
+            # ISO format: 2026-02-09T23:30:01.853558
+            # Regular format: 2026-02-09 23:30:01
+            try:
+                if 'T' in start_time:
+                    date_str = start_time.split('T')[0]  # ISO format
+                else:
+                    date_str = start_time.split()[0]  # Regular format
+            except (IndexError, AttributeError):
+                logger.warning(f"Failed to parse start_time: {start_time}, using current date")
+                date_str = datetime.now().strftime('%Y-%m-%d')
         else:
             # Fallback to current date
             date_str = datetime.now().strftime('%Y-%m-%d')
@@ -125,7 +146,7 @@ class ReportGenerator:
         - {session_id}_snapshots.csv: Portfolio snapshots
         """
         # Sanitize session_id for filename
-        safe_session_id = session_id.replace(':', '_').replace(' ', '_')
+        safe_session_id = self._sanitize_session_id(session_id)
 
         # 1. Generate trades CSV
         trades_file = os.path.join(output_dir, f'{safe_session_id}_trades.csv')
@@ -180,11 +201,12 @@ class ReportGenerator:
             writer = csv.writer(f)
 
             # Write summary as key-value pairs
-            # Handle None values from database
-            total_return = summary.get('total_return') or 0.0
-            sharpe_ratio = summary.get('sharpe_ratio') or 0.0
-            max_drawdown = summary.get('max_drawdown') or 0.0
-            win_rate = summary.get('win_rate') or 0.0
+            # Handle None values from database (use 0.0 if None, but preserve 0 values)
+            total_return = summary.get('total_return', 0.0) if summary.get('total_return') is not None else 0.0
+            sharpe_ratio = summary.get('sharpe_ratio', 0.0) if summary.get('sharpe_ratio') is not None else 0.0
+            max_drawdown = summary.get('max_drawdown', 0.0) if summary.get('max_drawdown') is not None else 0.0
+            win_rate_value = summary.get('win_rate')
+            win_rate = win_rate_value if win_rate_value is not None else 0.0
 
             writer.writerow(['Metric', 'Value'])
             writer.writerow(['Session ID', session_id])
@@ -216,7 +238,7 @@ class ReportGenerator:
 
         Creates a single JSON file with all session data
         """
-        safe_session_id = session_id.replace(':', '_').replace(' ', '_')
+        safe_session_id = self._sanitize_session_id(session_id)
         json_file = os.path.join(output_dir, f'{safe_session_id}_report.json')
 
         # Combine all data

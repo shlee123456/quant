@@ -288,11 +288,12 @@ class NotificationService:
             True if at least one notification sent successfully
         """
         strategy = session_summary.get('strategy_name', 'Unknown')
-        total_return = session_summary.get('total_return', 0.0)
-        sharpe = session_summary.get('sharpe_ratio', 0.0)
-        max_dd = session_summary.get('max_drawdown', 0.0)
-        win_rate = session_summary.get('win_rate', 0.0)
-        num_trades = session_summary.get('num_trades', 0)
+        # Handle None values explicitly (get() returns None if value is None)
+        total_return = session_summary.get('total_return') or 0.0
+        sharpe = session_summary.get('sharpe_ratio') or 0.0
+        max_dd = session_summary.get('max_drawdown') or 0.0
+        win_rate = session_summary.get('win_rate') or 0.0
+        num_trades = session_summary.get('num_trades') or 0
 
         # Determine performance emoji
         if total_return > 2:
@@ -544,11 +545,12 @@ class NotificationService:
         # Format initial comment
         if session_summary:
             strategy = session_summary.get('strategy_name', 'Unknown')
-            total_return = session_summary.get('total_return', 0.0)
-            sharpe = session_summary.get('sharpe_ratio', 0.0)
-            max_dd = session_summary.get('max_drawdown', 0.0)
-            win_rate = session_summary.get('win_rate', 0.0)
-            num_trades = session_summary.get('num_trades', 0)
+            # Handle None values explicitly (get() returns None if value is None)
+            total_return = session_summary.get('total_return') or 0.0
+            sharpe = session_summary.get('sharpe_ratio') or 0.0
+            max_dd = session_summary.get('max_drawdown') or 0.0
+            win_rate = session_summary.get('win_rate') or 0.0
+            num_trades = session_summary.get('num_trades') or 0
 
             # Determine performance emoji
             if total_return > 2:
