@@ -91,11 +91,7 @@ def optimize_strategy():
         # 최적화 실행
         optimizer = StrategyOptimizer(initial_capital=10000.0)
         logger.info("그리드 서치 최적화 실행 중...")
-        results_df = optimizer.optimize(RSIStrategy, df, param_grid)
-
-        # 샤프 비율 기준 최적 결과 찾기
-        best_idx = results_df['sharpe_ratio'].idxmax()
-        best_result = results_df.loc[best_idx].to_dict()
+        best_result = optimizer.optimize(RSIStrategy, df, param_grid)
 
         logger.info(f"✓ 최적화 완료!")
         logger.info(f"  최적 파라미터: {best_result['params']}")
@@ -243,7 +239,12 @@ def stop_paper_trading():
                 logger.info(f"  총 수익률: {summary['total_return']:.2f}%")
                 logger.info(f"  샤프 비율: {summary['sharpe_ratio']:.2f}")
                 logger.info(f"  최대 낙폭: {summary['max_drawdown']:.2f}%")
-                logger.info(f"  승률: {summary['win_rate']:.2f}%")
+
+                # win_rate가 None일 수 있음 (매도 거래 없는 경우)
+                if summary['win_rate'] is not None:
+                    logger.info(f"  승률: {summary['win_rate']:.2f}%")
+                else:
+                    logger.info(f"  승률: N/A (매도 거래 없음)")
 
                 # 거래 횟수 조회
                 trades = current_trader.db.get_session_trades(current_trader.session_id)
@@ -276,7 +277,7 @@ def stop_paper_trading():
                             'total_return': summary['total_return'],
                             'sharpe_ratio': summary['sharpe_ratio'],
                             'max_drawdown': summary['max_drawdown'],
-                            'win_rate': summary['win_rate'],
+                            'win_rate': summary['win_rate'] if summary['win_rate'] is not None else 0.0,
                             'num_trades': len(trades)
                         },
                         report_files=file_paths

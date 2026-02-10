@@ -26,7 +26,7 @@ mkdir -p logs
 
 # 백그라운드로 실행
 echo "🚀 스케줄러 시작 중..."
-nohup python scheduler.py > logs/scheduler_output.log 2>&1 &
+nohup venv/bin/python scheduler.py > logs/scheduler_output.log 2>&1 &
 
 # PID 저장
 PID=$!
