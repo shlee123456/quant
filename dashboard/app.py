@@ -25,8 +25,12 @@ import plotly.graph_objects as go
 from dashboard.translations import get_text, get_strategy_name, get_strategy_desc
 from dashboard.market_hours import MarketHours
 from dashboard.stock_symbols import StockSymbolDB
+from dashboard.scheduler_manager import SchedulerManager
+from dashboard.portfolio_summary import render_portfolio_summary
+from dashboard.market_timer import render_market_timer
+from dashboard.favorites import render_favorites_widget
 import time
-from datetime import datetime
+from datetime import datetime, time as time_type
 from typing import Dict, Any, Optional, List
 import threading
 
@@ -462,6 +466,25 @@ def sidebar_config():
 
     st.sidebar.markdown("---")
 
+    # ============================================================================
+    # CONVENIENCE WIDGETS
+    # ============================================================================
+
+    # 1. Portfolio Summary (only when paper trading is active)
+    render_portfolio_summary(lang)
+
+    # 2. Market Hours & Timer (for stock market)
+    if st.session_state.get('market_type') == 'stock':
+        render_market_timer(lang)
+
+    # 3. Favorites (quick access to frequently traded stocks)
+    if st.session_state.get('market_type') == 'stock':
+        render_favorites_widget(lang)
+
+    # ============================================================================
+    # QUICK GUIDE
+    # ============================================================================
+
     # Quick info section
     st.sidebar.subheader("📌 빠른 안내" if lang == 'ko' else "📌 Quick Guide")
 
@@ -531,6 +554,66 @@ def backtest_tab():
     시뮬레이션 데이터 또는 실제 종목의 과거 데이터로 전략을 테스트하고 성능을 분석합니다.
     """)
 
+    # 프리셋이 적용된 후 다음 렌더링에서 플래그 초기화
+    # (사용자가 UI에서 값을 변경할 때 프리셋 값으로 되돌아가지 않도록)
+    if st.session_state.get('backtest_preset_just_loaded'):
+        st.session_state.backtest_preset_just_loaded = False
+        st.session_state.backtest_preset_loaded = False
+
+    # Preset selection section
+    st.markdown("---")
+    st.subheader("💾 전략 프리셋")
+
+    preset_manager = StrategyPresetManager()
+    preset_names = [p['name'] for p in preset_manager.list_presets()]
+
+    if preset_names:
+        col1, col2, col3 = st.columns([2, 1, 1])
+
+        with col1:
+            selected_preset = st.selectbox(
+                "저장된 프리셋 선택",
+                ["(새 설정)"] + preset_names,
+                key="backtest_preset_select",
+                help="Paper Trading에서 저장한 프리셋을 불러옵니다"
+            )
+
+        with col2:
+            load_preset_btn = st.button(
+                "📥 불러오기",
+                disabled=(selected_preset == "(새 설정)"),
+                key="backtest_load_preset",
+                use_container_width=True
+            )
+
+        with col3:
+            if selected_preset != "(새 설정)":
+                preset = preset_manager.load_preset(selected_preset)
+                with st.expander("ℹ️ 프리셋 정보"):
+                    st.markdown(f"**전략**: {preset['strategy']}")
+                    st.markdown(f"**종목**: {', '.join(preset['symbols'][:3])}..." if len(preset['symbols']) > 3 else f"**종목**: {', '.join(preset['symbols'])}")
+                    st.markdown(f"**초기 자본**: ${preset['initial_capital']:,.0f}")
+                    if preset.get('description'):
+                        st.caption(preset['description'])
+
+        # Load preset when button clicked
+        if load_preset_btn and selected_preset != "(새 설정)":
+            preset = preset_manager.load_preset(selected_preset)
+
+            # 세션 상태에 프리셋 데이터 저장
+            st.session_state.backtest_preset_loaded = True
+            st.session_state.backtest_preset_just_loaded = True
+            st.session_state.backtest_preset_strategy = preset['strategy']
+            st.session_state.backtest_preset_params = preset['strategy_params']
+            st.session_state.backtest_preset_capital = preset['initial_capital']
+            st.session_state.backtest_preset_symbols = preset['symbols']
+
+            st.success(f"✅ 프리셋 '{selected_preset}' 불러오기 완료!")
+            st.rerun()
+
+    else:
+        st.info("💡 Paper Trading 탭에서 전략을 저장하면 여기서 불러올 수 있습니다.")
+
     # Configuration section - all in one tab
     st.markdown("---")
     st.subheader("⚙️ 백테스팅 설정")
@@ -540,10 +623,18 @@ def backtest_tab():
     with col1:
         # Strategy selection
         strategy_options = list(STRATEGY_CONFIGS.keys())
+
+        # 프리셋이 로드되었으면 해당 전략을 기본값으로 설정
+        default_strategy_index = 0
+        if st.session_state.get('backtest_preset_loaded'):
+            preset_strategy = st.session_state.backtest_preset_strategy
+            if preset_strategy in strategy_options:
+                default_strategy_index = strategy_options.index(preset_strategy)
+
         selected_strategy = st.selectbox(
             "전략 선택",
             options=strategy_options,
-            index=0,
+            index=default_strategy_index,
             key="backtest_strategy_select"
         )
 
@@ -552,11 +643,16 @@ def backtest_tab():
 
     with col2:
         # Initial capital
+        # 프리셋이 로드되었으면 해당 초기 자본을 기본값으로 설정
+        default_capital = 10000.0
+        if st.session_state.get('backtest_preset_loaded'):
+            default_capital = st.session_state.backtest_preset_capital
+
         initial_capital = st.number_input(
             "초기 자본 ($)",
             min_value=100.0,
             max_value=1000000.0,
-            value=10000.0,
+            value=default_capital,
             step=1000.0,
             key="backtest_capital"
         )
@@ -569,14 +665,25 @@ def backtest_tab():
     param_config = STRATEGY_CONFIGS[selected_strategy]['params']
     param_cols = st.columns(min(len(param_config), 3))
 
+    # 프리셋 파라미터 가져오기
+    preset_params = {}
+    if st.session_state.get('backtest_preset_loaded'):
+        preset_params = st.session_state.get('backtest_preset_params', {})
+
     for idx, (param_name, config) in enumerate(param_config.items()):
         with param_cols[idx % 3]:
+            # 프리셋에 해당 파라미터가 있으면 그 값을 사용, 없으면 기본값 사용
+            default_value = preset_params.get(param_name, config['default'])
+
+            # 범위 내로 제한
+            default_value = max(config['min'], min(config['max'], default_value))
+
             if config.get('step'):
                 strategy_params[param_name] = st.slider(
                     config['label'],
                     min_value=config['min'],
                     max_value=config['max'],
-                    value=config['default'],
+                    value=default_value,
                     step=config['step'],
                     key=f"backtest_{param_name}"
                 )
@@ -585,7 +692,7 @@ def backtest_tab():
                     config['label'],
                     min_value=config['min'],
                     max_value=config['max'],
-                    value=config['default'],
+                    value=default_value,
                     key=f"backtest_{param_name}"
                 )
 
@@ -630,9 +737,16 @@ def backtest_tab():
         col1, col2 = st.columns(2)
 
         with col1:
+            # 프리셋이 로드되었으면 첫 번째 종목을 기본값으로 사용
+            default_symbol = "AAPL"
+            if st.session_state.get('backtest_preset_loaded'):
+                preset_symbols = st.session_state.get('backtest_preset_symbols', [])
+                if preset_symbols:
+                    default_symbol = preset_symbols[0]
+
             symbol = st.text_input(
                 "종목 심볼",
-                value="AAPL",
+                value=default_symbol,
                 key="backtest_symbol",
                 help="미국 주식 심볼 (예: AAPL, MSFT, GOOGL, TSLA, PLTR)"
             ).upper()
@@ -2568,6 +2682,328 @@ def display_strategy_indicators(info: Dict):
             st.metric(display_key, display_value)
 
 
+def scheduler_tab():
+    """
+    자동 스케줄러 탭
+
+    대시보드 내부에서 실행되는 스케줄러를 관리합니다.
+    - 스케줄 시작/중지
+    - 스케줄 시간 설정
+    - 실시간 로그 표시
+    - 전략 설정
+    """
+    lang = st.session_state.language
+
+    st.header("⏰ 자동 스케줄러")
+    st.markdown("""
+    미국 시장 시간에 맞춰 자동으로 전략 최적화, 페이퍼 트레이딩 시작/중지를 실행합니다.
+    """)
+
+    # 세션 상태에 스케줄러 매니저 초기화
+    if 'scheduler_manager' not in st.session_state:
+        st.session_state.scheduler_manager = SchedulerManager()
+
+    manager = st.session_state.scheduler_manager
+
+    # 상태 조회
+    status = manager.get_status()
+
+    st.markdown("---")
+
+    # 스케줄러 상태 표시
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if status['running']:
+            st.success("✅ 스케줄러 실행 중")
+        else:
+            st.error("⏸️ 스케줄러 중지됨")
+
+    with col2:
+        if status['trading_active']:
+            st.info("🔄 트레이딩 세션 활성")
+        else:
+            st.info("💤 트레이딩 세션 없음")
+
+    with col3:
+        if status['running'] and status['next_run_time']:
+            st.metric("다음 실행", status['next_run_time'][:16])
+        else:
+            st.metric("다음 실행", "없음")
+
+    st.markdown("---")
+
+    # 제어 버튼
+    col1, col2, col3 = st.columns([1, 1, 2])
+
+    with col1:
+        if st.button("▶️ 스케줄러 시작", disabled=status['running'], use_container_width=True):
+            result = manager.start()
+            if result['success']:
+                st.success(result['message'])
+                st.rerun()
+            else:
+                st.error(f"{result['message']}: {result['error']}")
+
+    with col2:
+        if st.button("⏹️ 스케줄러 중지", disabled=not status['running'], use_container_width=True):
+            result = manager.stop()
+            if result['success']:
+                st.success(result['message'])
+                st.rerun()
+            else:
+                st.error(f"{result['message']}: {result['error']}")
+
+    with col3:
+        if st.button("🗑️ 로그 초기화", use_container_width=True):
+            manager.clear_logs()
+            st.success("로그가 초기화되었습니다.")
+            st.rerun()
+
+    st.markdown("---")
+
+    # 스케줄 설정
+    with st.expander("⚙️ 스케줄 시간 설정", expanded=False):
+        st.markdown("**스케줄 시간 (Asia/Seoul - KST)**")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            optimize_time = st.time_input(
+                "전략 최적화",
+                value=manager.schedule_config['optimize_time'],
+                help="장 시작 전 전략 파라미터 최적화"
+            )
+
+        with col2:
+            start_time = st.time_input(
+                "트레이딩 시작",
+                value=manager.schedule_config['start_time'],
+                help="미국 시장 개장 시각 (23:30 KST)"
+            )
+
+        with col3:
+            stop_time = st.time_input(
+                "트레이딩 종료",
+                value=manager.schedule_config['stop_time'],
+                help="미국 시장 마감 시각 (06:00 KST)"
+            )
+
+        if st.button("스케줄 시간 업데이트"):
+            result = manager.update_schedule(optimize_time, start_time, stop_time)
+            if result['success']:
+                st.success(result['message'])
+                st.rerun()
+            else:
+                st.error(f"{result['message']}: {result['error']}")
+
+    # 프리셋 불러오기
+    with st.expander("💾 프리셋 불러오기", expanded=True):
+        preset_mgr = StrategyPresetManager()
+        all_presets = preset_mgr.list_presets()
+        preset_names = [p['name'] for p in all_presets]
+
+        if preset_names:
+            col_p1, col_p2 = st.columns([3, 1])
+
+            with col_p1:
+                selected_preset = st.selectbox(
+                    "저장된 프리셋 선택",
+                    ["(수동 설정)"] + preset_names,
+                    key="scheduler_preset_select",
+                    help="Paper Trading에서 저장한 프리셋을 불러와 스케줄러에 적용합니다"
+                )
+
+            with col_p2:
+                load_preset_btn = st.button(
+                    "📥 불러오기",
+                    disabled=(selected_preset == "(수동 설정)"),
+                    key="scheduler_load_preset",
+                    use_container_width=True
+                )
+
+            if load_preset_btn and selected_preset != "(수동 설정)":
+                if manager.load_from_preset(selected_preset):
+                    st.success(f"✅ 프리셋 '{selected_preset}' → 스케줄러에 적용 완료!")
+                    st.rerun()
+                else:
+                    st.error(f"프리셋 '{selected_preset}' 불러오기 실패")
+
+            # 현재 로드된 프리셋 표시
+            if manager.loaded_preset_name:
+                st.info(f"📌 현재 적용된 프리셋: **{manager.loaded_preset_name}**")
+
+            # 프리셋 상세 정보 표시
+            if selected_preset != "(수동 설정)":
+                preset_data = next((p for p in all_presets if p['name'] == selected_preset), None)
+                if preset_data:
+                    with st.expander("ℹ️ 프리셋 정보"):
+                        st.markdown(f"**전략**: {preset_data['strategy']}")
+                        st.markdown(f"**종목**: {', '.join(preset_data['symbols'][:5])}")
+                        st.markdown(f"**초기 자본**: ${preset_data['initial_capital']:,.0f}")
+                        st.markdown(f"**포지션**: {preset_data['position_size']:.0%}")
+                        st.markdown(f"**손절/익절**: {preset_data['stop_loss_pct']:.0%} / {preset_data['take_profit_pct']:.0%}")
+                        if preset_data.get('description'):
+                            st.caption(preset_data['description'])
+                        st.markdown(f"**파라미터**: `{preset_data['strategy_params']}`")
+        else:
+            st.info("💡 저장된 프리셋이 없습니다. Paper Trading 탭에서 프리셋을 먼저 저장하세요!")
+
+    # 전략 설정
+    with st.expander("🎯 전략 설정 (수동)", expanded=False):
+        st.markdown("**자동 트레이딩 전략 설정** (프리셋 대신 수동으로 설정)")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # 현재 매니저 전략에 맞는 기본 인덱스 찾기
+            scheduler_strategy_options = ["RSI+MACD Combo Strategy", "RSI Strategy", "MACD Strategy", "Bollinger Bands"]
+            default_idx = 0
+            if manager.strategy_name in scheduler_strategy_options:
+                default_idx = scheduler_strategy_options.index(manager.strategy_name)
+
+            strategy_name = st.selectbox(
+                "전략",
+                scheduler_strategy_options,
+                index=default_idx,
+                help="자동 실행할 전략 선택"
+            )
+
+            # 종목 선택
+            from dashboard.stock_symbols import StockSymbolDB
+            symbol_db = StockSymbolDB()
+
+            # DataFrame에서 직접 가져오기
+            all_symbols_df = symbol_db.df[['symbol', 'name', 'sector']].copy()
+            symbol_options = [f"{row['symbol']} - {row['name']}" for _, row in all_symbols_df.iterrows()]
+
+            # 기본 종목 찾기
+            default_indices = []
+            for sym in manager.symbols:
+                matching = all_symbols_df[all_symbols_df['symbol'] == sym].index.tolist()
+                if matching:
+                    default_indices.append(matching[0])
+
+            selected_indices = st.multiselect(
+                "종목 선택 (최대 7개)",
+                range(len(all_symbols_df)),
+                default=default_indices[:5],
+                format_func=lambda i: symbol_options[i],
+                help="자동 트레이딩 종목 (최대 7개)"
+            )
+
+            symbols = [all_symbols_df.iloc[i]['symbol'] for i in selected_indices]
+
+        with col2:
+            initial_capital = st.number_input(
+                "초기 자본 ($)",
+                min_value=1000.0,
+                max_value=1000000.0,
+                value=manager.initial_capital,
+                step=1000.0
+            )
+
+            position_size = st.slider(
+                "포지션 크기",
+                min_value=0.1,
+                max_value=0.5,
+                value=manager.position_size,
+                step=0.05,
+                format="%.0f%%",
+                help="종목당 투자 비율"
+            )
+
+            stop_loss_pct = st.slider(
+                "손절 (%)",
+                min_value=1.0,
+                max_value=10.0,
+                value=manager.stop_loss_pct * 100,
+                step=0.5,
+                help="손실률"
+            ) / 100
+
+            take_profit_pct = st.slider(
+                "익절 (%)",
+                min_value=2.0,
+                max_value=20.0,
+                value=manager.take_profit_pct * 100,
+                step=0.5,
+                help="수익률"
+            ) / 100
+
+        if st.button("전략 설정 저장"):
+            manager.update_strategy_config(
+                strategy_name=strategy_name,
+                symbols=symbols,
+                initial_capital=initial_capital,
+                position_size=position_size,
+                stop_loss_pct=stop_loss_pct,
+                take_profit_pct=take_profit_pct
+            )
+            st.success("전략 설정이 저장되었습니다.")
+
+    st.markdown("---")
+
+    # 스케줄 정보 표시
+    st.subheader("📅 스케줄 정보")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**현재 스케줄 (KST)**")
+        schedule_data = [
+            {"시간": manager.schedule_config['optimize_time'].strftime('%H:%M'), "작업": "전략 최적화", "설명": "장 시작 전 파라미터 최적화"},
+            {"시간": manager.schedule_config['start_time'].strftime('%H:%M'), "작업": "트레이딩 시작", "설명": "미국 시장 개장"},
+            {"시간": manager.schedule_config['stop_time'].strftime('%H:%M'), "작업": "트레이딩 종료", "설명": "미국 시장 마감, 리포트 생성"}
+        ]
+        st.dataframe(schedule_data, use_container_width=True, hide_index=True)
+
+    with col2:
+        st.markdown("**미국 시장 시간**")
+        market_info = [
+            {"구분": "정규장 개장", "시간": "23:30 KST (09:30 EST)"},
+            {"구분": "정규장 마감", "시간": "06:00 KST (16:00 EST)"},
+            {"구분": "타임존", "시간": "US/Eastern"}
+        ]
+        st.dataframe(market_info, use_container_width=True, hide_index=True)
+
+    # 현재 실행 중인 작업
+    if status['running'] and status['jobs']:
+        st.markdown("**등록된 작업**")
+        jobs_data = []
+        for job in status['jobs']:
+            jobs_data.append({
+                "작업 이름": job['name'],
+                "다음 실행 시간": job['next_run_time'][:19] if job['next_run_time'] else "없음"
+            })
+        st.dataframe(jobs_data, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # 실시간 로그 표시
+    st.subheader("📋 실시간 로그")
+
+    # 로그 줄 수 선택
+    log_lines = st.slider("표시할 로그 줄 수", min_value=10, max_value=500, value=100, step=10)
+
+    # 자동 새로고침 체크박스
+    auto_refresh = st.checkbox("자동 새로고침 (5초)", value=False)
+
+    # 로그 표시
+    logs = manager.get_logs(lines=log_lines)
+
+    if logs:
+        log_text = "\n".join(logs)
+        st.code(log_text, language="log", line_numbers=False)
+    else:
+        st.info("로그가 없습니다. 스케줄러를 시작하면 로그가 표시됩니다.")
+
+    # 자동 새로고침
+    if auto_refresh:
+        time.sleep(5)
+        st.rerun()
+
+
 def main():
     """Main application"""
     init_session_state()
@@ -2584,9 +3020,10 @@ def main():
 
     # Main tabs
     # Reordered tabs - Paper Trading is the main feature, so it comes first
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "🎮 " + get_text('tab_paper', lang),           # Main feature: Paper Trading
         "📊 전략 & 세션 비교",                          # Combined comparison
+        "⏰ 자동 스케줄러",                             # Automated Scheduler
         "📈 " + get_text('tab_quotes', lang),          # Real-time quotes
         "📉 " + get_text('tab_backtest', lang),        # Advanced: Backtesting
         "🔴 " + get_text('tab_live', lang),            # Advanced: Live Monitor
@@ -2614,12 +3051,15 @@ def main():
             strategy_comparison_tab()
 
     with tab3:
-        realtime_quotes_tab()
+        scheduler_tab()
 
     with tab4:
-        backtest_tab()
+        realtime_quotes_tab()
 
     with tab5:
+        backtest_tab()
+
+    with tab6:
         live_monitor_tab()
 
     # Footer
