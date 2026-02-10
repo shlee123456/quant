@@ -2732,8 +2732,9 @@ def scheduler_tab():
             st.error("⏸️ 스케줄러 중지됨")
 
     with col2:
-        if status['trading_active']:
-            st.info("🔄 트레이딩 세션 활성")
+        session_count = status.get('active_session_count', 0)
+        if session_count > 0:
+            st.info(f"🔄 활성 세션: {session_count}개")
         else:
             st.info("💤 트레이딩 세션 없음")
 
@@ -2989,6 +2990,68 @@ def scheduler_tab():
                 "다음 실행 시간": job['next_run_time'][:19] if job['next_run_time'] else "없음"
             })
         st.dataframe(jobs_data, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # 활성 세션 목록
+    st.subheader("📂 활성 세션 목록")
+
+    active_sessions = status.get('active_sessions', [])
+
+    if active_sessions:
+        for session_info in active_sessions:
+            sid = session_info['session_id']
+            s_name = session_info.get('strategy_name', 'Unknown')
+            s_symbols = session_info.get('symbols', [])
+            s_start = session_info.get('start_time', None)
+            start_str = s_start.strftime('%H:%M') if hasattr(s_start, 'strftime') else str(s_start)[:16] if s_start else '-'
+            symbols_str = ', '.join(s_symbols[:3])
+            if len(s_symbols) > 3:
+                symbols_str += f' 외 {len(s_symbols) - 3}개'
+
+            col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns([2, 2, 2, 1.5, 1])
+
+            with col_s1:
+                st.text(f"{sid[:12]}...")
+            with col_s2:
+                st.text(s_name)
+            with col_s3:
+                st.text(symbols_str)
+            with col_s4:
+                st.text(start_str)
+            with col_s5:
+                if st.button("🛑", key=f"stop_session_{sid}", help=f"세션 {sid[:8]} 중지"):
+                    manager.stop_single_session(sid)
+                    st.success(f"세션 '{sid[:12]}' 중지 완료")
+                    st.rerun()
+
+        # 전체 중지 / 세션 추가 버튼
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
+
+        with col_btn1:
+            if st.button("▶️ 세션 추가 시작", use_container_width=True, help="현재 설정으로 새 세션을 즉시 시작합니다"):
+                new_id = manager.start_manual_session()
+                if new_id:
+                    st.success(f"새 세션 시작: {new_id[:12]}")
+                else:
+                    st.error("세션 시작 실패")
+                st.rerun()
+
+        with col_btn2:
+            if st.button("⏹️ 모두 중지", use_container_width=True, help="모든 활성 세션을 일괄 중지합니다"):
+                manager.stop_paper_trading()
+                st.success("모든 세션 중지 완료")
+                st.rerun()
+    else:
+        st.info("활성 세션이 없습니다.")
+
+        if st.button("▶️ 세션 추가 시작", help="현재 설정으로 새 세션을 즉시 시작합니다"):
+            new_id = manager.start_manual_session()
+            if new_id:
+                st.success(f"새 세션 시작: {new_id[:12]}")
+            else:
+                st.error("세션 시작 실패")
+            st.rerun()
 
     st.markdown("---")
 
