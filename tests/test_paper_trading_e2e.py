@@ -27,6 +27,9 @@ from trading_bot.strategies.macd_strategy import MACDStrategy
 from trading_bot.simulation_data import SimulationDataGenerator
 from trading_bot.data_handler import DataHandler
 
+# 테스트에서 사용할 기본 심볼
+SYMBOL = 'BTC/USDT'
+
 
 class TestPaperTradingE2E:
     """End-to-end tests for paper trading"""
@@ -76,6 +79,7 @@ class TestPaperTradingE2E:
 
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=data_handler,
             initial_capital=10000.0,
             position_size=0.95,
@@ -84,9 +88,9 @@ class TestPaperTradingE2E:
 
         assert trader.initial_capital == 10000.0
         assert trader.capital == 10000.0
-        assert trader.position == 0
-        assert trader.entry_price == 0
-        assert trader.last_signal == 0
+        assert trader.positions[SYMBOL] == 0
+        assert trader.entry_prices[SYMBOL] == 0
+        assert trader.last_signals[SYMBOL] == 0
         assert trader.trades == []
         assert trader.equity_history == []
         assert trader.is_running is False
@@ -96,6 +100,7 @@ class TestPaperTradingE2E:
         strategy = MovingAverageCrossover(fast_period=10, slow_period=20)
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=mock_data_handler,
             initial_capital=10000.0,
             position_size=0.95,
@@ -105,16 +110,16 @@ class TestPaperTradingE2E:
         # Execute buy at $100
         buy_price = 100.0
         buy_time = datetime(2024, 1, 1, 12, 0)
-        trader.execute_buy(buy_price, buy_time)
+        trader.execute_buy(SYMBOL, buy_price, buy_time)
 
         # Check position and capital
         trade_capital = 10000.0 * 0.95  # $9500
         expected_position = trade_capital / buy_price * (1 - 0.001)  # 94.905
         expected_capital = 10000.0 - trade_capital  # $500
 
-        assert trader.position == pytest.approx(expected_position, rel=1e-4)
+        assert trader.positions[SYMBOL] == pytest.approx(expected_position, rel=1e-4)
         assert trader.capital == pytest.approx(expected_capital, rel=1e-4)
-        assert trader.entry_price == buy_price
+        assert trader.entry_prices[SYMBOL] == buy_price
 
         # Check trade was recorded
         assert len(trader.trades) == 1
@@ -127,6 +132,7 @@ class TestPaperTradingE2E:
         strategy = MovingAverageCrossover(fast_period=10, slow_period=20)
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=mock_data_handler,
             initial_capital=10000.0,
             position_size=0.95,
@@ -135,19 +141,19 @@ class TestPaperTradingE2E:
 
         # First buy at $100
         buy_price = 100.0
-        trader.execute_buy(buy_price, datetime(2024, 1, 1, 12, 0))
+        trader.execute_buy(SYMBOL, buy_price, datetime(2024, 1, 1, 12, 0))
 
         # Record position before sell
-        position_before_sell = trader.position
+        position_before_sell = trader.positions[SYMBOL]
 
         # Then sell at $110 (10% profit)
         sell_price = 110.0
         sell_time = datetime(2024, 1, 1, 18, 0)
-        trader.execute_sell(sell_price, sell_time)
+        trader.execute_sell(SYMBOL, sell_price, sell_time)
 
         # Check position closed
-        assert trader.position == 0
-        assert trader.entry_price == 0
+        assert trader.positions[SYMBOL] == 0
+        assert trader.entry_prices[SYMBOL] == 0
 
         # Check capital includes profit
         # Sale proceeds = position * sell_price * (1 - commission)
@@ -166,10 +172,11 @@ class TestPaperTradingE2E:
         assert sell_trade['pnl'] > 0  # Profitable trade
 
     def test_full_trading_cycle(self, mock_data_handler, trending_data):
-        """Test complete trading cycle: data → signal → order → balance update"""
+        """Test complete trading cycle: data -> signal -> order -> balance update"""
         strategy = MovingAverageCrossover(fast_period=5, slow_period=10)
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=mock_data_handler,
             initial_capital=10000.0,
             position_size=0.95,
@@ -179,7 +186,7 @@ class TestPaperTradingE2E:
         initial_capital = trader.capital
 
         # Execute one update cycle (should trigger signals on trending data)
-        trader.update('BTC/USDT', '1h')
+        trader.update(SYMBOL, '1h')
 
         # Should have recorded equity history
         assert len(trader.equity_history) > 0
@@ -193,11 +200,11 @@ class TestPaperTradingE2E:
 
         # Get portfolio value
         current_price = trending_data.iloc[-1]['close']
-        portfolio_value = trader.get_portfolio_value(current_price)
+        portfolio_value = trader.get_portfolio_value({SYMBOL: current_price})
 
         # Portfolio value should equal capital + position value
-        if trader.position > 0:
-            expected_value = trader.capital + (trader.position * current_price)
+        if trader.positions[SYMBOL] > 0:
+            expected_value = trader.capital + (trader.positions[SYMBOL] * current_price)
         else:
             expected_value = trader.capital
 
@@ -208,6 +215,7 @@ class TestPaperTradingE2E:
         strategy = MovingAverageCrossover(fast_period=5, slow_period=10)
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=mock_data_handler,
             initial_capital=10000.0,
             position_size=0.95,
@@ -216,7 +224,7 @@ class TestPaperTradingE2E:
 
         # Simulate multiple updates (each update gets full data from handler)
         for i in range(5):
-            trader.update('BTC/USDT', '1h')
+            trader.update(SYMBOL, '1h')
 
         # Should have equity history for each update
         assert len(trader.equity_history) == 5
@@ -233,6 +241,7 @@ class TestPaperTradingE2E:
         strategy = MovingAverageCrossover(fast_period=5, slow_period=10)
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=mock_data_handler,
             initial_capital=10000.0,
             position_size=0.95,
@@ -240,11 +249,11 @@ class TestPaperTradingE2E:
         )
 
         # Execute first update
-        trader.update('BTC/USDT', '1h')
+        trader.update(SYMBOL, '1h')
         trades_after_first = len(trader.trades)
 
         # Execute second update with same data (should have same signal)
-        trader.update('BTC/USDT', '1h')
+        trader.update(SYMBOL, '1h')
         trades_after_second = len(trader.trades)
 
         # Should not create duplicate trades if signal hasn't changed
@@ -256,26 +265,27 @@ class TestPaperTradingE2E:
         strategy = MovingAverageCrossover(fast_period=10, slow_period=20)
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=mock_data_handler,
             initial_capital=10000.0
         )
 
         # Test with no position (flat)
-        assert trader.get_portfolio_value(100.0) == 10000.0
+        assert trader.get_portfolio_value({SYMBOL: 100.0}) == 10000.0
 
         # Execute buy
-        trader.execute_buy(100.0, datetime.now())
+        trader.execute_buy(SYMBOL, 100.0, datetime.now())
 
         # Test with position at same price
-        portfolio_at_entry = trader.get_portfolio_value(100.0)
+        portfolio_at_entry = trader.get_portfolio_value({SYMBOL: 100.0})
         assert portfolio_at_entry == pytest.approx(10000.0, rel=0.01)  # ~initial (minus commission)
 
         # Test with position at higher price
-        portfolio_at_profit = trader.get_portfolio_value(110.0)
+        portfolio_at_profit = trader.get_portfolio_value({SYMBOL: 110.0})
         assert portfolio_at_profit > 10000.0  # Should be profitable
 
         # Test with position at lower price
-        portfolio_at_loss = trader.get_portfolio_value(90.0)
+        portfolio_at_loss = trader.get_portfolio_value({SYMBOL: 90.0})
         assert portfolio_at_loss < 10000.0  # Should be at loss
 
     def test_trade_dataframe_export(self, mock_data_handler, trending_data):
@@ -283,13 +293,14 @@ class TestPaperTradingE2E:
         strategy = MovingAverageCrossover(fast_period=5, slow_period=10)
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=mock_data_handler,
             initial_capital=10000.0
         )
 
         # Execute some updates
         for _ in range(3):
-            trader.update('BTC/USDT', '1h')
+            trader.update(SYMBOL, '1h')
 
         # Get trades DataFrame
         trades_df = trader.get_trades_df()
@@ -309,13 +320,14 @@ class TestPaperTradingE2E:
         strategy = MovingAverageCrossover(fast_period=5, slow_period=10)
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=mock_data_handler,
             initial_capital=10000.0
         )
 
         # Execute some updates
         for _ in range(3):
-            trader.update('BTC/USDT', '1h')
+            trader.update(SYMBOL, '1h')
 
         # Get equity DataFrame
         equity_df = trader.get_equity_df()
@@ -342,12 +354,13 @@ class TestPaperTradingE2E:
 
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=mock_handler,
             initial_capital=10000.0
         )
 
         # Execute update
-        trader.update('BTC/USDT', '1h')
+        trader.update(SYMBOL, '1h')
 
         # Should work without errors
         assert len(trader.equity_history) > 0
@@ -362,12 +375,13 @@ class TestPaperTradingE2E:
 
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=mock_handler,
             initial_capital=10000.0
         )
 
         # Execute update
-        trader.update('BTC/USDT', '1h')
+        trader.update(SYMBOL, '1h')
 
         # Should work without errors
         assert len(trader.equity_history) > 0
@@ -382,12 +396,13 @@ class TestPaperTradingE2E:
 
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=empty_handler,
             initial_capital=10000.0
         )
 
         # Should not raise error
-        trader.update('BTC/USDT', '1h')
+        trader.update(SYMBOL, '1h')
 
         # Should not create equity history for empty data
         assert len(trader.equity_history) == 0
@@ -397,6 +412,7 @@ class TestPaperTradingE2E:
         strategy = MovingAverageCrossover(fast_period=10, slow_period=20)
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=mock_data_handler,
             initial_capital=10000.0,
             position_size=0.95,
@@ -405,17 +421,17 @@ class TestPaperTradingE2E:
 
         # Buy at $100
         buy_price = 100.0
-        trader.execute_buy(buy_price, datetime.now())
+        trader.execute_buy(SYMBOL, buy_price, datetime.now())
 
         # With 1% commission, position should be 1% smaller
         trade_capital = 9500.0
         expected_position = trade_capital / buy_price * 0.99  # 99% after commission
 
-        assert trader.position == pytest.approx(expected_position, rel=1e-4)
+        assert trader.positions[SYMBOL] == pytest.approx(expected_position, rel=1e-4)
 
         # Sell at same price (should result in loss due to commission)
-        initial_position = trader.position
-        trader.execute_sell(buy_price, datetime.now())
+        initial_position = trader.positions[SYMBOL]
+        trader.execute_sell(SYMBOL, buy_price, datetime.now())
 
         # Capital should be less than initial due to round-trip commission
         assert trader.capital < 10000.0
@@ -425,35 +441,37 @@ class TestPaperTradingE2E:
         strategy = MovingAverageCrossover(fast_period=10, slow_period=20)
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=mock_data_handler,
             initial_capital=10000.0
         )
 
         # First buy
-        trader.execute_buy(100.0, datetime.now())
+        trader.execute_buy(SYMBOL, 100.0, datetime.now())
         trades_after_first_buy = len(trader.trades)
-        position_after_first_buy = trader.position
+        position_after_first_buy = trader.positions[SYMBOL]
 
         # Try to buy again (should be ignored)
-        trader.execute_buy(100.0, datetime.now())
+        trader.execute_buy(SYMBOL, 100.0, datetime.now())
 
         # Should not create new trade
         assert len(trader.trades) == trades_after_first_buy
 
         # Position should not change
-        assert trader.position == position_after_first_buy
+        assert trader.positions[SYMBOL] == position_after_first_buy
 
     def test_skip_sell_when_no_position(self, mock_data_handler):
         """Test that SELL signal is ignored when not holding position"""
         strategy = MovingAverageCrossover(fast_period=10, slow_period=20)
         trader = PaperTrader(
             strategy=strategy,
+            symbols=SYMBOL,
             data_handler=mock_data_handler,
             initial_capital=10000.0
         )
 
         # Try to sell without position (should be ignored)
-        trader.execute_sell(100.0, datetime.now())
+        trader.execute_sell(SYMBOL, 100.0, datetime.now())
 
         # Should not create trade
         assert len(trader.trades) == 0

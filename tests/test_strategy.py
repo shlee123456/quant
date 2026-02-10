@@ -23,7 +23,7 @@ class TestMovingAverageCrossover(unittest.TestCase):
         self.strategy = MovingAverageCrossover(fast_period=5, slow_period=10)
 
         # Create sample data
-        dates = pd.date_range(start='2024-01-01', periods=50, freq='1H')
+        dates = pd.date_range(start='2024-01-01', periods=50, freq='1h')
         prices = np.linspace(100, 150, 50) + np.random.randn(50) * 2
 
         self.sample_data = pd.DataFrame({
@@ -71,16 +71,19 @@ class TestMovingAverageCrossover(unittest.TestCase):
 
     def test_buy_signal_generation(self):
         """Test buy signal generation"""
-        # Create data with clear uptrend for buy signal
-        dates = pd.date_range(start='2024-01-01', periods=20, freq='1H')
-        prices = np.linspace(100, 120, 20)  # Clear uptrend
+        # Create data with decline then uptrend to trigger MA crossover
+        dates = pd.date_range(start='2024-01-01', periods=30, freq='1h')
+        prices = np.concatenate([
+            np.linspace(120, 100, 12),  # Downtrend (fast MA goes below slow MA)
+            np.linspace(100, 130, 18)   # Strong uptrend (fast MA crosses above slow MA)
+        ])
 
         data = pd.DataFrame({
             'open': prices,
             'high': prices + 1,
             'low': prices - 1,
             'close': prices,
-            'volume': [1000] * 20
+            'volume': [1000] * 30
         }, index=dates)
 
         result = self.strategy.calculate_indicators(data)
@@ -92,7 +95,7 @@ class TestMovingAverageCrossover(unittest.TestCase):
     def test_sell_signal_generation(self):
         """Test sell signal generation"""
         # Create data with uptrend then downtrend
-        dates = pd.date_range(start='2024-01-01', periods=30, freq='1H')
+        dates = pd.date_range(start='2024-01-01', periods=30, freq='1h')
         prices = np.concatenate([
             np.linspace(100, 120, 15),  # Uptrend
             np.linspace(120, 100, 15)   # Downtrend
@@ -152,7 +155,7 @@ class TestMovingAverageCrossover(unittest.TestCase):
     def test_insufficient_data(self):
         """Test handling of insufficient data for MAs"""
         # Only 5 data points, less than slow_ma period
-        dates = pd.date_range(start='2024-01-01', periods=5, freq='1H')
+        dates = pd.date_range(start='2024-01-01', periods=5, freq='1h')
         data = pd.DataFrame({
             'open': [100, 101, 102, 103, 104],
             'high': [101, 102, 103, 104, 105],
@@ -178,7 +181,7 @@ class TestStrategyEdgeCases(unittest.TestCase):
         strategy = MovingAverageCrossover(fast_period=5, slow_period=10)
 
         # Create flat market data
-        dates = pd.date_range(start='2024-01-01', periods=30, freq='1H')
+        dates = pd.date_range(start='2024-01-01', periods=30, freq='1h')
         prices = [100] * 30 + np.random.randn(30) * 0.5  # Almost flat
 
         data = pd.DataFrame({
@@ -203,7 +206,7 @@ class TestStrategyEdgeCases(unittest.TestCase):
             (20, 50),
         ]
 
-        dates = pd.date_range(start='2024-01-01', periods=100, freq='1H')
+        dates = pd.date_range(start='2024-01-01', periods=100, freq='1h')
         prices = np.linspace(100, 150, 100)
 
         data = pd.DataFrame({
