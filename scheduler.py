@@ -21,6 +21,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+import pandas as pd
+
 # Add project root to path
 sys.path.append(str(Path(__file__).parent))
 
@@ -29,7 +31,7 @@ from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
 
 from trading_bot.paper_trader import PaperTrader
-from trading_bot.strategies import RSIStrategy, MACDStrategy, BollingerBandsStrategy
+from trading_bot.strategies import RSIStrategy, MACDStrategy, BollingerBandsStrategy, RSIMACDComboStrategy
 from trading_bot.database import TradingDatabase
 from trading_bot.optimizer import StrategyOptimizer
 from trading_bot.simulation_data import SimulationDataGenerator
@@ -77,21 +79,28 @@ def optimize_strategy():
     logger.info("=" * 60)
 
     try:
-        # 최적화용 샘플 데이터 생성
+        # 최적화용 다양한 시장 상황 데이터 생성 (과적합 방지)
         data_gen = SimulationDataGenerator(seed=42)
-        df = data_gen.generate_trend_data(periods=500, trend='bullish')
+        df_bullish = data_gen.generate_trend_data(periods=200, trend='bullish', initial_price=150.0)
+        df_bearish = data_gen.generate_trend_data(periods=200, trend='bearish', initial_price=150.0)
+        df_sideways = data_gen.generate_trend_data(periods=200, trend='sideways', initial_price=150.0)
+        df = pd.concat([df_bullish, df_bearish, df_sideways], ignore_index=True)
+        logger.info(f"최적화 데이터: 상승({len(df_bullish)}) + 하락({len(df_bearish)}) + 횡보({len(df_sideways)}) = {len(df)}개")
 
-        # RSI 전략 파라미터 그리드 정의
+        # RSI+MACD 복합 전략 파라미터 그리드 (인트라데이용)
         param_grid = {
-            'period': [10, 14, 20],
-            'overbought': [70, 75, 80],
-            'oversold': [20, 25, 30]
+            'rsi_period': [10, 12, 14],
+            'rsi_overbought': [70, 75, 78],
+            'rsi_oversold': [30, 35, 38],
+            'macd_fast': [8, 12],
+            'macd_slow': [21, 26],
+            'macd_signal': [9]
         }
 
         # 최적화 실행
         optimizer = StrategyOptimizer(initial_capital=10000.0)
-        logger.info("그리드 서치 최적화 실행 중...")
-        best_result = optimizer.optimize(RSIStrategy, df, param_grid)
+        logger.info("RSI+MACD 복합 전략 그리드 서치 최적화 실행 중...")
+        best_result = optimizer.optimize(RSIMACDComboStrategy, df, param_grid)
 
         logger.info(f"✓ 최적화 완료!")
         logger.info(f"  최적 파라미터: {best_result['params']}")
@@ -115,13 +124,13 @@ def optimize_strategy():
         preset_manager.save_preset(
             name=preset_name,
             description=f"자동 최적화 결과 (Sharpe: {best_result['sharpe_ratio']:.2f})",
-            strategy="RSI Strategy",
+            strategy="RSI+MACD Combo Strategy",
             strategy_params=best_result['params'],
             symbols=['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META'],
             initial_capital=10000.0,
-            position_size=0.3,
-            stop_loss_pct=0.05,
-            take_profit_pct=0.10,
+            position_size=0.2,
+            stop_loss_pct=0.03,
+            take_profit_pct=0.05,
             enable_stop_loss=True,
             enable_take_profit=True
         )
@@ -157,10 +166,13 @@ def start_paper_trading():
         # 전략 생성 (최적화된 파라미터 사용)
         if optimized_params:
             logger.info(f"최적화된 파라미터 사용: {optimized_params}")
-            strategy = RSIStrategy(**optimized_params)
+            strategy = RSIMACDComboStrategy(**optimized_params)
         else:
-            logger.info("기본 파라미터 사용 (최적화 안 됨)")
-            strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+            logger.info("기본 파라미터 사용 (최적화 안 됨) - RSI+MACD 복합 전략")
+            strategy = RSIMACDComboStrategy(
+                rsi_period=12, rsi_overbought=78, rsi_oversold=38,
+                macd_fast=12, macd_slow=26, macd_signal=9
+            )
 
         logger.info(f"전략: {strategy.name}")
 
@@ -174,9 +186,9 @@ def start_paper_trading():
             symbols=symbols,
             broker=broker,
             initial_capital=10000.0,
-            position_size=0.3,  # 거래당 30%
-            stop_loss_pct=0.05,  # 5% 손절
-            take_profit_pct=0.10,  # 10% 익절
+            position_size=0.2,  # 종목당 20% (5종목 동시 진입 시 100%)
+            stop_loss_pct=0.03,  # 3% 손절 (인트라데이)
+            take_profit_pct=0.05,  # 5% 익절 (인트라데이)
             enable_stop_loss=True,
             enable_take_profit=True,
             db=db
@@ -200,8 +212,9 @@ def start_paper_trading():
 
         # 실시간 트레이딩 시작 (현재 스레드에서 실행)
         # stop_paper_trading()이 호출될 때까지 블로킹됨
-        logger.info("실시간 트레이딩 루프 시작 (60초 간격)...")
-        current_trader.run_realtime(interval_seconds=60, timeframe='1d')
+        # 인트라데이: 60분봉 사용, 60초마다 체크 (6.5시간 세션에서 충분한 시그널 발생)
+        logger.info("실시간 트레이딩 루프 시작 (60초 간격, 1시간봉)...")
+        current_trader.run_realtime(interval_seconds=60, timeframe='1h')
 
     except Exception as e:
         logger.error(f"✗ 페이퍼 트레이딩 실패: {e}", exc_info=True)
