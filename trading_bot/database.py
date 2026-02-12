@@ -510,6 +510,54 @@ class TradingDatabase:
 
         return {row[0]: row[1] for row in rows}
 
+    def delete_session(self, session_id: str) -> bool:
+        """
+        세션과 관련 데이터를 완전히 삭제
+
+        Args:
+            session_id: 삭제할 세션 ID
+
+        Returns:
+            bool: 삭제 성공 여부
+
+        Note:
+            active 상태 세션은 삭제 불가
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        try:
+            # 세션 존재 여부 및 상태 확인
+            cursor.execute(
+                "SELECT status FROM paper_trading_sessions WHERE session_id = ?",
+                (session_id,)
+            )
+            row = cursor.fetchone()
+
+            if row is None:
+                conn.close()
+                return False
+
+            if row[0] == 'active':
+                conn.close()
+                return False
+
+            # 관련 데이터 삭제 (자식 테이블 먼저)
+            cursor.execute("DELETE FROM trades WHERE session_id = ?", (session_id,))
+            cursor.execute("DELETE FROM portfolio_snapshots WHERE session_id = ?", (session_id,))
+            cursor.execute("DELETE FROM strategy_signals WHERE session_id = ?", (session_id,))
+            cursor.execute("DELETE FROM paper_trading_sessions WHERE session_id = ?", (session_id,))
+
+            conn.commit()
+            return True
+
+        except Exception:
+            conn.rollback()
+            return False
+
+        finally:
+            conn.close()
+
     def get_active_sessions(self) -> List[Dict[str, Any]]:
         """
         Get all currently active sessions

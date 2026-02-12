@@ -237,3 +237,79 @@ def test_multiple_trades_same_session(temp_db):
     # Verify trades are in order
     assert trades[0]['price'] == 150.0
     assert trades[4]['price'] == 154.0
+
+
+def test_delete_completed_session(temp_db):
+    """완료된 세션 삭제 성공"""
+    session_id = temp_db.create_session('TestStrategy', 10000.0)
+
+    # 세션을 completed 상태로 변경
+    temp_db.update_session(session_id, {'status': 'completed'})
+
+    result = temp_db.delete_session(session_id)
+    assert result is True
+
+    # 세션이 삭제되었는지 확인
+    summary = temp_db.get_session_summary(session_id)
+    assert summary is None
+
+
+def test_delete_active_session_rejected(temp_db):
+    """active 세션 삭제 거부"""
+    session_id = temp_db.create_session('TestStrategy', 10000.0)
+
+    # active 상태 세션 삭제 시도
+    result = temp_db.delete_session(session_id)
+    assert result is False
+
+    # 세션이 여전히 존재하는지 확인
+    summary = temp_db.get_session_summary(session_id)
+    assert summary is not None
+    assert summary['status'] == 'active'
+
+
+def test_delete_session_cascades_related_data(temp_db):
+    """삭제 시 관련 trades, snapshots, signals도 함께 삭제됨"""
+    session_id = temp_db.create_session('TestStrategy', 10000.0)
+
+    # 관련 데이터 추가
+    temp_db.log_trade(session_id, {
+        'symbol': 'AAPL',
+        'timestamp': datetime.now(),
+        'type': 'BUY',
+        'price': 150.0,
+        'size': 10.0,
+        'commission': 1.5
+    })
+
+    temp_db.log_portfolio_snapshot(session_id, {
+        'timestamp': datetime.now(),
+        'total_value': 10500.0,
+        'cash': 5000.0,
+        'positions': {'AAPL': 10.0}
+    })
+
+    temp_db.log_signal(session_id, {
+        'symbol': 'AAPL',
+        'timestamp': datetime.now(),
+        'signal': 1,
+        'indicator_values': {'rsi': 65.5},
+        'market_price': 150.0,
+        'executed': False
+    })
+
+    # 세션을 completed로 변경 후 삭제
+    temp_db.update_session(session_id, {'status': 'completed'})
+    result = temp_db.delete_session(session_id)
+    assert result is True
+
+    # 모든 관련 데이터가 삭제되었는지 확인
+    assert temp_db.get_session_trades(session_id) == []
+    assert temp_db.get_session_snapshots(session_id) == []
+    assert temp_db.get_session_signals(session_id) == []
+
+
+def test_delete_nonexistent_session(temp_db):
+    """존재하지 않는 세션 삭제 시 False 반환"""
+    result = temp_db.delete_session('nonexistent_session_id')
+    assert result is False
