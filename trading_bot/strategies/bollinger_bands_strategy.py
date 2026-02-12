@@ -5,9 +5,10 @@ Bollinger Bands Trading Strategy
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple
+from .base_strategy import BaseStrategy
 
 
-class BollingerBandsStrategy:
+class BollingerBandsStrategy(BaseStrategy):
     """
     Bollinger Bands Trading Strategy
 
@@ -30,7 +31,7 @@ class BollingerBandsStrategy:
         """
         self.period = period
         self.num_std = num_std
-        self.name = f"BollingerBands_{period}_{num_std}"
+        super().__init__(name=f"BollingerBands_{period}_{num_std}")
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -47,6 +48,8 @@ class BollingerBandsStrategy:
 
         if data.empty:
             return data
+
+        self.validate_dataframe(df)
 
         # Calculate middle band (SMA)
         data['bb_middle'] = data['close'].rolling(window=self.period).mean()
@@ -158,6 +161,18 @@ class BollingerBandsStrategy:
             })
 
         return signals
+
+    def get_params(self) -> Dict:
+        return {
+            'period': self.period,
+            'num_std': self.num_std,
+        }
+
+    def get_param_info(self) -> Dict:
+        return {
+            'period': 'SMA 및 표준편차 계산 기간',
+            'num_std': '밴드 폭 표준편차 배수',
+        }
 
     def __str__(self) -> str:
         return f"Bollinger Bands Strategy (Period: {self.period}, Std: {self.num_std})"

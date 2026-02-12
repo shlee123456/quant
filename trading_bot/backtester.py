@@ -4,8 +4,10 @@ Backtesting engine for trading strategies
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List
-from .strategy import MovingAverageCrossover
+from typing import Dict, List, Optional
+from .strategies.base_strategy import BaseStrategy
+from .signal_validator import SignalValidator
+from .execution_verifier import OrderExecutionVerifier
 from .logging_config import get_backtester_logger, log_exception
 
 logger = get_backtester_logger()
@@ -16,8 +18,9 @@ class Backtester:
     Backtesting engine to test trading strategies on historical data
     """
 
-    def __init__(self, strategy: MovingAverageCrossover, initial_capital: float = 10000.0,
-                 position_size: float = 0.95, commission: float = 0.001):
+    def __init__(self, strategy: BaseStrategy, initial_capital: float = 10000.0,
+                 position_size: float = 0.95, commission: float = 0.001,
+                 enable_verification: bool = False):
         """
         Initialize backtester
 
@@ -26,11 +29,17 @@ class Backtester:
             initial_capital: Starting capital in USD
             position_size: Fraction of capital to use per trade (0-1)
             commission: Trading commission/fee (0.001 = 0.1%)
+            enable_verification: Enable signal/execution verification (default: False)
         """
         self.strategy = strategy
         self.initial_capital = initial_capital
         self.position_size = position_size
         self.commission = commission
+        self.enable_verification = enable_verification
+
+        # Verification
+        self._signal_validator = SignalValidator()
+        self._execution_verifier = OrderExecutionVerifier()
 
         # Results
         self.trades = []
@@ -66,6 +75,11 @@ class Backtester:
                 signal = row['signal']
                 price = row['close']
 
+                # Validate signal value
+                if self.enable_verification:
+                    if not self._signal_validator.validate_signal_value(int(signal)):
+                        logger.warning(f"유효하지 않은 시그널 값: {signal} (index={idx})")
+
                 # Track equity
                 if position > 0:
                     current_value = capital + (position * price)
@@ -87,14 +101,23 @@ class Backtester:
                     entry_price = price
                     capital = capital - trade_capital
 
-                    trades.append({
+                    trade = {
                         'timestamp': idx,
                         'type': 'BUY',
                         'price': price,
                         'size': position,
                         'capital': capital,
                         'commission': trade_capital * self.commission
-                    })
+                    }
+                    trades.append(trade)
+
+                    # Verify execution
+                    if self.enable_verification:
+                        is_valid, msg = self._execution_verifier.verify_execution(
+                            expected_signal=1, executed_trade=trade, current_position=0
+                        )
+                        if not is_valid:
+                            logger.warning(f"실행 검증 실패: {msg}")
 
                 elif signal == -1 and position > 0:  # SELL signal
                     # Exit long position
@@ -105,7 +128,7 @@ class Backtester:
                     pnl = sale_proceeds - (position * entry_price)
                     pnl_pct = (price - entry_price) / entry_price * 100
 
-                    trades.append({
+                    trade = {
                         'timestamp': idx,
                         'type': 'SELL',
                         'price': price,
@@ -114,7 +137,16 @@ class Backtester:
                         'pnl': pnl,
                         'pnl_pct': pnl_pct,
                         'commission': position * price * self.commission
-                    })
+                    }
+                    trades.append(trade)
+
+                    # Verify execution
+                    if self.enable_verification:
+                        is_valid, msg = self._execution_verifier.verify_execution(
+                            expected_signal=-1, executed_trade=trade, current_position=position
+                        )
+                        if not is_valid:
+                            logger.warning(f"실행 검증 실패: {msg}")
 
                     position = 0
                     entry_price = 0
@@ -145,6 +177,17 @@ class Backtester:
 
             # Calculate performance metrics
             results = self._calculate_metrics(data)
+
+            # Verify capital consistency at end of run
+            if self.enable_verification:
+                is_consistent, msg = self._execution_verifier.verify_capital_consistency(
+                    initial_capital=self.initial_capital,
+                    trades=self.trades,
+                    current_capital=capital,
+                )
+                if not is_consistent:
+                    logger.warning(f"자본금 정합성 검증 실패: {msg}")
+                results['verification_report'] = self._execution_verifier.generate_verification_report()
 
             logger.info(f"Backtest completed: {len(trades)} trades, Total Return: {results['total_return']:.2f}%")
 

@@ -6,11 +6,12 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple
 from ..logging_config import get_strategy_logger
+from .base_strategy import BaseStrategy
 
 logger = get_strategy_logger()
 
 
-class RSIStrategy:
+class RSIStrategy(BaseStrategy):
     """
     RSI Trading Strategy
 
@@ -30,7 +31,7 @@ class RSIStrategy:
         self.period = period
         self.overbought = overbought
         self.oversold = oversold
-        self.name = f"RSI_{period}_{oversold}_{overbought}"
+        super().__init__(name=f"RSI_{period}_{oversold}_{overbought}")
 
         logger.debug(f"Initialized {self.name} - Overbought: {overbought}, Oversold: {oversold}")
 
@@ -77,6 +78,8 @@ class RSIStrategy:
         # Handle empty DataFrame
         if df.empty:
             return df.copy()
+
+        self.validate_dataframe(df)
 
         # Make a copy to avoid modifying original
         data = df.copy()
@@ -176,6 +179,20 @@ class RSIStrategy:
             })
 
         return signals
+
+    def get_params(self) -> Dict:
+        return {
+            'period': self.period,
+            'overbought': self.overbought,
+            'oversold': self.oversold,
+        }
+
+    def get_param_info(self) -> Dict:
+        return {
+            'period': 'RSI 계산 기간',
+            'overbought': '과매수 임계값',
+            'oversold': '과매도 임계값',
+        }
 
     def __str__(self) -> str:
         return f"RSI Strategy (Period: {self.period}, Overbought: {self.overbought}, Oversold: {self.oversold})"

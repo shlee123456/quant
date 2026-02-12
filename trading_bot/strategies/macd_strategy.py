@@ -5,9 +5,10 @@ MACD (Moving Average Convergence Divergence) Trading Strategy
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple
+from .base_strategy import BaseStrategy
 
 
-class MACDStrategy:
+class MACDStrategy(BaseStrategy):
     """
     MACD Trading Strategy
 
@@ -27,7 +28,7 @@ class MACDStrategy:
         self.fast_period = fast_period
         self.slow_period = slow_period
         self.signal_period = signal_period
-        self.name = f"MACD_{fast_period}_{slow_period}_{signal_period}"
+        super().__init__(name=f"MACD_{fast_period}_{slow_period}_{signal_period}")
 
     def _calculate_ema(self, prices: pd.Series, period: int) -> pd.Series:
         """
@@ -55,6 +56,8 @@ class MACDStrategy:
         # Handle empty DataFrame
         if df.empty:
             return df.copy()
+
+        self.validate_dataframe(df)
 
         # Make a copy to avoid modifying original
         data = df.copy()
@@ -165,6 +168,20 @@ class MACDStrategy:
             })
 
         return signals
+
+    def get_params(self) -> Dict:
+        return {
+            'fast_period': self.fast_period,
+            'slow_period': self.slow_period,
+            'signal_period': self.signal_period,
+        }
+
+    def get_param_info(self) -> Dict:
+        return {
+            'fast_period': '빠른 EMA 기간',
+            'slow_period': '느린 EMA 기간',
+            'signal_period': '시그널 라인 EMA 기간',
+        }
 
     def __str__(self) -> str:
         return f"MACD Strategy (Fast: {self.fast_period}, Slow: {self.slow_period}, Signal: {self.signal_period})"

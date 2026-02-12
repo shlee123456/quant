@@ -29,9 +29,13 @@ trading_bot/
 ├── paper_trader.py              # 페이퍼 트레이딩
 ├── database.py                  # SQLite 데이터베이스 (세션 추적)
 ├── strategy_presets.py          # 전략 프리셋 관리
+├── strategy_registry.py         # 전략 등록/조회 레지스트리
+├── signal_validator.py          # 시그널 유효성 검증
+├── execution_verifier.py        # 주문 실행 정확성 검증
 ├── notifications.py             # 알림 서비스 (Slack, Email)
 └── strategies/
     ├── __init__.py
+    ├── base_strategy.py         # 전략 추상 기본 클래스 (ABC)
     ├── rsi_strategy.py          # RSI 전략
     ├── macd_strategy.py         # MACD 전략
     ├── bollinger_bands_strategy.py  # 볼린저 밴드
@@ -56,22 +60,140 @@ trading_bot/
 
 ---
 
+## 전략 아키텍처
+
+### BaseStrategy 추상 기본 클래스
+
+모든 전략은 `BaseStrategy`(ABC)를 상속해야 합니다. 위치: `strategies/base_strategy.py`
+
+```python
+from trading_bot.strategies import BaseStrategy
+
+class MyStrategy(BaseStrategy):
+    def __init__(self, param1: int = 10):
+        super().__init__(name=f"MyStrategy_{param1}")
+        self.param1 = param1
+
+    def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        # 반드시 signal, position 컬럼 포함
+        ...
+
+    def get_current_signal(self, df: pd.DataFrame) -> Tuple[int, Dict]:
+        ...
+
+    def get_all_signals(self, df: pd.DataFrame) -> List[Dict]:
+        ...
+
+    def get_params(self) -> Dict:
+        return {'param1': self.param1}
+```
+
+**BaseStrategy 제공 메서드**:
+- `validate_signal(signal)`: 시그널 값이 -1, 0, 1인지 검증
+- `validate_dataframe(df)`: OHLCV 필수 컬럼 존재 확인
+- `get_params()`: 파라미터 반환 (오버라이드 권장)
+- `get_param_info()`: 파라미터 설명 반환 (오버라이드 권장)
+
+### StrategyRegistry - 전략 등록/조회
+
+싱글턴 레지스트리로 전략을 이름으로 관리합니다.
+
+```python
+from trading_bot import StrategyRegistry
+
+registry = StrategyRegistry()
+
+# 전략 조회
+registry.list_strategies()        # ['RSI', 'MACD', 'BollingerBands', ...]
+strategy = registry.create("RSI", period=14, overbought=70, oversold=30)
+
+# 전략 등록 (커스텀)
+registry.register("MyStrategy", MyStrategy)
+```
+
+**데코레이터로 자동 등록**:
+```python
+from trading_bot.strategy_registry import register_strategy
+
+@register_strategy("MyStrategy")
+class MyStrategy(BaseStrategy):
+    ...
+```
+
+내장 전략들은 모듈 로드 시 자동 등록됩니다.
+
+### 검증 레이어
+
+#### SignalValidator - 시그널 유효성 검증
+
+```python
+from trading_bot import SignalValidator
+
+# 시그널 값 검증
+SignalValidator.validate_signal_value(signal)
+
+# 시그널 시퀀스 논리 검증 (중복 진입, 공매도 탐지)
+warnings = SignalValidator.validate_signal_sequence(df['signal'])
+
+# 지표 데이터 이상 탐지 (NaN, Inf)
+warnings = SignalValidator.validate_indicators(df)
+
+# Look-ahead bias 간이 탐지
+is_ok = SignalValidator.validate_no_lookahead(df, strategy)
+```
+
+#### OrderExecutionVerifier - 주문 실행 검증
+
+```python
+from trading_bot import OrderExecutionVerifier
+
+verifier = OrderExecutionVerifier()
+
+# 시그널-주문 방향 일치 확인
+is_valid, msg = verifier.verify_execution(signal, trade, position)
+
+# 포지션 정합성 검증 (거래 기록 기반 재구성)
+issues = verifier.verify_position_consistency(positions, trades)
+
+# 자본금 정합성 검증
+is_ok, msg = verifier.verify_capital_consistency(initial, trades, current)
+
+# 검증 리포트
+report = verifier.generate_verification_report()
+```
+
+#### Backtester/PaperTrader에서 검증 활성화
+
+```python
+# Backtester
+backtester = Backtester(strategy, enable_verification=True)
+results = backtester.run(df)
+# results에 verification_report 포함
+
+# PaperTrader
+trader = PaperTrader(strategy=strategy, ..., enable_verification=True)
+```
+
+---
+
 ## 로컬 코딩 컨벤션
 
 ### 전략 인터페이스 (필수 구현)
 
-모든 전략 클래스는 다음 메서드를 구현해야 합니다:
+모든 전략 클래스는 `BaseStrategy`를 상속하고 다음 메서드를 구현해야 합니다:
 
 ```python
-class Strategy:
+from trading_bot.strategies import BaseStrategy
+
+class Strategy(BaseStrategy):
     def __init__(self, **params):
         """전략 파라미터 초기화"""
-        self.name = "Strategy_Name"
-    
+        super().__init__(name="Strategy_Name")
+
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         지표 계산 및 시그널 생성
-        
+
         Returns:
             DataFrame with:
             - 원본 OHLCV 컬럼
@@ -80,11 +202,11 @@ class Strategy:
             - 'position': 1 (long), 0 (flat)
         """
         pass
-    
+
     def get_current_signal(self, df: pd.DataFrame) -> Tuple[int, Dict]:
         """현재 시그널 반환: (signal, info_dict)"""
         pass
-    
+
     def get_all_signals(self, df: pd.DataFrame) -> List[Dict]:
         """모든 시그널 이벤트 반환"""
         pass
@@ -131,6 +253,9 @@ def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
 | `paper_trader.py` | 실시간 페이퍼 트레이딩 (Stop Loss/Take Profit 지원) | 암호화폐 + 해외주식 |
 | `database.py` | SQLite 데이터베이스 (세션 추적) | 공통 |
 | `strategy_presets.py` | 전략 설정 저장/불러오기 (JSON) | 공통 |
+| `strategy_registry.py` | 전략 등록/조회 싱글턴 레지스트리 | 공통 |
+| `signal_validator.py` | 시그널 유효성 검증 (값, 시퀀스, 지표, look-ahead) | 공통 |
+| `execution_verifier.py` | 주문 실행 정확성 검증 (포지션, 자본금) | 공통 |
 | `notifications.py` | 알림 서비스 (Slack Webhook, Email SMTP) | 공통 |
 
 ---
@@ -640,14 +765,31 @@ trader.run_realtime(interval_seconds=60, timeframe='1d')
 ## 새 전략 추가 방법
 
 1. **전략 파일 생성**: `trading_bot/strategies/my_strategy.py`
-2. **인터페이스 구현**: `calculate_indicators`, `get_current_signal`, `get_all_signals`
-3. **테스트 작성**: `tests/test_my_strategy.py`
-4. **`__init__.py`에 추가**:
+2. **BaseStrategy 상속 및 구현**:
+   ```python
+   from trading_bot.strategies import BaseStrategy
+
+   class MyStrategy(BaseStrategy):
+       def __init__(self, param1=10):
+           super().__init__(name=f"MyStrategy_{param1}")
+           self.param1 = param1
+
+       def calculate_indicators(self, df): ...
+       def get_current_signal(self, df): ...
+       def get_all_signals(self, df): ...
+       def get_params(self): return {'param1': self.param1}
+   ```
+3. **`strategies/__init__.py`에 추가**:
    ```python
    from .my_strategy import MyStrategy
    __all__ = [..., 'MyStrategy']
    ```
-5. **백테스트 검증**: 여러 시장 상황에서 테스트
+4. **StrategyRegistry에 등록** (`strategy_registry.py`의 `_register_builtin_strategies`에 추가):
+   ```python
+   ("MyStrategy", "trading_bot.strategies.my_strategy", "MyStrategy"),
+   ```
+5. **테스트 작성**: `tests/test_my_strategy.py`
+6. **백테스트 검증**: 여러 시장 상황에서 테스트
 
 ---
 

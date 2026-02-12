@@ -5,9 +5,10 @@ Stochastic Oscillator Trading Strategy
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple
+from .base_strategy import BaseStrategy
 
 
-class StochasticStrategy:
+class StochasticStrategy(BaseStrategy):
     """
     Stochastic Oscillator Trading Strategy
 
@@ -40,7 +41,7 @@ class StochasticStrategy:
         self.d_period = d_period
         self.overbought = overbought
         self.oversold = oversold
-        self.name = f"Stochastic_{k_period}_{d_period}_{oversold}_{overbought}"
+        super().__init__(name=f"Stochastic_{k_period}_{d_period}_{oversold}_{overbought}")
 
     def _calculate_stochastic(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -84,6 +85,8 @@ class StochasticStrategy:
 
         if data.empty:
             return data
+
+        self.validate_dataframe(df)
 
         # Calculate Stochastic Oscillator
         data = self._calculate_stochastic(data)
@@ -171,6 +174,22 @@ class StochasticStrategy:
             })
 
         return signals
+
+    def get_params(self) -> Dict:
+        return {
+            'k_period': self.k_period,
+            'd_period': self.d_period,
+            'overbought': self.overbought,
+            'oversold': self.oversold,
+        }
+
+    def get_param_info(self) -> Dict:
+        return {
+            'k_period': '%K 계산 기간',
+            'd_period': '%D 평활화 기간 (SMA of %K)',
+            'overbought': '과매수 임계값',
+            'oversold': '과매도 임계값',
+        }
 
     def __str__(self) -> str:
         return f"Stochastic Strategy (K: {self.k_period}, D: {self.d_period}, OB: {self.overbought}, OS: {self.oversold})"

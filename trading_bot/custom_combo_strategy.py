@@ -7,11 +7,12 @@ from typing import Dict, List, Tuple, Any
 import pandas as pd
 import numpy as np
 from trading_bot.logging_config import get_strategy_logger
+from trading_bot.strategies.base_strategy import BaseStrategy
 
 logger = get_strategy_logger()
 
 
-class CustomComboStrategy:
+class CustomComboStrategy(BaseStrategy):
     """
     여러 전략을 조합한 커스텀 전략
 
@@ -56,7 +57,7 @@ class CustomComboStrategy:
             'WEIGHTED': 'WGT'
         }
         strategy_short = '+'.join([name.split()[0][:3].upper() for name in strategy_names])
-        self.name = f"Custom_{logic_short.get(self.combination_logic, 'CMB')}_{strategy_short}"
+        super().__init__(name=f"Custom_{logic_short.get(self.combination_logic, 'CMB')}_{strategy_short}")
 
         logger.debug(
             f"Initialized {self.name} - "
@@ -77,6 +78,8 @@ class CustomComboStrategy:
         """
         if df.empty:
             return df.copy()
+
+        self.validate_dataframe(df)
 
         data = df.copy()
 
@@ -228,6 +231,22 @@ class CustomComboStrategy:
             })
 
         return signals
+
+    def get_params(self) -> Dict:
+        return {
+            'combination_logic': self.combination_logic,
+            'strategy_names': self.strategy_names,
+            'weights': self.weights,
+            'threshold': self.threshold,
+        }
+
+    def get_param_info(self) -> Dict:
+        return {
+            'combination_logic': '조합 로직 (AND, OR, MAJORITY, WEIGHTED)',
+            'strategy_names': '조합할 전략 이름 리스트',
+            'weights': '가중치 리스트 (WEIGHTED 모드)',
+            'threshold': '가중치 합 임계값 (WEIGHTED 모드)',
+        }
 
     def __str__(self) -> str:
         return (

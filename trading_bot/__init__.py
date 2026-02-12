@@ -8,12 +8,15 @@ __author__ = "Agent Team"
 from .config import Config
 from .simulation_data import SimulationDataGenerator
 from .strategy import MovingAverageCrossover
-from .strategies import RSIStrategy, MACDStrategy, BollingerBandsStrategy
+from .strategies import BaseStrategy, RSIStrategy, MACDStrategy, BollingerBandsStrategy
 from .backtester import Backtester
 from .optimizer import StrategyOptimizer
 from .notifications import NotificationService
 from .strategy_presets import StrategyPresetManager
 from .custom_combo_strategy import CustomComboStrategy
+from .strategy_registry import StrategyRegistry
+from .signal_validator import SignalValidator
+from .execution_verifier import OrderExecutionVerifier
 
 # Phase 2 automation modules
 try:
@@ -44,6 +47,7 @@ __all__ = [
     'Config',
     'SimulationDataGenerator',
     'MovingAverageCrossover',
+    'BaseStrategy',
     'RSIStrategy',
     'MACDStrategy',
     'BollingerBandsStrategy',
@@ -52,6 +56,9 @@ __all__ = [
     'NotificationService',
     'StrategyPresetManager',
     'CustomComboStrategy',
+    'StrategyRegistry',
+    'SignalValidator',
+    'OrderExecutionVerifier',
 ]
 
 if _has_ccxt:

@@ -5,13 +5,16 @@ Paper trading simulator for live trading without real money
 import pandas as pd
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Union
-from .strategy import MovingAverageCrossover
+from .strategies.base_strategy import BaseStrategy
 from .data_handler import DataHandler
 from .brokers.base_broker import BaseBroker
 from .database import TradingDatabase
+from .signal_validator import SignalValidator
+from .execution_verifier import OrderExecutionVerifier
 from .retry_utils import retry_with_backoff
 import time
 import json
+import threading
 import numpy as np
 import logging
 
@@ -31,7 +34,7 @@ class PaperTrader:
 
     def __init__(
         self,
-        strategy: MovingAverageCrossover,
+        strategy: BaseStrategy,
         symbols: Union[str, List[str]],
         data_handler: Optional[DataHandler] = None,
         broker: Optional[BaseBroker] = None,
@@ -43,7 +46,8 @@ class PaperTrader:
         stop_loss_pct: float = 0.05,
         take_profit_pct: float = 0.10,
         enable_stop_loss: bool = True,
-        enable_take_profit: bool = True
+        enable_take_profit: bool = True,
+        enable_verification: bool = False
     ):
         """
         Initialize paper trader
@@ -62,6 +66,7 @@ class PaperTrader:
             take_profit_pct: Take profit percentage (default: 0.10 = 10%)
             enable_stop_loss: Enable stop loss feature (default: True)
             enable_take_profit: Enable take profit feature (default: True)
+            enable_verification: Enable signal/execution verification (default: False)
         """
         self.strategy = strategy
 
@@ -100,8 +105,18 @@ class PaperTrader:
         # Running flag
         self.is_running = False
 
+        # Thread synchronization for graceful shutdown
+        self._stop_event = threading.Event()
+        self._loop_exited = threading.Event()
+        self._stopped = False
+
         # Session tracking
         self.session_id: Optional[str] = None
+
+        # Verification
+        self.enable_verification = enable_verification
+        self._signal_validator = SignalValidator()
+        self._execution_verifier = OrderExecutionVerifier()
 
     def get_portfolio_value(self, current_prices: Optional[Dict[str, float]] = None) -> float:
         """
@@ -156,6 +171,7 @@ class PaperTrader:
             print(f"Already in position for {symbol}, skipping BUY signal")
             return
 
+        prev_position = self.positions[symbol]
         trade_capital = self.capital * self.position_size
         self.positions[symbol] = trade_capital / price * (1 - self.commission)
         self.entry_prices[symbol] = price
@@ -173,6 +189,14 @@ class PaperTrader:
 
         self.trades.append(trade)
         self._log_trade(trade)
+
+        # Verify execution
+        if self.enable_verification:
+            is_valid, msg = self._execution_verifier.verify_execution(
+                expected_signal=1, executed_trade=trade, current_position=prev_position
+            )
+            if not is_valid:
+                logger.warning(f"실행 검증 실패 [{symbol}]: {msg}")
 
         # Log to database
         if self.db and self.session_id:
@@ -197,6 +221,7 @@ class PaperTrader:
             print(f"No position to sell for {symbol}, skipping SELL signal")
             return
 
+        prev_position = self.positions[symbol]
         sale_proceeds = self.positions[symbol] * price * (1 - self.commission)
         self.capital = self.capital + sale_proceeds
 
@@ -219,6 +244,14 @@ class PaperTrader:
 
         self.trades.append(trade)
         self._log_trade(trade)
+
+        # Verify execution
+        if self.enable_verification:
+            is_valid, msg = self._execution_verifier.verify_execution(
+                expected_signal=-1, executed_trade=trade, current_position=prev_position
+            )
+            if not is_valid:
+                logger.warning(f"실행 검증 실패 [{symbol}]: {msg}")
 
         # Log to database
         if self.db and self.session_id:
@@ -346,11 +379,16 @@ class PaperTrader:
         print(f"{'='*60}\n")
 
         self.is_running = True
+        self._stop_event.clear()
+        self._loop_exited.clear()
+        self._stopped = False
 
         try:
             while self.is_running:
                 self._realtime_iteration(timeframe)
-                time.sleep(interval_seconds)
+                # Use event wait instead of sleep for responsive shutdown
+                if self._stop_event.wait(timeout=interval_seconds):
+                    break
 
         except KeyboardInterrupt:
             print("\n\nPaper trading stopped by user")
@@ -360,6 +398,8 @@ class PaperTrader:
             import traceback
             traceback.print_exc()
             self.stop()
+        finally:
+            self._loop_exited.set()
 
     def _check_stop_loss_take_profit(self, symbol: str, current_price: float, timestamp: datetime) -> bool:
         """
@@ -507,6 +547,11 @@ class PaperTrader:
                     # Get current signal from strategy
                     signal, info = self.strategy.get_current_signal(df)
 
+                    # Validate signal
+                    if self.enable_verification:
+                        if not self._signal_validator.validate_signal_value(signal):
+                            logger.warning(f"유효하지 않은 시그널 값 [{symbol}]: {signal}")
+
                     # Log signal to database
                     if self.db and self.session_id:
                         signal_data = {
@@ -597,8 +642,37 @@ class PaperTrader:
 
     def stop(self):
         """Stop paper trading and finalize session"""
+        if self._stopped:
+            return
+        self._stopped = True
         self.is_running = False
+        self._stop_event.set()
         self._print_summary()
+
+        # Generate verification report
+        if self.enable_verification:
+            # Verify capital consistency
+            is_consistent, msg = self._execution_verifier.verify_capital_consistency(
+                initial_capital=self.initial_capital,
+                trades=self.trades,
+                current_capital=self.capital,
+            )
+            if not is_consistent:
+                logger.warning(f"자본금 정합성 검증 실패: {msg}")
+
+            # Verify position consistency
+            inconsistencies = self._execution_verifier.verify_position_consistency(
+                positions=self.positions,
+                trades=self.trades,
+            )
+            for inc in inconsistencies:
+                logger.warning(f"포지션 불일치: {inc}")
+
+            report = self._execution_verifier.generate_verification_report()
+            logger.info(
+                f"검증 리포트: 총 {report['total_checks']}건 "
+                f"(통과={report['passed']}, 경고={report['warnings']}, 오류={report['errors']})"
+            )
 
         # Update database session with final metrics
         if self.db and self.session_id:

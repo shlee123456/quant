@@ -5,9 +5,10 @@ Moving Average Crossover Trading Strategy
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple
+from trading_bot.strategies.base_strategy import BaseStrategy
 
 
-class MovingAverageCrossover:
+class MovingAverageCrossover(BaseStrategy):
     """
     Moving Average Crossover Strategy
 
@@ -25,7 +26,7 @@ class MovingAverageCrossover:
         """
         self.fast_period = fast_period
         self.slow_period = slow_period
-        self.name = f"MA_Crossover_{fast_period}_{slow_period}"
+        super().__init__(name=f"MA_Crossover_{fast_period}_{slow_period}")
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -40,6 +41,8 @@ class MovingAverageCrossover:
         # Handle empty DataFrame
         if df.empty:
             return df.copy()
+
+        self.validate_dataframe(df)
 
         # Make a copy to avoid modifying original
         data = df.copy()
@@ -127,6 +130,18 @@ class MovingAverageCrossover:
             })
 
         return signals
+
+    def get_params(self) -> Dict:
+        return {
+            'fast_period': self.fast_period,
+            'slow_period': self.slow_period,
+        }
+
+    def get_param_info(self) -> Dict:
+        return {
+            'fast_period': '빠른 이동평균 기간',
+            'slow_period': '느린 이동평균 기간',
+        }
 
     def __str__(self) -> str:
         return f"Moving Average Crossover Strategy (Fast: {self.fast_period}, Slow: {self.slow_period})"

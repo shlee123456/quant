@@ -19,10 +19,12 @@
 ```
 strategies/
 ├── __init__.py
+├── base_strategy.py             # 전략 추상 기본 클래스 (ABC) - 모든 전략이 상속
 ├── rsi_strategy.py              # RSI (Relative Strength Index)
 ├── macd_strategy.py             # MACD (Moving Average Convergence Divergence)
 ├── bollinger_bands_strategy.py  # Bollinger Bands
-└── stochastic_strategy.py       # Stochastic Oscillator
+├── stochastic_strategy.py       # Stochastic Oscillator
+└── rsi_macd_combo_strategy.py   # RSI+MACD 콤보 전략
 ```
 
 ---
@@ -117,7 +119,7 @@ Lower Band = Middle Band - (2 * std)
 
 ## 전략 구현 템플릿
 
-새로운 전략을 추가할 때 사용할 템플릿:
+새로운 전략은 반드시 `BaseStrategy`를 상속해야 합니다:
 
 ```python
 """
@@ -130,90 +132,58 @@ from typing import Dict, List, Tuple
 import pandas as pd
 import numpy as np
 
+from trading_bot.strategies.base_strategy import BaseStrategy
 
-class MyStrategy:
+
+class MyStrategy(BaseStrategy):
     """
     [전략명] 전략
-    
+
     Parameters:
         param1 (int): [설명]
         param2 (float): [설명]
     """
-    
+
     def __init__(self, param1: int = 10, param2: float = 2.0):
+        super().__init__(name=f"MyStrategy_{param1}_{param2}")
         self.param1 = param1
         self.param2 = param2
-        self.name = f"MyStrategy_{param1}_{param2}"
-    
+
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        지표 계산 및 시그널 생성
-        
-        Args:
-            df: OHLCV 데이터 (columns: open, high, low, close, volume)
-        
-        Returns:
-            DataFrame with indicators, signal, position
-        """
+        self.validate_dataframe(df)  # OHLCV 필수 컬럼 검증
         data = df.copy()
-        
+
         # 1. 지표 계산
-        data['indicator1'] = self._calculate_indicator1(data)
-        data['indicator2'] = self._calculate_indicator2(data)
-        
+        data['indicator1'] = data['close'].rolling(window=self.param1).mean()
+        data['indicator2'] = data['close'].rolling(window=self.param1).std()
+
         # 2. 시그널 생성
-        data['signal'] = 0  # 0 = HOLD, 1 = BUY, -1 = SELL
-        
-        # BUY 조건
-        buy_condition = (data['indicator1'] > data['indicator2'])
-        data.loc[buy_condition, 'signal'] = 1
-        
-        # SELL 조건
-        sell_condition = (data['indicator1'] < data['indicator2'])
-        data.loc[sell_condition, 'signal'] = -1
-        
-        # 3. 포지션 계산 (시그널을 forward fill)
+        data['signal'] = 0
+        data.loc[data['indicator1'] > data['indicator2'], 'signal'] = 1
+        data.loc[data['indicator1'] < data['indicator2'], 'signal'] = -1
+
+        # 3. 포지션 계산
         data['position'] = data['signal'].replace(0, np.nan).ffill().fillna(0)
-        
+
         return data
-    
-    def _calculate_indicator1(self, data: pd.DataFrame) -> pd.Series:
-        """지표 1 계산 (private 메서드)"""
-        return data['close'].rolling(window=self.param1).mean()
-    
-    def _calculate_indicator2(self, data: pd.DataFrame) -> pd.Series:
-        """지표 2 계산 (private 메서드)"""
-        return data['close'].rolling(window=self.param1).std()
-    
+
     def get_current_signal(self, df: pd.DataFrame) -> Tuple[int, Dict]:
-        """
-        현재 시그널 반환
-        
-        Returns:
-            (signal, info_dict)
-        """
         data = self.calculate_indicators(df)
         last_row = data.iloc[-1]
-        
         info = {
             'indicator1': last_row['indicator1'],
             'indicator2': last_row['indicator2'],
             'close': last_row['close']
         }
-        
         return int(last_row['signal']), info
-    
+
     def get_all_signals(self, df: pd.DataFrame) -> List[Dict]:
-        """
-        모든 시그널 이벤트 반환
-        
-        Returns:
-            List of signal events
-        """
         data = self.calculate_indicators(df)
         signals_df = data[data['signal'] != 0].copy()
-        
         return signals_df.to_dict('records')
+
+    def get_params(self) -> Dict:
+        return {'param1': self.param1, 'param2': self.param2}
 ```
 
 ---

@@ -10,11 +10,12 @@ from typing import Dict, List, Tuple
 import pandas as pd
 import numpy as np
 from ..logging_config import get_strategy_logger
+from .base_strategy import BaseStrategy
 
 logger = get_strategy_logger()
 
 
-class RSIMACDComboStrategy:
+class RSIMACDComboStrategy(BaseStrategy):
     """
     RSI + MACD 복합 전략
 
@@ -45,7 +46,7 @@ class RSIMACDComboStrategy:
         self.macd_fast = macd_fast
         self.macd_slow = macd_slow
         self.macd_signal = macd_signal
-        self.name = f"RSI_MACD_Combo_{rsi_period}_{rsi_oversold}_{rsi_overbought}"
+        super().__init__(name=f"RSI_MACD_Combo_{rsi_period}_{rsi_oversold}_{rsi_overbought}")
 
         logger.debug(
             f"Initialized {self.name} - "
@@ -86,6 +87,8 @@ class RSIMACDComboStrategy:
         """
         if df.empty:
             return df.copy()
+
+        self.validate_dataframe(df)
 
         data = df.copy()
 
@@ -192,6 +195,26 @@ class RSIMACDComboStrategy:
             })
 
         return signals
+
+    def get_params(self) -> Dict:
+        return {
+            'rsi_period': self.rsi_period,
+            'rsi_oversold': self.rsi_oversold,
+            'rsi_overbought': self.rsi_overbought,
+            'macd_fast': self.macd_fast,
+            'macd_slow': self.macd_slow,
+            'macd_signal': self.macd_signal,
+        }
+
+    def get_param_info(self) -> Dict:
+        return {
+            'rsi_period': 'RSI 계산 기간',
+            'rsi_oversold': 'RSI 과매도 임계값',
+            'rsi_overbought': 'RSI 과매수 임계값',
+            'macd_fast': 'MACD 빠른 EMA 기간',
+            'macd_slow': 'MACD 느린 EMA 기간',
+            'macd_signal': 'MACD 시그널 라인 기간',
+        }
 
     def __str__(self) -> str:
         return (
