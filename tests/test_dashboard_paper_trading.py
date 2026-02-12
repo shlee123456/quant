@@ -180,7 +180,7 @@ def test_equity_comparison_chart_data(temp_db):
 def test_create_equity_comparison_chart_function(temp_db):
     """Test equity comparison chart creation function"""
     # Import the function from dashboard/pages/strategy_comparison.py
-    from dashboard.pages.strategy_comparison import create_equity_comparison_chart
+    from dashboard.tabs.strategy_comparison import create_equity_comparison_chart
 
     sessions = temp_db.get_all_sessions()
     session_ids = [s['session_id'] for s in sessions[:2]]
@@ -197,7 +197,7 @@ def test_create_equity_comparison_chart_function(temp_db):
 
 def test_create_equity_comparison_chart_with_no_data(temp_db):
     """Test equity comparison chart with sessions that have no snapshots"""
-    from dashboard.pages.strategy_comparison import create_equity_comparison_chart
+    from dashboard.tabs.strategy_comparison import create_equity_comparison_chart
 
     # Create session with no snapshots
     session_id = temp_db.create_session('TestStrategy', 10000.0)

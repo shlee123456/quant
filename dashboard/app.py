@@ -20,12 +20,12 @@ from dashboard.favorites import render_favorites_widget
 from dashboard.session_manager import render_session_manager
 
 # Page modules
-from dashboard.pages.paper_trading import paper_trading_tab
-from dashboard.pages.backtest import backtest_tab
-from dashboard.pages.strategy_comparison import paper_trading_comparison_tab, strategy_comparison_tab
-from dashboard.pages.live_monitor import live_monitor_tab
-from dashboard.pages.realtime_quotes import realtime_quotes_tab
-from dashboard.pages.scheduler import scheduler_tab
+from dashboard.tabs.paper_trading import paper_trading_tab
+from dashboard.tabs.backtest import backtest_tab
+from dashboard.tabs.strategy_comparison import paper_trading_comparison_tab, strategy_comparison_tab
+from dashboard.tabs.live_monitor import live_monitor_tab
+from dashboard.tabs.realtime_quotes import realtime_quotes_tab
+from dashboard.tabs.scheduler import scheduler_tab
 
 
 # Page configuration
