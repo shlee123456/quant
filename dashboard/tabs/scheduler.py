@@ -21,7 +21,7 @@ def scheduler_tab():
     """
     lang = st.session_state.language
 
-    st.header("⏰ 자동 스케줄러")
+    st.header("자동 스케줄러")
     st.markdown("""
     미국 시장 시간에 맞춰 자동으로 전략 최적화, 페이퍼 트레이딩 시작/중지를 실행합니다.
     """)
@@ -49,9 +49,9 @@ def scheduler_tab():
     with col2:
         session_count = status.get('active_session_count', 0)
         if session_count > 0:
-            st.info(f"🔄 활성 세션: {session_count}개")
+            st.info(f"활성 세션: {session_count}개")
         else:
-            st.info("💤 트레이딩 세션 없음")
+            st.info("트레이딩 세션 없음")
 
     with col3:
         if status['running'] and status['next_run_time']:
@@ -83,7 +83,7 @@ def scheduler_tab():
                 st.error(f"{result['message']}: {result['error']}")
 
     with col3:
-        if st.button("🗑️ 로그 초기화", use_container_width=True):
+        if st.button("로그 초기화", use_container_width=True):
             manager.clear_logs()
             st.success("로그가 초기화되었습니다.")
             st.rerun()
@@ -91,7 +91,7 @@ def scheduler_tab():
     st.markdown("---")
 
     # 스케줄 설정
-    with st.expander("⚙️ 스케줄 시간 설정", expanded=False):
+    with st.expander("스케줄 시간 설정", expanded=False):
         st.markdown("**스케줄 시간 (Asia/Seoul - KST)**")
 
         col1, col2, col3 = st.columns(3)
@@ -126,7 +126,7 @@ def scheduler_tab():
                 st.error(f"{result['message']}: {result['error']}")
 
     # 프리셋 불러오기
-    with st.expander("💾 프리셋 불러오기", expanded=True):
+    with st.expander("프리셋 불러오기", expanded=True):
         preset_mgr = StrategyPresetManager()
         all_presets = preset_mgr.list_presets()
         preset_names = [p['name'] for p in all_presets]
@@ -144,7 +144,7 @@ def scheduler_tab():
 
             with col_p2:
                 load_preset_btn = st.button(
-                    "📥 불러오기",
+                    "불러오기",
                     disabled=(selected_preset == "(수동 설정)"),
                     key="scheduler_load_preset",
                     use_container_width=True
@@ -159,13 +159,13 @@ def scheduler_tab():
 
             # 현재 로드된 프리셋 표시
             if manager.loaded_preset_name:
-                st.info(f"📌 현재 적용된 프리셋: **{manager.loaded_preset_name}**")
+                st.info(f"현재 적용된 프리셋: **{manager.loaded_preset_name}**")
 
             # 프리셋 상세 정보 표시
             if selected_preset != "(수동 설정)":
                 preset_data = next((p for p in all_presets if p['name'] == selected_preset), None)
                 if preset_data:
-                    with st.expander("ℹ️ 프리셋 정보"):
+                    with st.expander("프리셋 정보"):
                         st.markdown(f"**전략**: {preset_data['strategy']}")
                         st.markdown(f"**종목**: {', '.join(preset_data['symbols'][:5])}")
                         st.markdown(f"**초기 자본**: ${preset_data['initial_capital']:,.0f}")
@@ -175,10 +175,10 @@ def scheduler_tab():
                             st.caption(preset_data['description'])
                         st.markdown(f"**파라미터**: `{preset_data['strategy_params']}`")
         else:
-            st.info("💡 저장된 프리셋이 없습니다. Paper Trading 탭에서 프리셋을 먼저 저장하세요!")
+            st.info("저장된 프리셋이 없습니다. Paper Trading 탭에서 프리셋을 먼저 저장하세요.")
 
     # 전략 설정
-    with st.expander("🎯 전략 설정 (수동)", expanded=False):
+    with st.expander("전략 설정 (수동)", expanded=False):
         st.markdown("**자동 트레이딩 전략 설정** (프리셋 대신 수동으로 설정)")
 
         col1, col2 = st.columns(2)
@@ -273,7 +273,7 @@ def scheduler_tab():
     st.markdown("---")
 
     # 스케줄 정보 표시
-    st.subheader("📅 스케줄 정보")
+    st.subheader("스케줄 정보")
 
     col1, col2 = st.columns(2)
 
@@ -309,7 +309,7 @@ def scheduler_tab():
     st.markdown("---")
 
     # 활성 세션 목록
-    st.subheader("📂 활성 세션 목록")
+    st.subheader("활성 세션 목록")
 
     active_sessions = status.get('active_sessions', [])
 
@@ -371,7 +371,7 @@ def scheduler_tab():
     st.markdown("---")
 
     # 실시간 로그 표시
-    st.subheader("📋 실시간 로그")
+    st.subheader("실시간 로그")
 
     # 로그 줄 수 선택
     log_lines = st.slider("표시할 로그 줄 수", min_value=10, max_value=500, value=100, step=10)

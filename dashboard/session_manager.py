@@ -17,7 +17,7 @@ def render_session_manager(lang: str = 'ko') -> None:
     Args:
         lang: Language code ('ko' or 'en')
     """
-    st.subheader("📂 세션 관리" if lang == 'ko' else "📂 Session Manager")
+    st.subheader("세션 관리" if lang == 'ko' else "Session Manager")
     st.caption(
         "모든 Paper Trading 세션을 관리하고, 로그를 조회할 수 있습니다."
         if lang == 'ko'
@@ -140,8 +140,8 @@ def _render_session_detail(db: TradingDatabase, session: Dict[str, Any], lang: s
 
     # Session overview card
     with st.expander(
-        f"📋 세션 정보: {session_id[:12]}..." if lang == 'ko'
-        else f"📋 Session Info: {session_id[:12]}...",
+        f"세션 정보: {session_id[:12]}..." if lang == 'ko'
+        else f"Session Info: {session_id[:12]}...",
         expanded=True
     ):
         col1, col2, col3 = st.columns(3)
@@ -175,9 +175,9 @@ def _render_session_detail(db: TradingDatabase, session: Dict[str, Any], lang: s
 
     # Tabs for different log views
     log_tab1, log_tab2, log_tab3 = st.tabs([
-        "📝 거래 내역" if lang == 'ko' else "📝 Trades",
-        "📈 포트폴리오 추이" if lang == 'ko' else "📈 Portfolio",
-        "🔔 전략 시그널" if lang == 'ko' else "🔔 Signals",
+        "거래 내역" if lang == 'ko' else "Trades",
+        "포트폴리오 추이" if lang == 'ko' else "Portfolio",
+        "전략 시그널" if lang == 'ko' else "Signals",
     ])
 
     with log_tab1:

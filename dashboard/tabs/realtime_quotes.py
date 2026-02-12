@@ -38,8 +38,8 @@ def realtime_quotes_tab():
         # Selection method: List or Direct Input
         selection_method = st.radio(
             "종목 선택 방법" if lang == 'ko' else "Selection Method",
-            ["📋 목록에서 선택" if lang == 'ko' else "📋 Select from List",
-             "⌨️ 직접 입력 (모든 미국 주식)" if lang == 'ko' else "⌨️ Direct Input (All US Stocks)"],
+            ["목록에서 선택" if lang == 'ko' else "Select from List",
+             "직접 입력 (모든 미국 주식)" if lang == 'ko' else "Direct Input (All US Stocks)"],
             horizontal=True,
             key='quote_selection_method'
         )
@@ -51,7 +51,7 @@ def realtime_quotes_tab():
         stock_options = [f"{stock['symbol']} - {stock['name']}" for stock in all_stocks]
         stock_symbols = [stock['symbol'] for stock in all_stocks]
 
-        if selection_method.startswith("📋"):
+        if "목록" in selection_method or "Select from" in selection_method:
             # List selection mode
             # Find current selection index
             try:
@@ -72,7 +72,7 @@ def realtime_quotes_tab():
 
         else:
             # Direct input mode (yfinance)
-            st.info("💡 " + ("PLTR, SHOP, COIN, UBER, ABNB, RBLX 등 모든 미국 주식 심볼을 입력하세요." if lang == 'ko' else "Enter any US stock symbol: PLTR, SHOP, COIN, UBER, ABNB, RBLX, etc."))
+            st.info("PLTR, SHOP, COIN, UBER, ABNB, RBLX 등 모든 미국 주식 심볼을 입력하세요." if lang == 'ko' else "Enter any US stock symbol: PLTR, SHOP, COIN, UBER, ABNB, RBLX, etc.")
 
             # Text input for custom symbol
             custom_symbol = st.text_input(
@@ -186,7 +186,7 @@ def realtime_quotes_tab():
     from dashboard.yfinance_helper import fetch_ticker_yfinance
 
     # Try KIS broker first (for list selection)
-    if selection_method.startswith("📋"):
+    if "목록" in selection_method or "Select from" in selection_method:
         broker = get_kis_broker()
 
         if broker is not None:
@@ -215,7 +215,7 @@ def realtime_quotes_tab():
 
     # Show data source
     if data_source:
-        st.caption(f"📊 " + ("데이터 소스:" if lang == 'ko' else "Data source:") + f" {data_source}")
+        st.caption(("데이터 소스:" if lang == 'ko' else "Data source:") + f" {data_source}")
 
     # Display metrics in columns
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -260,9 +260,8 @@ def realtime_quotes_tab():
     # Additional info: Change amount
     change_amount = ticker.get('change', 0.0)
     change_sign = "+" if change_amount >= 0 else ""
-    change_color = "🔴" if change_amount >= 0 else "🔵"
 
-    st.info(f"{change_color} {get_text('change_amount', lang)}: {change_sign}${change_amount:.2f} ({change_rate:+.2f}%)")
+    st.info(f"{get_text('change_amount', lang)}: {change_sign}${change_amount:.2f} ({change_rate:+.2f}%)")
 
     # OHLCV Chart (US-006)
     st.divider()
@@ -295,7 +294,7 @@ def realtime_quotes_tab():
         from dashboard.yfinance_helper import fetch_ohlcv_yfinance
 
         # Try KIS broker first (for list selection)
-        if selection_method.startswith("📋"):
+        if "목록" in selection_method or "Select from" in selection_method:
             broker = get_kis_broker()
 
             if broker is not None:

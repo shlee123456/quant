@@ -17,7 +17,7 @@ def render_market_timer(lang: str = 'ko') -> None:
         lang: Language code ('ko' or 'en')
     """
     # Widget title
-    title = "🕐 시장 시간" if lang == 'ko' else "🕐 Market Hours"
+    title = "시장 시간" if lang == 'ko' else "Market Hours"
     st.sidebar.markdown(f"### {title}")
 
     try:
@@ -53,10 +53,10 @@ def render_market_timer(lang: str = 'ko') -> None:
 
         # Format countdown
         countdown = format_timedelta(time_diff, lang)
-        st.sidebar.markdown(f"⏱️ **{label}**: {countdown}")
+        st.sidebar.markdown(f"**{label}**: {countdown}")
 
         # Show market hours info (collapsible)
-        with st.sidebar.expander("📅 " + ("거래 시간표" if lang == 'ko' else "Trading Hours")):
+        with st.sidebar.expander("거래 시간표" if lang == 'ko' else "Trading Hours"):
             hours_display = market_hours.get_market_hours_display()
 
             if lang == 'ko':

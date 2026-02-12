@@ -31,7 +31,7 @@ def backtest_tab():
 
     # Preset selection section
     st.markdown("---")
-    st.subheader("💾 전략 프리셋")
+    st.subheader("전략 프리셋")
 
     preset_manager = StrategyPresetManager()
     preset_names = [p['name'] for p in preset_manager.list_presets()]
@@ -49,7 +49,7 @@ def backtest_tab():
 
         with col2:
             load_preset_btn = st.button(
-                "📥 불러오기",
+                "불러오기",
                 disabled=(selected_preset == "(새 설정)"),
                 key="backtest_load_preset",
                 use_container_width=True
@@ -58,7 +58,7 @@ def backtest_tab():
         with col3:
             if selected_preset != "(새 설정)":
                 preset = preset_manager.load_preset(selected_preset)
-                with st.expander("ℹ️ 프리셋 정보"):
+                with st.expander("프리셋 정보"):
                     st.markdown(f"**전략**: {preset['strategy']}")
                     st.markdown(f"**종목**: {', '.join(preset['symbols'][:3])}..." if len(preset['symbols']) > 3 else f"**종목**: {', '.join(preset['symbols'])}")
                     st.markdown(f"**초기 자본**: ${preset['initial_capital']:,.0f}")
@@ -81,11 +81,11 @@ def backtest_tab():
             st.rerun()
 
     else:
-        st.info("💡 Paper Trading 탭에서 전략을 저장하면 여기서 불러올 수 있습니다.")
+        st.info("Paper Trading 탭에서 전략을 저장하면 여기서 불러올 수 있습니다.")
 
     # Configuration section - all in one tab
     st.markdown("---")
-    st.subheader("⚙️ 백테스팅 설정")
+    st.subheader("백테스팅 설정")
 
     col1, col2 = st.columns(2)
 
@@ -108,7 +108,7 @@ def backtest_tab():
         )
 
         # Display strategy description
-        st.info(f"ℹ️ {STRATEGY_CONFIGS[selected_strategy]['description']}")
+        st.info(STRATEGY_CONFIGS[selected_strategy]['description'])
 
     with col2:
         # Initial capital
@@ -128,7 +128,7 @@ def backtest_tab():
 
     # Strategy parameters
     st.markdown("---")
-    st.subheader("📐 전략 파라미터")
+    st.subheader("전략 파라미터")
 
     strategy_params = {}
     param_config = STRATEGY_CONFIGS[selected_strategy]['params']
@@ -167,17 +167,17 @@ def backtest_tab():
 
     # Data configuration
     st.markdown("---")
-    st.subheader("📊 데이터 설정")
+    st.subheader("데이터 설정")
 
     # Data source selection
     data_source = st.radio(
         "데이터 소스",
-        ["🎲 시뮬레이션 데이터", "📈 실제 종목 (yfinance)"],
+        ["시뮬레이션 데이터", "실제 종목 (yfinance)"],
         key="backtest_data_source",
         help="시뮬레이션: 빠른 테스트용 가상 데이터 | 실제 종목: Yahoo Finance에서 실제 과거 데이터 조회"
     )
 
-    if data_source == "🎲 시뮬레이션 데이터":
+    if data_source == "시뮬레이션 데이터":
         # Simulation data configuration
         col1, col2 = st.columns(2)
 
@@ -251,14 +251,14 @@ def backtest_tab():
     # Run Backtest Button
     st.markdown("---")
 
-    if st.button("🚀 백테스팅 실행", type="primary", use_container_width=True, key="run_backtest_btn"):
+    if st.button("백테스팅 실행", type="primary", use_container_width=True, key="run_backtest_btn"):
         with st.spinner("백테스팅 실행 중..."):
             try:
                 # Create strategy instance
                 strategy_instance = create_strategy(selected_strategy, strategy_params)
 
                 # Get data based on source
-                if data_source == "🎲 시뮬레이션 데이터":
+                if data_source == "시뮬레이션 데이터":
                     # Generate simulation data
                     generator = SimulationDataGenerator(seed=42)
                     df = generator.generate_trend_data(periods=num_periods, trend=trend_type)
@@ -284,7 +284,7 @@ def backtest_tab():
                     data_source_label = f"{symbol} (yfinance, {period_option})"
 
                     # Display data info
-                    st.info(f"📊 조회된 데이터: {len(df)}개 일봉 ({df['timestamp'].min().date()} ~ {df['timestamp'].max().date()})")
+                    st.info(f"조회된 데이터: {len(df)}개 일봉 ({df['timestamp'].min().date()} ~ {df['timestamp'].max().date()})")
 
                 if df.empty:
                     st.error("데이터 생성/조회에 실패했습니다.")
@@ -331,7 +331,7 @@ def display_backtest_results(backtest_data: Dict):
     data_source = backtest_data.get('data_source', '알 수 없음')  # 데이터 소스
 
     # Data source info
-    st.info(f"📊 **데이터 소스**: {data_source}")
+    st.caption(f"데이터 소스: {data_source}")
 
     # Performance Metrics
     st.subheader(get_text('performance_metrics', lang))

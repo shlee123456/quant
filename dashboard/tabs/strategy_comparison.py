@@ -89,7 +89,7 @@ def paper_trading_comparison_tab():
     """Paper trading sessions comparison interface"""
     lang = st.session_state.language
 
-    st.header("📊 Strategy Comparison")
+    st.header("세션 비교")
 
     st.markdown("""
     과거 모의투자 세션들의 성과를 비교합니다. 여러 전략과 종목 조합의 결과를 한눈에 확인하세요.
@@ -100,15 +100,15 @@ def paper_trading_comparison_tab():
         db = TradingDatabase()
         all_sessions = db.get_all_sessions()
     except Exception as e:
-        st.error(f"❌ 데이터베이스 연결 실패: {e}")
+        st.error(f"데이터베이스 연결 실패: {e}")
         return
 
     if not all_sessions:
-        st.info("ℹ️ 아직 완료된 모의투자 세션이 없습니다. Paper Trading 탭에서 모의투자를 시작해보세요!")
+        st.info("아직 완료된 모의투자 세션이 없습니다. Paper Trading 탭에서 모의투자를 시작해보세요.")
         return
 
     # Session selection
-    st.subheader("📋 세션 선택")
+    st.subheader("세션 선택")
 
     # Create session display names
     session_options = {}
@@ -140,7 +140,7 @@ def paper_trading_comparison_tab():
 
     # Comparison table
     st.markdown("---")
-    st.subheader("📊 성과 비교")
+    st.subheader("성과 비교")
 
     comparison_data = []
     for session in selected_sessions:
@@ -170,7 +170,7 @@ def paper_trading_comparison_tab():
 
         # Find best strategy by win rate
         st.markdown("---")
-        st.subheader("🏆 최고 성과")
+        st.subheader("최고 성과")
 
         completed_sessions = [s for s in selected_sessions if s['status'] == 'completed' and s['win_rate'] is not None]
 
@@ -202,25 +202,25 @@ def paper_trading_comparison_tab():
                     delta=f"{best_by_sharpe['strategy_name']}"
                 )
         else:
-            st.info("ℹ️ 완료된 세션이 없어 최고 성과를 표시할 수 없습니다.")
+            st.info("완료된 세션이 없어 최고 성과를 표시할 수 없습니다.")
 
         # Equity curve comparison chart
         st.markdown("---")
-        st.subheader("📈 수익 곡선 비교")
+        st.subheader("수익 곡선 비교")
 
         fig = create_equity_comparison_chart(selected_session_ids, db)
 
         if fig:
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("ℹ️ 선택한 세션에 포트폴리오 스냅샷 데이터가 없습니다. 모의투자를 실행하면 데이터가 생성됩니다.")
+            st.info("선택한 세션에 포트폴리오 스냅샷 데이터가 없습니다. 모의투자를 실행하면 데이터가 생성됩니다.")
 
     else:
         st.warning("⚠️ 선택한 세션에 대한 데이터가 없습니다.")
 
     # 세션 관리 (삭제)
     st.markdown("---")
-    with st.expander("🗑️ 세션 관리"):
+    with st.expander("세션 관리"):
         deletable_sessions = []
         for session in all_sessions:
             is_active = session['status'] == 'active'
@@ -266,7 +266,7 @@ def paper_trading_comparison_tab():
 
 def strategy_comparison_tab():
     """Strategy comparison interface (legacy - for backtesting)"""
-    st.header("🔍 Strategy Comparison")
+    st.header("전략 비교 (시뮬레이션)")
 
     st.markdown("""
     Compare the performance of different trading strategies on the same dataset.
@@ -289,7 +289,7 @@ def strategy_comparison_tab():
     # Parameter configuration for each strategy
     strategy_instances = {}
 
-    with st.expander("⚙️ Configure Strategy Parameters", expanded=True):
+    with st.expander("Configure Strategy Parameters", expanded=True):
         for strategy_name in selected_strategies:
             st.markdown(f"**{strategy_name}**")
             cols = st.columns(len(STRATEGY_CONFIGS[strategy_name]['params']))
@@ -369,7 +369,7 @@ def strategy_comparison_tab():
 
     # Display comparison results
     if st.session_state.comparison_results is not None:
-        st.subheader("📊 Comparison Results")
+        st.subheader("Comparison Results")
 
         # Highlight best performers
         styled_df = st.session_state.comparison_results.style.highlight_max(
@@ -389,7 +389,7 @@ def strategy_comparison_tab():
         st.dataframe(styled_df, use_container_width=True)
 
         # Visualization
-        st.subheader("📈 Visual Comparison")
+        st.subheader("Visual Comparison")
 
         col1, col2 = st.columns(2)
 

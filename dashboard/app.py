@@ -23,7 +23,6 @@ from dashboard.session_manager import render_session_manager
 from dashboard.tabs.paper_trading import paper_trading_tab
 from dashboard.tabs.backtest import backtest_tab
 from dashboard.tabs.strategy_comparison import paper_trading_comparison_tab, strategy_comparison_tab
-from dashboard.tabs.live_monitor import live_monitor_tab
 from dashboard.tabs.realtime_quotes import realtime_quotes_tab
 from dashboard.tabs.scheduler import scheduler_tab
 
@@ -102,7 +101,7 @@ def init_session_state():
     if 'paper_trading_active' not in st.session_state:
         st.session_state.paper_trading_active = False
     if 'enable_verification' not in st.session_state:
-        st.session_state.enable_verification = False
+        st.session_state.enable_verification = True
 
 
 def sidebar_config():
@@ -112,10 +111,10 @@ def sidebar_config():
     # ============================================================================
     # SIMPLIFIED SIDEBAR - Only Language and Quick Info
     # ============================================================================
-    st.sidebar.title("⚙️ 설정" if lang == 'ko' else "⚙️ Settings")
+    st.sidebar.title("설정" if lang == 'ko' else "Settings")
 
-    # Language Selection - Only thing that stays in sidebar
-    st.sidebar.subheader("🌐 " + get_text('language', lang))
+    # Language Selection
+    st.sidebar.subheader(get_text('language', lang))
 
     previous_lang = st.session_state.language
     language = st.sidebar.selectbox(
@@ -138,19 +137,6 @@ def sidebar_config():
     st.sidebar.markdown("---")
 
     # ============================================================================
-    # VERIFICATION TOGGLE
-    # ============================================================================
-    st.sidebar.subheader("🔍 검증 설정" if lang == 'ko' else "🔍 Verification")
-    st.session_state.enable_verification = st.sidebar.checkbox(
-        "주문 검증 활성화" if lang == 'ko' else "Enable Order Verification",
-        value=st.session_state.get('enable_verification', False),
-        help="시그널-주문 일치, 자본금 정합성 검증" if lang == 'ko'
-             else "Signal-order matching, capital consistency verification"
-    )
-
-    st.sidebar.markdown("---")
-
-    # ============================================================================
     # CONVENIENCE WIDGETS
     # ============================================================================
 
@@ -165,59 +151,11 @@ def sidebar_config():
     if st.session_state.get('market_type') == 'stock':
         render_favorites_widget(lang)
 
-    # ============================================================================
-    # QUICK GUIDE
-    # ============================================================================
-
-    # Quick info section
-    st.sidebar.subheader("📌 빠른 안내" if lang == 'ko' else "📌 Quick Guide")
-
+    # Minimal footer caption
     if lang == 'ko':
-        st.sidebar.info("""
-        **주요 기능**
-
-        🎮 **모의투자**
-        실시간 시장 데이터로 모의투자를 실행하세요.
-
-        📊 **전략 & 세션 비교**
-        여러 전략과 세션의 성과를 비교하세요.
-
-        📈 **실시간 시세**
-        미국 주식의 실시간 시세를 확인하세요.
-
-        📉 **백테스팅**
-        과거 데이터로 전략을 테스트하세요.
-
-        🔴 **라이브 모니터**
-        실시간 전략 신호를 모니터링하세요.
-        """)
+        st.sidebar.caption("각 탭에서 필요한 설정을 직접 구성할 수 있습니다.")
     else:
-        st.sidebar.info("""
-        **Main Features**
-
-        🎮 **Paper Trading**
-        Run simulated trading with real market data.
-
-        📊 **Strategy & Session Comparison**
-        Compare performance of strategies and sessions.
-
-        📈 **Real-time Quotes**
-        Check live quotes for US stocks.
-
-        📉 **Backtesting**
-        Test strategies on historical data.
-
-        🔴 **Live Monitor**
-        Monitor real-time strategy signals.
-        """)
-
-    st.sidebar.markdown("---")
-
-    # Market status (minimal info)
-    if lang == 'ko':
-        st.sidebar.caption("💡 각 탭에서 필요한 설정을 직접 구성할 수 있습니다.")
-    else:
-        st.sidebar.caption("💡 Configure settings in each tab as needed.")
+        st.sidebar.caption("Configure settings in each tab as needed.")
 
     # Initialize market type if not set
     if 'market_type' not in st.session_state:
@@ -235,33 +173,37 @@ def main():
     lang = st.session_state.language
 
     # Title
-    st.title(f"📈 {get_text('page_title', lang)}")
+    st.title(get_text('page_title', lang))
     st.markdown(f"**{get_text('page_subtitle', lang)}**")
     st.markdown("---")
 
     # Sidebar
     sidebar_config()
 
-    # Main tabs
-    # Reordered tabs - Paper Trading is the main feature, so it comes first
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "🎮 " + get_text('tab_paper', lang),           # Main feature: Paper Trading
-        "📊 전략 & 세션 비교",                          # Combined comparison
-        "⏰ 자동 스케줄러",                             # Automated Scheduler
-        "📈 " + get_text('tab_quotes', lang),          # Real-time quotes
-        "📉 " + get_text('tab_backtest', lang),        # Advanced: Backtesting
-        "🔴 " + get_text('tab_live', lang),            # Advanced: Live Monitor
+    # Main tabs - ordered by trading workflow
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        get_text('tab_paper', lang),           # Main: Paper Trading
+        get_text('tab_quotes', lang),          # Market data
+        get_text('tab_backtest', lang),        # Strategy validation
+        get_text('tab_analysis', lang),        # Performance analysis
+        get_text('tab_scheduler', lang),       # Automation
     ])
 
     with tab1:
         paper_trading_tab()
 
     with tab2:
+        realtime_quotes_tab()
+
+    with tab3:
+        backtest_tab()
+
+    with tab4:
         # Combined tab: Strategy Comparison + Session Comparison
-        st.header("📊 전략 & 세션 비교")
+        st.header(get_text('tab_analysis', lang))
 
         comparison_type = st.radio(
-            "비교 유형 선택",
+            "비교 유형 선택" if lang == 'ko' else "Comparison Type",
             ["세션 비교 (Paper Trading)", "전략 비교 (시뮬레이션)"],
             horizontal=True,
             help="Paper Trading 세션을 비교하거나, 시뮬레이션 데이터로 여러 전략을 비교할 수 있습니다"
@@ -274,17 +216,8 @@ def main():
         else:
             strategy_comparison_tab()
 
-    with tab3:
-        scheduler_tab()
-
-    with tab4:
-        realtime_quotes_tab()
-
     with tab5:
-        backtest_tab()
-
-    with tab6:
-        live_monitor_tab()
+        scheduler_tab()
 
     # Footer
     st.markdown("---")

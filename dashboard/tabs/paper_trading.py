@@ -225,7 +225,7 @@ def paper_trading_tab():
 
     # Strategy Preset Management Section
     st.markdown("---")
-    st.subheader("💾 전략 프리셋 관리")
+    st.subheader("전략 프리셋 관리")
 
     # Initialize preset manager
     preset_manager = StrategyPresetManager()
@@ -238,7 +238,7 @@ def paper_trading_tab():
 
     with col_preset1:
         # Load existing presets
-        st.write("**📂 저장된 프리셋 불러오기**")
+        st.write("**저장된 프리셋 불러오기**")
 
         all_presets = preset_manager.list_presets()
 
@@ -256,7 +256,7 @@ def paper_trading_tab():
                 col_load, col_run, col_delete = st.columns([1, 1, 1])
 
                 with col_load:
-                    if st.button("📥 불러오기", key="load_preset_btn", use_container_width=True):
+                    if st.button("불러오기", key="load_preset_btn", use_container_width=True):
                         loaded = preset_manager.load_preset(selected_preset_name)
                         if loaded:
                             st.session_state.loaded_preset = loaded
@@ -291,7 +291,7 @@ def paper_trading_tab():
                                 st.error(f"'{selected_preset_name}' 프리셋을 불러올 수 없습니다.")
 
                 with col_delete:
-                    if st.button("🗑️ 삭제", key="delete_preset_btn", type="secondary", use_container_width=True):
+                    if st.button("삭제", key="delete_preset_btn", type="secondary", use_container_width=True):
                         if preset_manager.delete_preset(selected_preset_name):
                             st.success(f"'{selected_preset_name}' 프리셋이 삭제되었습니다!")
                             st.session_state.loaded_preset = None
@@ -300,7 +300,7 @@ def paper_trading_tab():
                 # Show preset details
                 if selected_preset_name in preset_options:
                     preset = preset_options[selected_preset_name]
-                    with st.expander("📋 프리셋 상세 정보", expanded=False):
+                    with st.expander("프리셋 상세 정보", expanded=False):
                         st.write(f"**전략:** {preset['strategy']}")
                         st.write(f"**종목:** {', '.join(preset['symbols']) if preset['symbols'] else '없음'}")
                         st.write(f"**초기 자본:** ${preset['initial_capital']:,.2f}")
@@ -314,11 +314,11 @@ def paper_trading_tab():
                         if preset.get('last_used'):
                             st.caption(f"최근 사용: {preset['last_used'][:19]}")
         else:
-            st.info("💡 저장된 프리셋이 없습니다. 설정을 구성한 후 저장해보세요!")
+            st.info("저장된 프리셋이 없습니다. 설정을 구성한 후 저장해보세요.")
 
     with col_preset2:
         # Save current settings as preset
-        st.write("**💾 현재 설정 저장**")
+        st.write("**현재 설정 저장**")
 
         # Handle clear flag from previous save
         if st.session_state.get('preset_save_clear'):
@@ -341,12 +341,12 @@ def paper_trading_tab():
 
         # Note: Save button will be added after configuration section
         # so we can capture all the current settings
-        st.info("ℹ️ 아래 설정을 완료한 후 이 섹션으로 돌아와서 프리셋을 저장하세요")
+        st.info("아래 설정을 완료한 후 이 섹션으로 돌아와서 프리셋을 저장하세요")
 
     st.markdown("---")
 
     # Configuration Section
-    st.subheader("⚙️ 모의투자 설정")
+    st.subheader("모의투자 설정")
 
     col1, col2 = st.columns(2)
 
@@ -371,7 +371,7 @@ def paper_trading_tab():
     # Custom Combo Strategy Builder
     st.markdown("---")
     use_custom_combo = st.checkbox(
-        "🎨 커스텀 콤보 전략 만들기",
+        "커스텀 콤보 전략 만들기",
         value=False,
         help="여러 전략을 조합하여 나만의 전략을 만들 수 있습니다"
     )
@@ -383,8 +383,8 @@ def paper_trading_tab():
     combo_strategy_params = {}
 
     if use_custom_combo:
-        with st.expander("⚙️ 커스텀 콤보 전략 설정", expanded=True):
-            st.info("💡 여러 전략을 선택하고 조합 로직을 설정하여 커스텀 전략을 만드세요!")
+        with st.expander("커스텀 콤보 전략 설정", expanded=True):
+            st.info("여러 전략을 선택하고 조합 로직을 설정하여 커스텀 전략을 만드세요.")
 
             # Strategy selection for combo
             combo_col1, combo_col2 = st.columns(2)
@@ -438,7 +438,7 @@ def paper_trading_tab():
 
                 combo_strategy_params = {}
                 for strat_name in selected_combo_strategies:
-                    with st.expander(f"📐 {strat_name}", expanded=False):
+                    with st.expander(f"{strat_name}", expanded=False):
                         strat_config = STRATEGY_CONFIGS[strat_name]
                         params = {}
 
@@ -736,7 +736,7 @@ def paper_trading_tab():
 
     # Risk Management Section
     st.markdown("---")
-    st.subheader("🛡️ 리스크 관리")
+    st.subheader("리스크 관리")
 
     col1, col2, col3, col4 = st.columns(4)
 
@@ -791,11 +791,11 @@ def paper_trading_tab():
     # Show risk/reward ratio
     if enable_stop_loss and enable_take_profit:
         risk_reward_ratio = take_profit_pct / stop_loss_pct
-        st.info(f"📊 리스크/보상 비율: 1:{risk_reward_ratio:.1f} (손실 ${stop_loss_pct*100:.1f}% 대비 수익 ${take_profit_pct*100:.1f}%)")
+        st.info(f"리스크/보상 비율: 1:{risk_reward_ratio:.1f} (손실 {stop_loss_pct*100:.1f}% 대비 수익 {take_profit_pct*100:.1f}%)")
 
     # Strategy Parameters Section
     st.markdown("---")
-    st.subheader("📐 전략 파라미터")
+    st.subheader("전략 파라미터")
 
     # Get strategy config
     strategy_config = STRATEGY_CONFIGS.get(selected_strategy, {})
@@ -838,13 +838,13 @@ def paper_trading_tab():
                     )
 
         # Display strategy description
-        st.info(f"ℹ️ {strategy_config.get('description', '')}")
+        st.info(strategy_config.get('description', ''))
     else:
         st.warning("선택한 전략의 파라미터 설정이 없습니다.")
 
     # Save Preset Button
     st.markdown("---")
-    st.subheader("💾 현재 설정을 프리셋으로 저장")
+    st.subheader("현재 설정을 프리셋으로 저장")
 
     col_save1, col_save2 = st.columns([3, 1])
 
@@ -854,7 +854,7 @@ def paper_trading_tab():
         preset_desc_input = st.session_state.get('preset_description', '')
 
         if preset_name_input:
-            st.info(f"📝 프리셋 이름: **{preset_name_input}**")
+            st.info(f"프리셋 이름: **{preset_name_input}**")
             if preset_desc_input:
                 st.caption(f"설명: {preset_desc_input}")
         else:
@@ -862,7 +862,7 @@ def paper_trading_tab():
 
     with col_save2:
         save_preset_btn = st.button(
-            "💾 프리셋 저장",
+            "프리셋 저장",
             type="primary",
             use_container_width=True,
             disabled=not preset_name_input
@@ -900,7 +900,7 @@ def paper_trading_tab():
     st.markdown("---")
 
     # Session Management Section
-    with st.expander("📊 실행 중인 세션 관리", expanded=False):
+    with st.expander("실행 중인 세션 관리", expanded=False):
         db = TradingDatabase()
         all_sessions = db.get_all_sessions()
         active_sessions = [s for s in all_sessions if s['status'] == 'active']
@@ -919,7 +919,7 @@ def paper_trading_tab():
                     st.caption(f"Session ID: {session['session_id']}")
 
                 with col2:
-                    if st.button("📈 상세", key=f"detail_{session['session_id']}"):
+                    if st.button("상세", key=f"detail_{session['session_id']}"):
                         # Show session details
                         summary = db.get_session_summary(session['session_id'])
                         trades = db.get_session_trades(session['session_id'])
@@ -935,16 +935,16 @@ def paper_trading_tab():
                 st.markdown("---")
 
             # Bulk stop button
-            if st.button("🗑️ 모든 세션 중지", type="secondary", use_container_width=True):
+            if st.button("⏹️ 모든 세션 중지", type="secondary", use_container_width=True):
                 stop_all_active_sessions()
                 st.rerun()
         else:
-            st.info("ℹ️ 현재 활성화된 세션이 없습니다.")
+            st.info("현재 활성화된 세션이 없습니다.")
 
     st.markdown("---")
 
     # Control Section
-    st.subheader("🎮 모의투자 제어")
+    st.subheader("모의투자 제어")
 
     # Initialize session state for paper trading
     if 'paper_trading_active' not in st.session_state:
@@ -959,7 +959,7 @@ def paper_trading_tab():
     with col1:
         # 모의투자 시작 button
         start_button = st.button(
-            "🚀 모의투자 시작",
+            "▶️ 모의투자 시작",
             type="primary",
             disabled=st.session_state.paper_trading_active,
             use_container_width=True
@@ -977,9 +977,9 @@ def paper_trading_tab():
     with col3:
         # Status indicator
         if st.session_state.paper_trading_active:
-            st.success(f"🟢 모의투자 실행 중 - {selected_strategy}")
+            st.success(f"모의투자 실행 중 — {selected_strategy}")
         else:
-            st.info("⚪ 모의투자 대기 중")
+            st.info("모의투자 대기 중")
 
     # Handle button clicks
     if start_button:
@@ -1024,13 +1024,13 @@ def paper_trading_tab():
     # Display current session info
     if st.session_state.paper_trading_active and st.session_state.paper_trader:
         st.markdown("---")
-        st.subheader("📊 현재 세션 정보")
+        st.subheader("현재 세션 정보")
 
         trader = st.session_state.paper_trader
 
         # Display session ID if available
         if trader.session_id:
-            st.success(f"🔑 Session ID: **{trader.session_id}**")
+            st.caption(f"Session ID: {trader.session_id}")
 
         col1, col2, col3, col4 = st.columns(4)
 
@@ -1047,11 +1047,11 @@ def paper_trading_tab():
             st.metric("포지션 크기", f"{trader.position_size:.0%}")
 
         # Show selected symbols
-        st.info(f"📈 선택된 종목: {', '.join(trader.symbols)}")
+        st.caption(f"종목: {', '.join(trader.symbols)}")
 
         # Real-time Portfolio Status
         st.markdown("---")
-        st.subheader("💼 실시간 포트폴리오 현황")
+        st.subheader("실시간 포트폴리오 현황")
 
         # Auto-refresh control
         col1, col2 = st.columns([1, 3])
@@ -1064,7 +1064,7 @@ def paper_trading_tab():
             )
             st.session_state.paper_auto_refresh = auto_refresh
         with col2:
-            if st.button("🔄 수동 새로고침", key="manual_refresh_portfolio"):
+            if st.button("수동 새로고침", key="manual_refresh_portfolio"):
                 st.rerun()
 
         # Get current prices for all symbols
@@ -1113,7 +1113,7 @@ def paper_trading_tab():
 
                 # Positions table
                 st.markdown("---")
-                st.subheader("📊 보유 포지션")
+                st.subheader("보유 포지션")
 
                 if any(pos > 0 for pos in trader.positions.values()):
                     positions_data = []
@@ -1146,7 +1146,7 @@ def paper_trading_tab():
                 # Auto-refresh trigger (only if enabled)
                 if st.session_state.paper_auto_refresh:
                     st.markdown("---")
-                    st.caption("🔄 자동 새로고침 활성화: 10초마다 업데이트")
+                    st.caption("자동 새로고침 활성화: 10초마다 업데이트")
                     time.sleep(10)
                     st.rerun()
 
@@ -1158,4 +1158,4 @@ def paper_trading_tab():
 
     elif not st.session_state.paper_trading_active:
         # No active session message
-        st.info("ℹ️ 활성화된 모의투자 세션이 없습니다. '모의투자 시작' 버튼을 눌러 시작하세요.")
+        st.info("활성화된 모의투자 세션이 없습니다. '모의투자 시작' 버튼을 눌러 시작하세요.")

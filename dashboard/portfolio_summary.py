@@ -24,7 +24,7 @@ def render_portfolio_summary(lang: str = 'ko') -> None:
         return
 
     # Widget title
-    title = "💼 포트폴리오 요약" if lang == 'ko' else "💼 Portfolio Summary"
+    title = "포트폴리오 요약" if lang == 'ko' else "Portfolio Summary"
     st.sidebar.markdown(f"### {title}")
 
     try:
@@ -68,15 +68,15 @@ def render_portfolio_summary(lang: str = 'ko') -> None:
         # Position count
         position_count = len([v for v in trader.positions.values() if v > 0])
         st.sidebar.caption(
-            f"📊 보유 종목: {position_count}개" if lang == 'ko'
-            else f"📊 Positions: {position_count}"
+            f"보유 종목: {position_count}개" if lang == 'ko'
+            else f"Positions: {position_count}"
         )
 
         # Session info
         if hasattr(trader, 'session_id'):
             st.sidebar.caption(
-                f"🔖 세션: {trader.session_id[:8]}..." if lang == 'ko'
-                else f"🔖 Session: {trader.session_id[:8]}..."
+                f"세션: {trader.session_id[:8]}..." if lang == 'ko'
+                else f"Session: {trader.session_id[:8]}..."
             )
 
     except Exception as e:
