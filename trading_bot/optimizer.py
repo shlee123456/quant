@@ -28,11 +28,35 @@ class StrategyOptimizer:
         self.commission = commission
         self.results = []
 
+    def _create_backtester(self, strategy, use_vbt: bool = False):
+        """
+        백테스터 인스턴스 생성
+
+        Args:
+            strategy: 전략 객체
+            use_vbt: True이면 VBTBacktester, False이면 레거시 Backtester 사용
+        """
+        if use_vbt:
+            from .vbt_backtester import VBTBacktester
+            return VBTBacktester(
+                strategy=strategy,
+                initial_capital=self.initial_capital,
+                position_size=self.position_size,
+                commission=self.commission,
+            )
+        return Backtester(
+            strategy=strategy,
+            initial_capital=self.initial_capital,
+            position_size=self.position_size,
+            commission=self.commission,
+        )
+
     def optimize(
         self,
         strategy_class: Type,
         df: pd.DataFrame,
-        param_grid: Dict[str, List[Any]]
+        param_grid: Dict[str, List[Any]],
+        use_vbt: bool = False,
     ) -> Dict:
         """
         Optimize strategy parameters using grid search
@@ -42,6 +66,7 @@ class StrategyOptimizer:
             df: Historical OHLCV data
             param_grid: Dictionary of parameter names to lists of values
                        e.g., {'period': [10, 20, 30], 'threshold': [0.5, 1.0]}
+            use_vbt: True이면 VBTBacktester 사용 (전략에 get_entries_exits 필요)
 
         Returns:
             Dictionary with best parameters and results
@@ -64,12 +89,7 @@ class StrategyOptimizer:
             strategy = strategy_class(**param_dict)
 
             # Run backtest
-            backtester = Backtester(
-                strategy=strategy,
-                initial_capital=self.initial_capital,
-                position_size=self.position_size,
-                commission=self.commission
-            )
+            backtester = self._create_backtester(strategy, use_vbt=use_vbt)
 
             backtest_results = backtester.run(df)
 
@@ -109,7 +129,8 @@ class StrategyOptimizer:
     def compare_strategies(
         self,
         strategies: List[Any],
-        df: pd.DataFrame
+        df: pd.DataFrame,
+        use_vbt: bool = False,
     ) -> pd.DataFrame:
         """
         Compare multiple strategies on the same data
@@ -117,6 +138,7 @@ class StrategyOptimizer:
         Args:
             strategies: List of strategy instances to compare
             df: Historical OHLCV data
+            use_vbt: True이면 VBTBacktester 사용 (전략에 get_entries_exits 필요)
 
         Returns:
             DataFrame with comparison results
@@ -131,12 +153,7 @@ class StrategyOptimizer:
 
         for strategy in strategies:
             # Run backtest
-            backtester = Backtester(
-                strategy=strategy,
-                initial_capital=self.initial_capital,
-                position_size=self.position_size,
-                commission=self.commission
-            )
+            backtester = self._create_backtester(strategy, use_vbt=use_vbt)
 
             results = backtester.run(df)
 

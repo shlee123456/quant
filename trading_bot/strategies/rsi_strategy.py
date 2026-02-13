@@ -180,6 +180,32 @@ class RSIStrategy(BaseStrategy):
 
         return signals
 
+    def get_entries_exits(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
+        """
+        VBT 호환 진입/청산 Boolean Series 반환
+
+        - entries: RSI가 oversold 아래로 교차하는 시점
+        - exits: RSI가 overbought 위로 교차하는 시점
+        """
+        if df.empty:
+            return pd.Series(dtype=bool), pd.Series(dtype=bool)
+
+        self.validate_dataframe(df)
+
+        rsi = self._calculate_rsi(df['close'])
+
+        entries = (
+            (rsi < self.oversold) &
+            (rsi.shift(1) >= self.oversold)
+        ).fillna(False).astype(bool)
+
+        exits = (
+            (rsi > self.overbought) &
+            (rsi.shift(1) <= self.overbought)
+        ).fillna(False).astype(bool)
+
+        return entries, exits
+
     def get_params(self) -> Dict:
         return {
             'period': self.period,

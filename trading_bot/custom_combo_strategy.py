@@ -232,6 +232,53 @@ class CustomComboStrategy(BaseStrategy):
 
         return signals
 
+    def get_entries_exits(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
+        """
+        VBT 호환 진입/청산 Boolean Series 반환
+
+        각 하위 전략의 entries/exits를 조합 로직에 따라 결합합니다.
+        """
+        if df.empty:
+            return pd.Series(dtype=bool), pd.Series(dtype=bool)
+
+        self.validate_dataframe(df)
+
+        all_entries = []
+        all_exits = []
+        for strategy in self.strategies:
+            e, x = strategy.get_entries_exits(df)
+            all_entries.append(e)
+            all_exits.append(x)
+
+        entries_df = pd.DataFrame({f's{i}': s for i, s in enumerate(all_entries)})
+        exits_df = pd.DataFrame({f's{i}': s for i, s in enumerate(all_exits)})
+
+        if self.combination_logic == 'AND':
+            entries = entries_df.all(axis=1)
+            exits = exits_df.all(axis=1)
+        elif self.combination_logic == 'OR':
+            entries = entries_df.any(axis=1)
+            exits = exits_df.any(axis=1)
+        elif self.combination_logic == 'MAJORITY':
+            majority = len(self.strategies) / 2
+            entries = entries_df.sum(axis=1) > majority
+            exits = exits_df.sum(axis=1) > majority
+        elif self.combination_logic == 'WEIGHTED':
+            w = pd.Series(self.weights)
+            entry_score = entries_df.astype(float).multiply(w.values).sum(axis=1)
+            exit_score = exits_df.astype(float).multiply(w.values).sum(axis=1)
+            entries = entry_score > self.threshold
+            exits = exit_score > self.threshold
+        else:
+            raise ValueError(f"Unknown combination logic: {self.combination_logic}")
+
+        # Prevent overlap
+        overlap = entries & exits
+        entries = entries & ~overlap
+        exits = exits & ~overlap
+
+        return entries.astype(bool), exits.astype(bool)
+
     def get_params(self) -> Dict:
         return {
             'combination_logic': self.combination_logic,

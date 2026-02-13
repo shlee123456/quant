@@ -28,6 +28,14 @@ except ImportError:
     ReportGenerator = None
     _has_automation = False
 
+# VBT backtester (requires vectorbt)
+try:
+    from .vbt_backtester import VBTBacktester
+    _has_vbt = True
+except ImportError:
+    VBTBacktester = None
+    _has_vbt = False
+
 # Optional imports (require additional dependencies)
 try:
     from .data_handler import DataHandler
@@ -61,6 +69,8 @@ __all__ = [
     'OrderExecutionVerifier',
 ]
 
+if _has_vbt:
+    __all__.append('VBTBacktester')
 if _has_ccxt:
     __all__.append('DataHandler')
 if _has_paper_trader:

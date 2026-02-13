@@ -22,9 +22,11 @@ def temp_db():
 
     yield db
 
-    # Cleanup
-    if os.path.exists(db_path):
-        os.remove(db_path)
+    # Cleanup (including WAL/SHM files)
+    for suffix in ('', '-wal', '-shm'):
+        path = db_path + suffix
+        if os.path.exists(path):
+            os.remove(path)
     os.rmdir(temp_dir)
 
 
@@ -356,3 +358,88 @@ def test_create_session_without_display_name(temp_db):
     )
     summary = temp_db.get_session_summary(session_id)
     assert summary['display_name'] is None
+
+
+# --- WAL 모드 + 인덱스 최적화 테스트 ---
+
+def test_wal_mode_enabled(temp_db):
+    """WAL 저널 모드가 활성화되어 있는지 확인"""
+    conn = sqlite3.connect(temp_db.db_path)
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode")
+    mode = cursor.fetchone()[0]
+    conn.close()
+    assert mode == 'wal'
+
+
+def test_indexes_exist(temp_db):
+    """필수 인덱스가 모두 생성되었는지 확인"""
+    conn = sqlite3.connect(temp_db.db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='index'")
+    index_names = {row[0] for row in cursor.fetchall()}
+    conn.close()
+
+    expected_indexes = {
+        'idx_trades_session_id',
+        'idx_trades_timestamp',
+        'idx_snapshots_session_id',
+        'idx_snapshots_timestamp',
+        'idx_signals_session_id',
+        'idx_signals_timestamp',
+        'idx_sessions_status',
+    }
+    for idx in expected_indexes:
+        assert idx in index_names, f"Index {idx} not found"
+
+
+def test_context_manager_commits_on_success(temp_db):
+    """컨텍스트 매니저가 정상 종료 시 커밋하는지 확인"""
+    with temp_db._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO paper_trading_sessions
+            (session_id, strategy_name, start_time, initial_capital, status)
+            VALUES ('ctx_test', 'TestStrategy', '2026-01-01T00:00:00', 10000.0, 'active')
+        """)
+
+    # 데이터가 커밋되었는지 확인
+    summary = temp_db.get_session_summary('ctx_test')
+    assert summary is not None
+    assert summary['strategy_name'] == 'TestStrategy'
+
+
+def test_context_manager_rollback_on_error(temp_db):
+    """컨텍스트 매니저가 예외 시 롤백하는지 확인"""
+    # 먼저 세션 하나 생성
+    temp_db.create_session('RollbackTest', 10000.0)
+
+    try:
+        with temp_db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO paper_trading_sessions
+                (session_id, strategy_name, start_time, initial_capital, status)
+                VALUES ('rollback_test', 'TestStrategy', '2026-01-01T00:00:00', 10000.0, 'active')
+            """)
+            # 강제 예외 발생
+            raise ValueError("Intentional error for rollback test")
+    except ValueError:
+        pass
+
+    # 롤백되었으므로 데이터가 없어야 함
+    summary = temp_db.get_session_summary('rollback_test')
+    assert summary is None
+
+
+def test_context_manager_sets_row_factory(temp_db):
+    """컨텍스트 매니저가 row_factory를 sqlite3.Row로 설정하는지 확인"""
+    temp_db.create_session('RowFactoryTest', 10000.0)
+
+    with temp_db._get_connection() as conn:
+        assert conn.row_factory == sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM paper_trading_sessions LIMIT 1")
+        row = cursor.fetchone()
+        # sqlite3.Row는 dict처럼 키로 접근 가능
+        assert row['strategy_name'] == 'RowFactoryTest'

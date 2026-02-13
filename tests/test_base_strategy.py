@@ -34,6 +34,11 @@ class DummyStrategy(BaseStrategy):
     def get_all_signals(self, df):
         return []
 
+    def get_entries_exits(self, df):
+        entries = pd.Series(False, index=df.index)
+        exits = pd.Series(False, index=df.index)
+        return entries, exits
+
     def get_params(self):
         return {}
 
@@ -183,6 +188,9 @@ class TestNameAndRepr:
 
             def get_all_signals(self, df):
                 return []
+
+            def get_entries_exits(self, df):
+                return pd.Series(dtype=bool), pd.Series(dtype=bool)
 
             def get_params(self):
                 return {"period": 14, "overbought": 70}
