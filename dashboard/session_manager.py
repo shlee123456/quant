@@ -101,7 +101,8 @@ def _render_session_list(db: TradingDatabase, lang: str) -> None:
         status_emoji = _status_emoji(s['status'])
         start_str = s['start_time'][:16] if s['start_time'] else '?'
         ret = f"{s.get('total_return', 0) or 0:+.2f}%" if s.get('total_return') else ''
-        label = f"{status_emoji} {s['strategy_name']} | {start_str} | {ret}"
+        display = s.get('display_name') or s['strategy_name']
+        label = f"{status_emoji} {display} | {start_str} | {ret}"
         session_options.append(label)
 
     selected_idx = st.selectbox(
@@ -139,9 +140,10 @@ def _render_session_detail(db: TradingDatabase, session: Dict[str, Any], lang: s
     session_id = session['session_id']
 
     # Session overview card
+    display = session.get('display_name') or session_id[:12] + '...'
     with st.expander(
-        f"세션 정보: {session_id[:12]}..." if lang == 'ko'
-        else f"Session Info: {session_id[:12]}...",
+        f"세션 정보: {display}" if lang == 'ko'
+        else f"Session Info: {display}",
         expanded=True
     ):
         col1, col2, col3 = st.columns(3)

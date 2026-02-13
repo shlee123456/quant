@@ -10,6 +10,18 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 
+def generate_display_name(strategy_name: str, symbols: List[str], preset_name: Optional[str] = None) -> str:
+    """세션 표시 이름 생성"""
+    if not symbols:
+        symbols_summary = ""
+    elif len(symbols) == 1:
+        symbols_summary = symbols[0]
+    else:
+        symbols_summary = f"{symbols[0]}외{len(symbols) - 1}"
+    label = preset_name if preset_name else strategy_name
+    return f"{label} | {symbols_summary}" if symbols_summary else label
+
+
 class TradingDatabase:
     """
     SQLite database manager for paper trading
@@ -48,6 +60,7 @@ class TradingDatabase:
             CREATE TABLE IF NOT EXISTS paper_trading_sessions (
                 session_id TEXT PRIMARY KEY,
                 strategy_name TEXT NOT NULL,
+                display_name TEXT,
                 start_time TEXT NOT NULL,
                 end_time TEXT,
                 initial_capital REAL NOT NULL,
@@ -105,16 +118,23 @@ class TradingDatabase:
             )
         """)
 
+        # Migrate existing DB: add display_name column if missing
+        try:
+            cursor.execute("SELECT display_name FROM paper_trading_sessions LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute("ALTER TABLE paper_trading_sessions ADD COLUMN display_name TEXT")
+
         conn.commit()
         conn.close()
 
-    def create_session(self, strategy_name: str, initial_capital: float) -> str:
+    def create_session(self, strategy_name: str, initial_capital: float, display_name: Optional[str] = None) -> str:
         """
         Create a new paper trading session
 
         Args:
             strategy_name: Name of the trading strategy
             initial_capital: Starting capital
+            display_name: Display name for the session
 
         Returns:
             session_id: Unique session identifier
@@ -127,9 +147,9 @@ class TradingDatabase:
 
         cursor.execute("""
             INSERT INTO paper_trading_sessions
-            (session_id, strategy_name, start_time, initial_capital, status)
-            VALUES (?, ?, ?, ?, 'active')
-        """, (session_id, strategy_name, start_time, initial_capital))
+            (session_id, strategy_name, display_name, start_time, initial_capital, status)
+            VALUES (?, ?, ?, ?, ?, 'active')
+        """, (session_id, strategy_name, display_name, start_time, initial_capital))
 
         conn.commit()
         conn.close()

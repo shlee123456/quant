@@ -21,7 +21,7 @@ from trading_bot.strategies import (
     StochasticStrategy, RSIMACDComboStrategy
 )
 from trading_bot.paper_trader import PaperTrader
-from trading_bot.database import TradingDatabase
+from trading_bot.database import TradingDatabase, generate_display_name
 from trading_bot.strategy_presets import StrategyPresetManager
 from trading_bot.custom_combo_strategy import CustomComboStrategy
 from dashboard.components.strategy_selector import (
@@ -46,7 +46,8 @@ def start_paper_trading(
     combo_strategies: List[str] = None,
     combo_strategy_params: Dict[str, Dict] = None,
     combo_logic: str = 'MAJORITY',
-    combo_weights: List[float] = None
+    combo_weights: List[float] = None,
+    preset_name: Optional[str] = None
 ) -> Optional[str]:
     """
     Start paper trading session in background thread
@@ -111,6 +112,13 @@ def start_paper_trading(
         # Initialize database
         db = TradingDatabase()
 
+        # Generate display name
+        display_name = generate_display_name(
+            strategy_name=strategy_name,
+            symbols=symbols,
+            preset_name=preset_name
+        )
+
         # Create paper trader
         paper_trader = PaperTrader(
             strategy=strategy,  # type: ignore[arg-type]
@@ -122,7 +130,8 @@ def start_paper_trading(
             take_profit_pct=take_profit_pct,
             enable_stop_loss=enable_stop_loss,
             enable_take_profit=enable_take_profit,
-            db=db
+            db=db,
+            display_name=display_name
         )
 
         # Store in session state
@@ -280,6 +289,7 @@ def paper_trading_tab():
                                     take_profit_pct=preset_data.get('take_profit_pct', 0.10),
                                     enable_stop_loss=preset_data.get('enable_stop_loss', True),
                                     enable_take_profit=preset_data.get('enable_take_profit', True),
+                                    preset_name=selected_preset_name,
                                 )
                                 if session_id:
                                     st.session_state.loaded_preset = preset_data
@@ -912,7 +922,8 @@ def paper_trading_tab():
                 col1, col2, col3 = st.columns([3, 1, 1])
 
                 with col1:
-                    session_info = f"**{session['strategy_name']}** | "
+                    display = session.get('display_name') or session['strategy_name']
+                    session_info = f"**{display}** | "
                     session_info += f"시작: {session['start_time'][11:19]} | "
                     session_info += f"자본: ${session['initial_capital']:,.0f}"
                     st.write(session_info)
@@ -1030,6 +1041,8 @@ def paper_trading_tab():
 
         # Display session ID if available
         if trader.session_id:
+            if trader.display_name:
+                st.caption(f"{trader.display_name}")
             st.caption(f"Session ID: {trader.session_id}")
 
         col1, col2, col3, col4 = st.columns(4)

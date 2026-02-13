@@ -118,8 +118,9 @@ def paper_trading_comparison_tab():
         start_time = session['start_time'][:16] if session['start_time'] else 'N/A'
         status = session['status']
 
-        display_name = f"{session_id} | {strategy} | {start_time} | {status}"
-        session_options[display_name] = session_id
+        display = session.get('display_name') or session['strategy_name']
+        display_label = f"{display} | {start_time} | {status}"
+        session_options[display_label] = session_id
 
     selected_displays = st.multiselect(
         "비교할 세션을 선택하세요 (여러 개 선택 가능)",
@@ -149,7 +150,7 @@ def paper_trading_comparison_tab():
 
         if summary:
             comparison_data.append({
-                'Session ID': session['session_id'],
+                'Session': session.get('display_name') or session['strategy_name'],
                 'Strategy': session['strategy_name'],
                 'Start Time': session['start_time'][:16] if session['start_time'] else 'N/A',
                 'End Time': session['end_time'][:16] if session['end_time'] else 'Running',
@@ -228,7 +229,8 @@ def paper_trading_comparison_tab():
             strategy = session['strategy_name']
             start_time = session['start_time'][:16] if session['start_time'] else 'N/A'
             status = session['status']
-            label = f"{session_id} | {strategy} | {start_time} | {status}"
+            display = session.get('display_name') or session['strategy_name']
+            label = f"{display} | {start_time} | {status}"
 
             checked = st.checkbox(
                 label,

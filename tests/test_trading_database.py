@@ -7,7 +7,7 @@ import os
 import tempfile
 import sqlite3
 from datetime import datetime
-from trading_bot.database import TradingDatabase
+from trading_bot.database import TradingDatabase, generate_display_name
 
 
 @pytest.fixture
@@ -313,3 +313,46 @@ def test_delete_nonexistent_session(temp_db):
     """존재하지 않는 세션 삭제 시 False 반환"""
     result = temp_db.delete_session('nonexistent_session_id')
     assert result is False
+
+
+# --- generate_display_name 단위 테스트 ---
+
+def test_generate_display_name_single_symbol():
+    result = generate_display_name('RSI_14_30_70', ['NVDA'])
+    assert result == 'RSI_14_30_70 | NVDA'
+
+
+def test_generate_display_name_multiple_symbols():
+    result = generate_display_name('RSI_14_30_70', ['AAPL', 'MSFT', 'GOOGL'])
+    assert result == 'RSI_14_30_70 | AAPL외2'
+
+
+def test_generate_display_name_with_preset():
+    result = generate_display_name('RSI_14_30_70', ['AAPL', 'MSFT', 'GOOGL'], preset_name='보수적RSI')
+    assert result == '보수적RSI | AAPL외2'
+
+
+def test_generate_display_name_empty_symbols():
+    result = generate_display_name('RSI_14_30_70', [])
+    assert result == 'RSI_14_30_70'
+
+
+# --- create_session display_name 테스트 ---
+
+def test_create_session_with_display_name(temp_db):
+    session_id = temp_db.create_session(
+        strategy_name='TestStrategy',
+        initial_capital=10000.0,
+        display_name='보수적RSI | AAPL외2'
+    )
+    summary = temp_db.get_session_summary(session_id)
+    assert summary['display_name'] == '보수적RSI | AAPL외2'
+
+
+def test_create_session_without_display_name(temp_db):
+    session_id = temp_db.create_session(
+        strategy_name='TestStrategy',
+        initial_capital=10000.0
+    )
+    summary = temp_db.get_session_summary(session_id)
+    assert summary['display_name'] is None

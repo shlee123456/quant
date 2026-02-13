@@ -47,7 +47,8 @@ class PaperTrader:
         take_profit_pct: float = 0.10,
         enable_stop_loss: bool = True,
         enable_take_profit: bool = True,
-        enable_verification: bool = False
+        enable_verification: bool = False,
+        display_name: Optional[str] = None
     ):
         """
         Initialize paper trader
@@ -112,6 +113,7 @@ class PaperTrader:
 
         # Session tracking
         self.session_id: Optional[str] = None
+        self.display_name: Optional[str] = display_name
 
         # Verification
         self.enable_verification = enable_verification
@@ -152,9 +154,13 @@ class PaperTrader:
         self.is_running = True
 
         if self.db and not self.session_id:
+            if not self.display_name:
+                from trading_bot.database import generate_display_name
+                self.display_name = generate_display_name(self.strategy.name, self.symbols)
             self.session_id = self.db.create_session(
                 strategy_name=self.strategy.name,
-                initial_capital=self.initial_capital
+                initial_capital=self.initial_capital,
+                display_name=self.display_name
             )
             print(f"Created session: {self.session_id}")
 
