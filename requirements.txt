@@ -28,3 +28,4 @@ python-dotenv>=1.0.0  # Environment variables
 APScheduler>=3.10.0   # Task scheduling
 requests>=2.31.0      # HTTP requests for notifications
 slack-sdk>=3.23.0     # Slack API for file uploads
+docker>=7.0.0         # Docker container management

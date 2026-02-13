@@ -181,6 +181,7 @@ class StockSymbolDB:
 
         # Define popular stock presets
         self.presets = {
+            'Top 10 US Market Cap': ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'AVGO', 'LLY', 'WMT'],
             'FAANG': ['META', 'AAPL', 'AMZN', 'NFLX', 'GOOGL'],
             'Magnificent 7': ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA'],
             'Tech Giants': ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'ORCL', 'CSCO'],

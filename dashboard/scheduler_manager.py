@@ -568,20 +568,47 @@ class SchedulerManager:
 
     def get_active_sessions_info(self) -> List[Dict]:
         """
-        활성 세션 목록 상세 정보
+        활성 세션 목록 상세 정보 (인메모리 + DB 통합)
+
+        대시보드 내부에서 시작한 세션(인메모리)과
+        Docker 스케줄러 컨테이너에서 시작한 세션(DB)을 모두 반환합니다.
 
         Returns:
             List of dicts with session_id, strategy_name, symbols, start_time
         """
         sessions = []
+        in_memory_ids = set()
+
+        # 1) 인메모리 활성 세션 (대시보드에서 시작한 세션)
         for session_id, trader in self.active_traders.items():
+            in_memory_ids.add(session_id)
             sessions.append({
                 'session_id': session_id,
                 'strategy_name': trader.strategy.name if trader.strategy else 'Unknown',
                 'symbols': getattr(trader, 'symbols', []),
                 'start_time': getattr(trader, 'start_time', None),
                 'initial_capital': getattr(trader, 'initial_capital', 0),
+                'source': 'dashboard',
             })
+
+        # 2) DB에서 active 세션 조회 (Docker 스케줄러 등 외부에서 시작한 세션)
+        try:
+            db = TradingDatabase()
+            db_sessions = db.get_all_sessions(status_filter='active')
+            for s in db_sessions:
+                if s['session_id'] not in in_memory_ids:
+                    sessions.append({
+                        'session_id': s['session_id'],
+                        'strategy_name': s['strategy_name'],
+                        'symbols': [],  # DB에 별도 저장 안 됨
+                        'start_time': s.get('start_time'),
+                        'initial_capital': s.get('initial_capital', 0),
+                        'display_name': s.get('display_name'),
+                        'source': 'external',
+                    })
+        except Exception as e:
+            logger.warning(f"DB 세션 조회 실패: {e}")
+
         return sessions
 
     def get_status(self) -> Dict[str, any]:
@@ -598,8 +625,8 @@ class SchedulerManager:
                 'running': False,
                 'jobs': [],
                 'next_run_time': None,
-                'trading_active': len(self.active_traders) > 0,
-                'active_session_count': len(self.active_traders),
+                'trading_active': len(active_sessions) > 0,
+                'active_session_count': len(active_sessions),
                 'active_sessions': active_sessions,
                 'error': None
             }
@@ -617,8 +644,8 @@ class SchedulerManager:
                 'running': True,
                 'jobs': jobs_info,
                 'next_run_time': min([j['next_run_time'] for j in jobs_info if j['next_run_time']]) if jobs_info else None,
-                'trading_active': len(self.active_traders) > 0,
-                'active_session_count': len(self.active_traders),
+                'trading_active': len(active_sessions) > 0,
+                'active_session_count': len(active_sessions),
                 'active_sessions': active_sessions,
                 'error': None
             }

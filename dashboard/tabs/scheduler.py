@@ -316,18 +316,21 @@ def scheduler_tab():
     if active_sessions:
         for session_info in active_sessions:
             sid = session_info['session_id']
-            s_name = session_info.get('strategy_name', 'Unknown')
+            s_name = session_info.get('display_name') or session_info.get('strategy_name', 'Unknown')
             s_symbols = session_info.get('symbols', [])
             s_start = session_info.get('start_time', None)
             start_str = s_start.strftime('%H:%M') if hasattr(s_start, 'strftime') else str(s_start)[:16] if s_start else '-'
-            symbols_str = ', '.join(s_symbols[:3])
+            source = session_info.get('source', 'dashboard')
+            source_label = "🐳" if source == 'external' else ""
+
+            symbols_str = ', '.join(s_symbols[:3]) if s_symbols else ''
             if len(s_symbols) > 3:
                 symbols_str += f' 외 {len(s_symbols) - 3}개'
 
             col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns([2, 2, 2, 1.5, 1])
 
             with col_s1:
-                st.text(f"{sid[:12]}...")
+                st.text(f"{source_label} {sid[:12]}...")
             with col_s2:
                 st.text(s_name)
             with col_s3:
@@ -335,10 +338,11 @@ def scheduler_tab():
             with col_s4:
                 st.text(start_str)
             with col_s5:
-                if st.button("🛑", key=f"stop_session_{sid}", help=f"세션 {sid[:8]} 중지"):
-                    manager.stop_single_session(sid)
-                    st.success(f"세션 '{sid[:12]}' 중지 완료")
-                    st.rerun()
+                if source != 'external':
+                    if st.button("🛑", key=f"stop_session_{sid}", help=f"세션 {sid[:8]} 중지"):
+                        manager.stop_single_session(sid)
+                        st.success(f"세션 '{sid[:12]}' 중지 완료")
+                        st.rerun()
 
         # 전체 중지 / 세션 추가 버튼
         col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])

@@ -1000,6 +1000,10 @@ def paper_trading_tab():
         combo_log = combo_logic_name if use_custom_combo else 'MAJORITY'
         combo_wts = combo_weights if (use_custom_combo and combo_logic_name == 'WEIGHTED') else None
 
+        # 프리셋이 로드된 경우 프리셋명 전달
+        loaded = st.session_state.get('loaded_preset')
+        loaded_preset_name = loaded.get('name') if loaded else None
+
         session_id = start_paper_trading(
             strategy_name=selected_strategy,
             symbols=selected_symbols,
@@ -1014,7 +1018,8 @@ def paper_trading_tab():
             combo_strategies=combo_strats,
             combo_strategy_params=combo_params,
             combo_logic=combo_log,
-            combo_weights=combo_wts
+            combo_weights=combo_wts,
+            preset_name=loaded_preset_name
         )
 
         if session_id:
