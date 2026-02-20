@@ -809,11 +809,11 @@ def run_market_analysis():
         # CLAUDECODE 환경 변수 제거 (중첩 세션 방지), stdin으로 프롬프트 전달
         env = {k: v for k, v in os.environ.items() if k != 'CLAUDECODE'}
         proc = subprocess.run(
-            ["claude", "-p", "--model", "claude-opus-4-6", "--allowedTools", "mcp__claude_ai_Notion__*,Read,WebSearch"],
+            ["claude", "-p", "--model", "claude-sonnet-4-6", "--allowedTools", "mcp__claude_ai_Notion__*,Read,WebSearch"],
             input=prompt,
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=300,
             env=env,
         )
 
@@ -838,7 +838,7 @@ def run_market_analysis():
             )
 
     except subprocess.TimeoutExpired:
-        logger.error("Claude 노션 작성 타임아웃 (120초 초과)")
+        logger.error("Claude 노션 작성 타임아웃 (300초 초과)")
         notifier.notify_error("Claude 노션 작성 타임아웃", context="시장 분석")
     except Exception as e:
         logger.error(f"시장 분석 실패: {e}", exc_info=True)

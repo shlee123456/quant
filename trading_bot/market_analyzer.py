@@ -34,6 +34,13 @@ except ImportError:
     NewsCollector = None
     _has_news_collector = False
 
+try:
+    from .fear_greed_collector import FearGreedCollector
+    _has_fear_greed = True
+except ImportError:
+    FearGreedCollector = None
+    _has_fear_greed = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,14 +68,16 @@ class MarketAnalyzer:
         self.api_delay = api_delay
         self.regime_detector = RegimeDetector()
 
-    def analyze(self, symbols: List[str], broker: Any, collect_news: bool = True) -> Dict:
+    def analyze(self, symbols: List[str], broker: Any, collect_news: bool = True,
+                collect_fear_greed: bool = True) -> Dict:
         """
-        전체 분석 실행: 데이터 수집 + 지표 계산 + 레짐 감지 + 뉴스 수집
+        전체 분석 실행: 데이터 수집 + 지표 계산 + 레짐 감지 + 뉴스 수집 + F&G 지수
 
         Args:
             symbols: 분석 대상 종목 리스트
             broker: KoreaInvestmentBroker 인스턴스
             collect_news: 뉴스 수집 여부 (기본 True)
+            collect_fear_greed: 공포/탐욕 지수 수집 여부 (기본 True)
 
         Returns:
             구조화된 분석 결과 딕셔너리
@@ -140,6 +149,26 @@ class MarketAnalyzer:
                 logger.warning(f"뉴스 수집 실패 (기술적 분석은 정상 진행): {e}")
         elif collect_news and not _has_news_collector:
             logger.info("NewsCollector 미설치 - 뉴스 수집 건너뜀 (feedparser 설치 필요)")
+
+        # Fear & Greed Index 수집 (옵션)
+        if collect_fear_greed and _has_fear_greed:
+            try:
+                fg_collector = FearGreedCollector()
+                fg_data = fg_collector.collect(limit=30)
+                if fg_data is not None:
+                    # 차트 생성
+                    chart_path = fg_collector.generate_chart(fg_data)
+                    if chart_path:
+                        fg_data['chart_path'] = chart_path
+                    result['fear_greed_index'] = fg_data
+                    logger.info(
+                        f"Fear & Greed Index 수집 완료: "
+                        f"{fg_data['current']['value']} ({fg_data['current']['classification']})"
+                    )
+            except Exception as e:
+                logger.warning(f"Fear & Greed Index 수집 실패 (기술적 분석은 정상 진행): {e}")
+        elif collect_fear_greed and not _has_fear_greed:
+            logger.info("FearGreedCollector 미설치 - F&G 지수 수집 건너뜀")
 
         return result
 

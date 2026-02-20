@@ -72,15 +72,13 @@ services:
     # Restart policy
     restart: unless-stopped
 
-    # Override default command to run scheduler (전체 프리셋 5개)
+    # Override default command to run scheduler (0220 노션 분석 기반 3세션, $2000)
     command: >
       python scheduler.py
       --presets
-      "Top10 US - RSI 평균회귀"
-      "Top10 US - MACD 추세추종"
-      "Top10 US - 볼린저밴드 변동성"
-      "Top10 US - 듀얼 A조 빅테크"
-      "Top10 US - 듀얼 B조 다각화"
+      "0220 RSI 역발상 - 과매도 반등"
+      "0220 MACD 추세추종 - AI 강세"
+      "0220 볼린저 관망 - VOLATILE 대응"
 
     # Volume mounts (same as dashboard for data sharing)
     volumes:

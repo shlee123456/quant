@@ -68,6 +68,14 @@ except ImportError:
     NewsCollector = None
     _has_news_collector = False
 
+# Fear & Greed collector
+try:
+    from .fear_greed_collector import FearGreedCollector
+    _has_fear_greed = True
+except ImportError:
+    FearGreedCollector = None
+    _has_fear_greed = False
+
 # Optional imports (require additional dependencies)
 try:
     from .data_handler import DataHandler
@@ -117,3 +125,5 @@ if _has_market_analyzer:
     __all__.append('MarketAnalyzer')
 if _has_news_collector:
     __all__.append('NewsCollector')
+if _has_fear_greed:
+    __all__.append('FearGreedCollector')

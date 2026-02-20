@@ -129,11 +129,11 @@ def main():
     try:
         env = {k: v for k, v in os.environ.items() if k != 'CLAUDECODE'}
         proc = subprocess.run(
-            ["claude", "-p", "--model", "claude-opus-4-6", "--allowedTools", "mcp__claude_ai_Notion__*,Read,WebSearch"],
+            ["claude", "-p", "--model", "claude-sonnet-4-6", "--allowedTools", "mcp__claude_ai_Notion__*,Read,WebSearch"],
             input=prompt,
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=300,
             env=env,
         )
 
@@ -147,7 +147,7 @@ def main():
                 logger.error(f"stderr: {proc.stderr[:500]}")
 
     except subprocess.TimeoutExpired:
-        logger.error("Claude CLI 타임아웃 (180초 초과)")
+        logger.error("Claude CLI 타임아웃 (300초 초과)")
     except FileNotFoundError:
         logger.error("claude CLI를 찾을 수 없습니다. Claude Code가 설치되어 있는지 확인하세요.")
 
