@@ -175,6 +175,36 @@ class StochasticStrategy(BaseStrategy):
 
         return signals
 
+    def get_entries_exits(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
+        """
+        VBT 호환 진입/청산 Boolean Series 반환
+
+        - entries: %K가 oversold 구간에서 %D를 상향 돌파
+        - exits: %K가 overbought 구간에서 %D를 하향 돌파
+        """
+        if df.empty:
+            return pd.Series(dtype=bool), pd.Series(dtype=bool)
+
+        self.validate_dataframe(df)
+
+        data = self._calculate_stochastic(df)
+        k = data['stochastic_k']
+        d = data['stochastic_d']
+
+        entries = (
+            (k > d) &
+            (k.shift(1) <= d.shift(1)) &
+            (k < self.oversold)
+        ).fillna(False).astype(bool)
+
+        exits = (
+            (k < d) &
+            (k.shift(1) >= d.shift(1)) &
+            (k > self.overbought)
+        ).fillna(False).astype(bool)
+
+        return entries, exits
+
     def get_params(self) -> Dict:
         return {
             'k_period': self.k_period,

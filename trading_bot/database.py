@@ -5,6 +5,7 @@ SQLite database for paper trading sessions, trades, signals, and portfolio snaps
 import sqlite3
 import json
 import os
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from pathlib import Path
@@ -50,10 +51,30 @@ class TradingDatabase:
         # Initialize database
         self._init_db()
 
+    @contextmanager
+    def _get_connection(self):
+        """Context manager for connection reuse with WAL mode"""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def _init_db(self):
         """Create database tables if they don't exist"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+
+        # Enable WAL mode and busy timeout
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
 
         # Paper trading sessions table
         cursor.execute("""
@@ -118,6 +139,59 @@ class TradingDatabase:
             )
         """)
 
+        # Indexes for query performance
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_session_id ON trades(session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(session_id, timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_session_id ON portfolio_snapshots(session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp ON portfolio_snapshots(session_id, timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_signals_session_id ON strategy_signals(session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON strategy_signals(session_id, timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON paper_trading_sessions(status)")
+
+        # Regime history table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS regime_history (
+                regime_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                regime TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                adx REAL,
+                trend_direction REAL,
+                volatility_percentile REAL,
+                recommended_strategies TEXT,
+                details TEXT,
+                FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
+            )
+        """)
+
+        # LLM decisions table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS llm_decisions (
+                decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                decision_type TEXT NOT NULL,
+                request_context TEXT,
+                response TEXT,
+                latency_ms REAL,
+                model_name TEXT,
+                FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
+            )
+        """)
+
+        # Indexes for regime_history
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_session_id ON regime_history(session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_session_ts ON regime_history(session_id, timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_symbol_ts ON regime_history(symbol, timestamp)")
+
+        # Indexes for llm_decisions
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_llm_session_id ON llm_decisions(session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_llm_session_ts ON llm_decisions(session_id, timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_llm_type ON llm_decisions(decision_type)")
+
         # Migrate existing DB: add display_name column if missing
         try:
             cursor.execute("SELECT display_name FROM paper_trading_sessions LIMIT 1")
@@ -142,17 +216,13 @@ class TradingDatabase:
         session_id = f"{strategy_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         start_time = datetime.now().isoformat()
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            INSERT INTO paper_trading_sessions
-            (session_id, strategy_name, display_name, start_time, initial_capital, status)
-            VALUES (?, ?, ?, ?, ?, 'active')
-        """, (session_id, strategy_name, display_name, start_time, initial_capital))
-
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO paper_trading_sessions
+                (session_id, strategy_name, display_name, start_time, initial_capital, status)
+                VALUES (?, ?, ?, ?, ?, 'active')
+            """, (session_id, strategy_name, display_name, start_time, initial_capital))
 
         return session_id
 
@@ -172,32 +242,28 @@ class TradingDatabase:
                 - pnl: float (optional)
                 - pnl_pct: float (optional)
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
         # Convert timestamp to ISO format if datetime
         timestamp = trade['timestamp']
         if isinstance(timestamp, datetime):
             timestamp = timestamp.isoformat()
 
-        cursor.execute("""
-            INSERT INTO trades
-            (session_id, symbol, timestamp, type, price, size, commission, pnl, pnl_pct)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            session_id,
-            trade.get('symbol', 'UNKNOWN'),
-            timestamp,
-            trade['type'],
-            trade['price'],
-            trade['size'],
-            trade['commission'],
-            trade.get('pnl'),
-            trade.get('pnl_pct')
-        ))
-
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO trades
+                (session_id, symbol, timestamp, type, price, size, commission, pnl, pnl_pct)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session_id,
+                trade.get('symbol', 'UNKNOWN'),
+                timestamp,
+                trade['type'],
+                trade['price'],
+                trade['size'],
+                trade['commission'],
+                trade.get('pnl'),
+                trade.get('pnl_pct')
+            ))
 
     def log_signal(self, session_id: str, signal: Dict[str, Any]):
         """
@@ -213,9 +279,6 @@ class TradingDatabase:
                 - market_price: float
                 - executed: bool (optional)
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
         # Convert timestamp to ISO format if datetime
         timestamp = signal['timestamp']
         if isinstance(timestamp, datetime):
@@ -224,22 +287,21 @@ class TradingDatabase:
         # Serialize indicator values to JSON
         indicator_values_json = json.dumps(signal['indicator_values'])
 
-        cursor.execute("""
-            INSERT INTO strategy_signals
-            (session_id, symbol, timestamp, signal, indicator_values, market_price, executed)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            session_id,
-            signal['symbol'],
-            timestamp,
-            signal['signal'],
-            indicator_values_json,
-            signal['market_price'],
-            1 if signal.get('executed', False) else 0
-        ))
-
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO strategy_signals
+                (session_id, symbol, timestamp, signal, indicator_values, market_price, executed)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session_id,
+                signal['symbol'],
+                timestamp,
+                signal['signal'],
+                indicator_values_json,
+                signal['market_price'],
+                1 if signal.get('executed', False) else 0
+            ))
 
     def log_portfolio_snapshot(self, session_id: str, snapshot: Dict[str, Any]):
         """
@@ -253,9 +315,6 @@ class TradingDatabase:
                 - cash: float
                 - positions: dict {symbol: shares}
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
         # Convert timestamp to ISO format if datetime
         timestamp = snapshot['timestamp']
         if isinstance(timestamp, datetime):
@@ -264,20 +323,19 @@ class TradingDatabase:
         # Serialize positions to JSON
         positions_json = json.dumps(snapshot['positions'])
 
-        cursor.execute("""
-            INSERT INTO portfolio_snapshots
-            (session_id, timestamp, total_value, cash, positions)
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            session_id,
-            timestamp,
-            snapshot['total_value'],
-            snapshot['cash'],
-            positions_json
-        ))
-
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO portfolio_snapshots
+                (session_id, timestamp, total_value, cash, positions)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                session_id,
+                timestamp,
+                snapshot['total_value'],
+                snapshot['cash'],
+                positions_json
+            ))
 
     def get_session_summary(self, session_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -289,16 +347,12 @@ class TradingDatabase:
         Returns:
             Session dictionary or None if not found
         """
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT * FROM paper_trading_sessions WHERE session_id = ?
-        """, (session_id,))
-
-        row = cursor.fetchone()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM paper_trading_sessions WHERE session_id = ?
+            """, (session_id,))
+            row = cursor.fetchone()
 
         if row:
             return dict(row)
@@ -314,23 +368,19 @@ class TradingDatabase:
         Returns:
             List of session dictionaries
         """
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        if status_filter:
-            cursor.execute("""
-                SELECT * FROM paper_trading_sessions
-                WHERE status = ?
-                ORDER BY start_time DESC
-            """, (status_filter,))
-        else:
-            cursor.execute("""
-                SELECT * FROM paper_trading_sessions ORDER BY start_time DESC
-            """)
-
-        rows = cursor.fetchall()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if status_filter:
+                cursor.execute("""
+                    SELECT * FROM paper_trading_sessions
+                    WHERE status = ?
+                    ORDER BY start_time DESC
+                """, (status_filter,))
+            else:
+                cursor.execute("""
+                    SELECT * FROM paper_trading_sessions ORDER BY start_time DESC
+                """)
+            rows = cursor.fetchall()
 
         return [dict(row) for row in rows]
 
@@ -342,21 +392,16 @@ class TradingDatabase:
             session_id: Session identifier
             updates: Dictionary of fields to update
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        # Build SET clause dynamically
-        set_clause = ", ".join([f"{key} = ?" for key in updates.keys()])
-        values = list(updates.values()) + [session_id]
-
-        cursor.execute(f"""
-            UPDATE paper_trading_sessions
-            SET {set_clause}
-            WHERE session_id = ?
-        """, values)
-
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # Build SET clause dynamically
+            set_clause = ", ".join([f"{key} = ?" for key in updates.keys()])
+            values = list(updates.values()) + [session_id]
+            cursor.execute(f"""
+                UPDATE paper_trading_sessions
+                SET {set_clause}
+                WHERE session_id = ?
+            """, values)
 
     def get_session_trades(self, session_id: str) -> List[Dict[str, Any]]:
         """
@@ -368,16 +413,12 @@ class TradingDatabase:
         Returns:
             List of trade dictionaries
         """
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT * FROM trades WHERE session_id = ? ORDER BY timestamp
-        """, (session_id,))
-
-        rows = cursor.fetchall()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM trades WHERE session_id = ? ORDER BY timestamp
+            """, (session_id,))
+            rows = cursor.fetchall()
 
         return [dict(row) for row in rows]
 
@@ -391,16 +432,12 @@ class TradingDatabase:
         Returns:
             List of snapshot dictionaries with deserialized positions
         """
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT * FROM portfolio_snapshots WHERE session_id = ? ORDER BY timestamp
-        """, (session_id,))
-
-        rows = cursor.fetchall()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM portfolio_snapshots WHERE session_id = ? ORDER BY timestamp
+            """, (session_id,))
+            rows = cursor.fetchall()
 
         snapshots = []
         for row in rows:
@@ -421,16 +458,12 @@ class TradingDatabase:
         Returns:
             List of signal dictionaries with deserialized indicator values
         """
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT * FROM strategy_signals WHERE session_id = ? ORDER BY timestamp
-        """, (session_id,))
-
-        rows = cursor.fetchall()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM strategy_signals WHERE session_id = ? ORDER BY timestamp
+            """, (session_id,))
+            rows = cursor.fetchall()
 
         signals = []
         for row in rows:
@@ -451,30 +484,27 @@ class TradingDatabase:
         Returns:
             Number of sessions recovered
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Find all active sessions
-        cursor.execute("""
-            SELECT session_id FROM paper_trading_sessions
-            WHERE status = 'active'
-        """)
-
-        active_sessions = cursor.fetchall()
-        count = len(active_sessions)
-
-        if count > 0:
-            # Mark them as interrupted
+            # Find all active sessions
             cursor.execute("""
-                UPDATE paper_trading_sessions
-                SET status = 'interrupted',
-                    end_time = ?
+                SELECT session_id FROM paper_trading_sessions
                 WHERE status = 'active'
-            """, (datetime.now().isoformat(),))
+            """)
 
-            conn.commit()
+            active_sessions = cursor.fetchall()
+            count = len(active_sessions)
 
-        conn.close()
+            if count > 0:
+                # Mark them as interrupted
+                cursor.execute("""
+                    UPDATE paper_trading_sessions
+                    SET status = 'interrupted',
+                        end_time = ?
+                    WHERE status = 'active'
+                """, (datetime.now().isoformat(),))
+
         return count
 
     def terminate_session(self, session_id: str, final_metrics: Optional[Dict[str, Any]] = None):
@@ -485,9 +515,6 @@ class TradingDatabase:
             session_id: Session identifier
             final_metrics: Optional final performance metrics
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
         updates = {
             'status': 'terminated',
             'end_time': datetime.now().isoformat()
@@ -500,14 +527,13 @@ class TradingDatabase:
         set_clause = ", ".join([f"{key} = ?" for key in updates.keys()])
         values = list(updates.values()) + [session_id]
 
-        cursor.execute(f"""
-            UPDATE paper_trading_sessions
-            SET {set_clause}
-            WHERE session_id = ?
-        """, values)
-
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                UPDATE paper_trading_sessions
+                SET {set_clause}
+                WHERE session_id = ?
+            """, values)
 
     def get_session_status_counts(self) -> Dict[str, int]:
         """
@@ -516,19 +542,16 @@ class TradingDatabase:
         Returns:
             Dictionary mapping status to count
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT status, COUNT(*) as count
+                FROM paper_trading_sessions
+                GROUP BY status
+            """)
+            rows = cursor.fetchall()
 
-        cursor.execute("""
-            SELECT status, COUNT(*) as count
-            FROM paper_trading_sessions
-            GROUP BY status
-        """)
-
-        rows = cursor.fetchall()
-        conn.close()
-
-        return {row[0]: row[1] for row in rows}
+        return {row['status']: row['count'] for row in rows}
 
     def delete_session(self, session_id: str) -> bool:
         """
@@ -543,40 +566,193 @@ class TradingDatabase:
         Note:
             active 상태 세션은 삭제 불가
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
         try:
-            # 세션 존재 여부 및 상태 확인
-            cursor.execute(
-                "SELECT status FROM paper_trading_sessions WHERE session_id = ?",
-                (session_id,)
-            )
-            row = cursor.fetchone()
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
 
-            if row is None:
-                conn.close()
-                return False
+                # 세션 존재 여부 및 상태 확인
+                cursor.execute(
+                    "SELECT status FROM paper_trading_sessions WHERE session_id = ?",
+                    (session_id,)
+                )
+                row = cursor.fetchone()
 
-            if row[0] == 'active':
-                conn.close()
-                return False
+                if row is None:
+                    return False
 
-            # 관련 데이터 삭제 (자식 테이블 먼저)
-            cursor.execute("DELETE FROM trades WHERE session_id = ?", (session_id,))
-            cursor.execute("DELETE FROM portfolio_snapshots WHERE session_id = ?", (session_id,))
-            cursor.execute("DELETE FROM strategy_signals WHERE session_id = ?", (session_id,))
-            cursor.execute("DELETE FROM paper_trading_sessions WHERE session_id = ?", (session_id,))
+                if row['status'] == 'active':
+                    return False
 
-            conn.commit()
+                # 관련 데이터 삭제 (자식 테이블 먼저)
+                cursor.execute("DELETE FROM regime_history WHERE session_id = ?", (session_id,))
+                cursor.execute("DELETE FROM llm_decisions WHERE session_id = ?", (session_id,))
+                cursor.execute("DELETE FROM trades WHERE session_id = ?", (session_id,))
+                cursor.execute("DELETE FROM portfolio_snapshots WHERE session_id = ?", (session_id,))
+                cursor.execute("DELETE FROM strategy_signals WHERE session_id = ?", (session_id,))
+                cursor.execute("DELETE FROM paper_trading_sessions WHERE session_id = ?", (session_id,))
+
             return True
 
         except Exception:
-            conn.rollback()
             return False
 
-        finally:
-            conn.close()
+    def log_regime(self, session_id: str, regime_data: Dict[str, Any]):
+        """
+        Log regime detection result
+
+        Args:
+            session_id: Session identifier
+            regime_data: Dict with keys:
+                - symbol: str
+                - timestamp: datetime or str
+                - regime: str (BULLISH/BEARISH/SIDEWAYS/VOLATILE)
+                - confidence: float
+                - adx: float
+                - trend_direction: float
+                - volatility_percentile: float
+                - recommended_strategies: list
+                - details: dict
+        """
+        timestamp = regime_data['timestamp']
+        if isinstance(timestamp, datetime):
+            timestamp = timestamp.isoformat()
+
+        recommended = json.dumps(regime_data.get('recommended_strategies', []))
+        details = json.dumps(regime_data.get('details', {}), default=str)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO regime_history
+                (session_id, symbol, timestamp, regime, confidence, adx,
+                 trend_direction, volatility_percentile, recommended_strategies, details)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session_id,
+                regime_data.get('symbol', 'UNKNOWN'),
+                timestamp,
+                regime_data['regime'],
+                regime_data['confidence'],
+                regime_data.get('adx'),
+                regime_data.get('trend_direction'),
+                regime_data.get('volatility_percentile'),
+                recommended,
+                details
+            ))
+
+    def get_regime_history(self, session_id: str, symbol: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get regime history for a session
+
+        Args:
+            session_id: Session identifier
+            symbol: Optional symbol filter
+            limit: Maximum number of records
+
+        Returns:
+            List of regime dicts with deserialized JSON fields
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if symbol:
+                cursor.execute("""
+                    SELECT * FROM regime_history
+                    WHERE session_id = ? AND symbol = ?
+                    ORDER BY timestamp DESC LIMIT ?
+                """, (session_id, symbol, limit))
+            else:
+                cursor.execute("""
+                    SELECT * FROM regime_history
+                    WHERE session_id = ?
+                    ORDER BY timestamp DESC LIMIT ?
+                """, (session_id, limit))
+            rows = cursor.fetchall()
+
+        results = []
+        for row in rows:
+            r = dict(row)
+            r['recommended_strategies'] = json.loads(r['recommended_strategies']) if r['recommended_strategies'] else []
+            r['details'] = json.loads(r['details']) if r['details'] else {}
+            results.append(r)
+
+        return results
+
+    def log_llm_decision(self, session_id: str, decision_data: Dict[str, Any]):
+        """
+        Log LLM decision
+
+        Args:
+            session_id: Session identifier
+            decision_data: Dict with keys:
+                - symbol: str
+                - timestamp: datetime or str
+                - decision_type: str ("signal_filter" or "regime_judge")
+                - request_context: dict
+                - response: dict
+                - latency_ms: float
+                - model_name: str
+        """
+        timestamp = decision_data['timestamp']
+        if isinstance(timestamp, datetime):
+            timestamp = timestamp.isoformat()
+
+        request_ctx = json.dumps(decision_data.get('request_context', {}), default=str)
+        response = json.dumps(decision_data.get('response', {}), default=str)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO llm_decisions
+                (session_id, symbol, timestamp, decision_type, request_context,
+                 response, latency_ms, model_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session_id,
+                decision_data.get('symbol', 'UNKNOWN'),
+                timestamp,
+                decision_data['decision_type'],
+                request_ctx,
+                response,
+                decision_data.get('latency_ms'),
+                decision_data.get('model_name')
+            ))
+
+    def get_llm_decisions(self, session_id: str, decision_type: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get LLM decisions for a session
+
+        Args:
+            session_id: Session identifier
+            decision_type: Optional filter ("signal_filter" or "regime_judge")
+            limit: Maximum number of records
+
+        Returns:
+            List of decision dicts with deserialized JSON fields
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if decision_type:
+                cursor.execute("""
+                    SELECT * FROM llm_decisions
+                    WHERE session_id = ? AND decision_type = ?
+                    ORDER BY timestamp DESC LIMIT ?
+                """, (session_id, decision_type, limit))
+            else:
+                cursor.execute("""
+                    SELECT * FROM llm_decisions
+                    WHERE session_id = ?
+                    ORDER BY timestamp DESC LIMIT ?
+                """, (session_id, limit))
+            rows = cursor.fetchall()
+
+        results = []
+        for row in rows:
+            r = dict(row)
+            r['request_context'] = json.loads(r['request_context']) if r['request_context'] else {}
+            r['response'] = json.loads(r['response']) if r['response'] else {}
+            results.append(r)
+
+        return results
 
     def get_active_sessions(self) -> List[Dict[str, Any]]:
         """

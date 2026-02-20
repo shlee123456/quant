@@ -169,6 +169,35 @@ class MACDStrategy(BaseStrategy):
 
         return signals
 
+    def get_entries_exits(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
+        """
+        VBT 호환 진입/청산 Boolean Series 반환
+
+        - entries: MACD 골든크로스 (MACD Line이 Signal Line을 상향 돌파)
+        - exits: MACD 데드크로스 (MACD Line이 Signal Line을 하향 돌파)
+        """
+        if df.empty:
+            return pd.Series(dtype=bool), pd.Series(dtype=bool)
+
+        self.validate_dataframe(df)
+
+        fast_ema = self._calculate_ema(df['close'], self.fast_period)
+        slow_ema = self._calculate_ema(df['close'], self.slow_period)
+        macd_line = fast_ema - slow_ema
+        signal_line = self._calculate_ema(macd_line, self.signal_period)
+
+        entries = (
+            (macd_line > signal_line) &
+            (macd_line.shift(1) <= signal_line.shift(1))
+        ).fillna(False).astype(bool)
+
+        exits = (
+            (macd_line < signal_line) &
+            (macd_line.shift(1) >= signal_line.shift(1))
+        ).fillna(False).astype(bool)
+
+        return entries, exits
+
     def get_params(self) -> Dict:
         return {
             'fast_period': self.fast_period,

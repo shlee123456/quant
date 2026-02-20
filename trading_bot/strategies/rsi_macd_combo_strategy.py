@@ -196,6 +196,47 @@ class RSIMACDComboStrategy(BaseStrategy):
 
         return signals
 
+    def get_entries_exits(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
+        """
+        VBT 호환 진입/청산 Boolean Series 반환
+
+        - entries: RSI < oversold AND MACD 골든크로스
+        - exits: RSI > overbought OR MACD 데드크로스
+        """
+        if df.empty:
+            return pd.Series(dtype=bool), pd.Series(dtype=bool)
+
+        self.validate_dataframe(df)
+
+        rsi = self._calculate_rsi(df['close'])
+        fast_ema = self._calculate_ema(df['close'], self.macd_fast)
+        slow_ema = self._calculate_ema(df['close'], self.macd_slow)
+        macd_line = fast_ema - slow_ema
+        signal_line = self._calculate_ema(macd_line, self.macd_signal)
+
+        macd_golden_cross = (
+            (macd_line > signal_line) &
+            (macd_line.shift(1) <= signal_line.shift(1))
+        )
+
+        entries = (
+            (rsi < self.rsi_oversold) &
+            macd_golden_cross
+        ).fillna(False).astype(bool)
+
+        sell_rsi = (
+            (rsi > self.rsi_overbought) &
+            (rsi.shift(1) <= self.rsi_overbought)
+        )
+        sell_macd = (
+            (macd_line < signal_line) &
+            (macd_line.shift(1) >= signal_line.shift(1))
+        )
+
+        exits = (sell_rsi | sell_macd).fillna(False).astype(bool)
+
+        return entries, exits
+
     def get_params(self) -> Dict:
         return {
             'rsi_period': self.rsi_period,

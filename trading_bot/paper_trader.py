@@ -48,7 +48,9 @@ class PaperTrader:
         enable_stop_loss: bool = True,
         enable_take_profit: bool = True,
         enable_verification: bool = False,
-        display_name: Optional[str] = None
+        display_name: Optional[str] = None,
+        regime_detector=None,
+        llm_client=None
     ):
         """
         Initialize paper trader
@@ -119,6 +121,10 @@ class PaperTrader:
         self.enable_verification = enable_verification
         self._signal_validator = SignalValidator()
         self._execution_verifier = OrderExecutionVerifier()
+
+        # Regime detection + LLM integration (optional)
+        self.regime_detector = regime_detector
+        self.llm_client = llm_client
 
     def get_portfolio_value(self, current_prices: Optional[Dict[str, float]] = None) -> float:
         """
@@ -557,6 +563,64 @@ class PaperTrader:
                     if self.enable_verification:
                         if not self._signal_validator.validate_signal_value(signal):
                             logger.warning(f"유효하지 않은 시그널 값 [{symbol}]: {signal}")
+
+                    # [Regime Detection] 레짐 감지
+                    regime_result = None
+                    if self.regime_detector:
+                        try:
+                            regime_result = self.regime_detector.detect(df)
+                            if self.db and self.session_id:
+                                from dataclasses import asdict
+                                regime_dict = asdict(regime_result)
+                                regime_dict['symbol'] = symbol
+                                regime_dict['timestamp'] = timestamp
+                                regime_dict['regime'] = regime_result.regime.value
+                                self.db.log_regime(self.session_id, regime_dict)
+                        except Exception as e:
+                            logger.warning(f"레짐 감지 실패 [{symbol}]: {e}")
+
+                    # [LLM Signal Filter] 시그널 필터링 (signal != 0일 때만)
+                    if self.llm_client and signal != 0:
+                        try:
+                            from dataclasses import asdict
+                            regime_info = asdict(regime_result) if regime_result else {}
+                            if regime_result:
+                                regime_info['regime'] = regime_result.regime.value
+
+                            decision = self.llm_client.filter_signal({
+                                'signal': signal,
+                                'symbol': symbol,
+                                'strategy': self.strategy.name,
+                                'indicators': info,
+                                'regime': regime_info,
+                                'position_info': {
+                                    'current_positions': sum(1 for v in self.positions.values() if v > 0),
+                                    'capital_pct_used': 1.0 - (self.capital / self.initial_capital) if self.initial_capital > 0 else 0,
+                                }
+                            })
+
+                            if decision:
+                                # DB 기록
+                                if self.db and self.session_id:
+                                    self.db.log_llm_decision(self.session_id, {
+                                        'symbol': symbol,
+                                        'timestamp': timestamp,
+                                        'decision_type': 'signal_filter',
+                                        'request_context': {'signal': signal, 'regime': regime_info},
+                                        'response': {'action': decision.action, 'confidence': decision.confidence, 'reasoning': decision.reasoning},
+                                        'latency_ms': getattr(decision, '_latency_ms', None),
+                                        'model_name': self.llm_client.config.signal_model_name if hasattr(self.llm_client, 'config') else None,
+                                    })
+
+                                if decision.action == 'reject':
+                                    logger.info(f"LLM 시그널 거부 [{symbol}]: {decision.reasoning}")
+                                    signal = 0
+                                elif decision.action == 'hold':
+                                    logger.info(f"LLM 시그널 보류 [{symbol}]: {decision.reasoning}")
+                                    signal = 0
+                                # 'execute' → 원래 시그널 유지
+                        except Exception as e:
+                            logger.warning(f"LLM 시그널 필터 실패 (fail-open) [{symbol}]: {e}")
 
                     # Log signal to database
                     if self.db and self.session_id:

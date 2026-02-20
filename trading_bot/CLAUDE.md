@@ -33,6 +33,10 @@ trading_bot/
 ├── signal_validator.py          # 시그널 유효성 검증
 ├── execution_verifier.py        # 주문 실행 정확성 검증
 ├── notifications.py             # 알림 서비스 (Slack, Email)
+├── regime_detector.py           # 시장 레짐 감지 (ADX, 변동성 기반)
+├── llm_client.py                # LLM API 클라이언트 (vLLM, 시그널 필터/레짐 판단)
+├── market_analyzer.py           # 일일 시장 데이터 분석 (KIS API + Notion 연동)
+├── market_analysis_prompt.py    # 시장 분석 LLM 프롬프트 빌더
 └── strategies/
     ├── __init__.py
     ├── base_strategy.py         # 전략 추상 기본 클래스 (ABC)
@@ -257,6 +261,10 @@ def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
 | `signal_validator.py` | 시그널 유효성 검증 (값, 시퀀스, 지표, look-ahead) | 공통 |
 | `execution_verifier.py` | 주문 실행 정확성 검증 (포지션, 자본금) | 공통 |
 | `notifications.py` | 알림 서비스 (Slack Webhook, Email SMTP) | 공통 |
+| `regime_detector.py` | 시장 레짐 감지 (ADX, 트렌드, 변동성 기반 분류) | 공통 |
+| `llm_client.py` | LLM API 클라이언트 (vLLM, 시그널 필터/레짐 판단) | 공통 |
+| `market_analyzer.py` | 일일 시장 데이터 분석 (KIS API 데이터 수집 + Notion 리포트) | 해외주식 |
+| `market_analysis_prompt.py` | 시장 분석 LLM 프롬프트 빌더 (섹터별 분석, 기술적 지표) | 해외주식 |
 
 ---
 
@@ -327,6 +335,15 @@ trader.run_realtime(interval_seconds=60, timeframe='1d')
 
 #### 4. `strategy_signals`
 - 전략 신호 (symbol, timestamp, signal, indicator_values JSON, executed)
+
+#### 5. `regime_history`
+- 레짐 감지 이력 (session_id, symbol, timestamp, regime, confidence, adx, trend_direction, volatility_percentile, recommended_strategies JSON, details JSON)
+- 인덱스: session_id, (session_id, timestamp), (symbol, timestamp)
+
+#### 6. `llm_decisions`
+- LLM 판단 이력 (session_id, symbol, timestamp, decision_type, request_context JSON, response JSON, latency_ms, model_name)
+- decision_type: "signal_filter" 또는 "regime_judge"
+- 인덱스: session_id, (session_id, timestamp), decision_type
 
 ### 멀티 심볼 포트폴리오
 
@@ -699,6 +716,199 @@ EMAIL_RECEIVER=receiver@example.com
 - **Gmail 사용 시**: 2단계 인증 활성화 후 앱 비밀번호 생성 필요
 - **에러 처리**: 알림 전송 실패 시 로그 기록 (예외 발생 안 함)
 - **Rate Limit**: Slack은 1초당 1개 메시지 권장
+
+---
+
+## RegimeDetector - 시장 레짐 감지 모듈
+
+### 개요
+
+`RegimeDetector` 클래스는 OHLCV 데이터로부터 시장 상태(레짐)를 자동 분류합니다.
+- **BULLISH**: 강한 상승 추세 (ADX > 25, 양의 트렌드)
+- **BEARISH**: 강한 하락 추세 (ADX > 25, 음의 트렌드)
+- **SIDEWAYS**: 낮은 추세 강도 (ADX <= 25, 낮은 변동성)
+- **VOLATILE**: 높은 변동성 (변동성 백분위 > 75)
+
+### 기본 사용법
+
+```python
+from trading_bot.regime_detector import RegimeDetector, MarketRegime, RegimeResult
+
+# 1. 초기화
+detector = RegimeDetector(adx_period=14, ma_period=50, vol_window=100)
+
+# 2. 마지막 바 기준 레짐 감지
+result = detector.detect(df)  # RegimeResult
+print(result.regime)          # MarketRegime.BULLISH
+print(result.confidence)      # 0.82
+print(result.adx)             # 35.2
+print(result.recommended_strategies)  # ['MACD Strategy', 'RSI+MACD Combo Strategy']
+
+# 3. 전체 바별 레짐 라벨링
+labeled_df = detector.detect_series(df)
+# columns: regime, regime_confidence, adx, trend_direction, volatility_percentile
+```
+
+### 분류 로직
+
+```
+vol_percentile > 75 → VOLATILE (confidence: 0.5 + (vol-75)/50)
+adx > 25 & trend > 0 → BULLISH (confidence: 0.5 + (adx-25)/50)
+adx > 25 & trend < 0 → BEARISH (confidence: 0.5 + (adx-25)/50)
+else → SIDEWAYS (confidence: 0.5 + (25-adx)/50)
+```
+
+### 전략 매핑
+
+| 레짐 | 추천 전략 |
+|------|----------|
+| BULLISH | MACD Strategy, RSI+MACD Combo Strategy |
+| BEARISH | RSI Strategy, Bollinger Bands |
+| SIDEWAYS | RSI Strategy, Bollinger Bands |
+| VOLATILE | Bollinger Bands |
+
+### PaperTrader 통합
+
+```python
+from trading_bot.paper_trader import PaperTrader
+from trading_bot.regime_detector import RegimeDetector
+
+detector = RegimeDetector()
+trader = PaperTrader(
+    strategy=strategy,
+    symbols=['AAPL'],
+    broker=broker,
+    regime_detector=detector,  # 레짐 감지 활성화
+)
+# _realtime_iteration()에서 자동으로 레짐 감지 + DB 로깅
+```
+
+### 주의사항
+
+- 최소 데이터 길이: `max(adx_period*2, ma_period, vol_window) + 10` 바
+- 데이터 부족 시 SIDEWAYS (confidence=0.3) 반환 (에러 아님)
+- scipy 미사용 (pandas/numpy만 사용)
+
+---
+
+## LLMClient - LLM API 클라이언트
+
+### 개요
+
+`LLMClient` 클래스는 vLLM OpenAI-compatible API를 호출하여 시그널 필터링과 레짐 판단을 수행합니다.
+- **시그널 필터 (7B)**: VBT/전략 시그널을 실행/보류/거부 판단
+- **레짐 판단 (14B)**: 통계 레짐에 LLM의 정성적 판단 보강
+- **Fail-open**: LLM 에러/타임아웃 시 원본 시그널 그대로 통과
+
+### 기본 사용법
+
+```python
+from trading_bot.llm_client import LLMClient, LLMConfig
+
+# 1. 초기화 (환경변수 자동 읽기)
+config = LLMConfig(
+    signal_filter_url="http://localhost:8000/v1/chat/completions",  # 7B
+    regime_judge_url="http://localhost:8001/v1/chat/completions",   # 14B
+    timeout=10.0,
+    enabled=True,
+)
+client = LLMClient(config)
+
+# 2. 시그널 필터링
+decision = client.filter_signal({
+    'signal': 'BUY',
+    'symbol': 'AAPL',
+    'strategy': 'RSI',
+    'indicators': {'rsi': 28, 'price': 150.25},
+    'regime': {'regime': 'BULLISH', 'confidence': 0.82, 'adx': 32},
+})
+# decision.action: "execute" | "hold" | "reject"
+# decision.confidence: 0.85
+# decision.reasoning: "RSI oversold in bullish regime..."
+
+# 3. 레짐 판단
+judgment = client.judge_regime({
+    'statistical_regime': {'regime': 'SIDEWAYS', 'adx': 18},
+    'market_data': {'recent_returns': [...], 'volume_trend': 'declining'},
+})
+# judgment.regime_override: None (동의) 또는 "BEARISH" (오버라이드)
+
+# 4. 헬스체크
+health = client.health_check()
+# {'signal_filter': True, 'regime_judge': False}
+```
+
+### 환경변수
+
+```bash
+LLM_SIGNAL_URL=http://localhost:8000/v1/chat/completions  # 7B 모델
+LLM_REGIME_URL=http://localhost:8001/v1/chat/completions   # 14B 모델
+LLM_ENABLED=true  # false로 비활성화
+```
+
+### 주의사항
+
+- `requests` 라이브러리로 직접 호출 (openai SDK 미사용)
+- `temperature=0.1`, `max_tokens=500`으로 구조화 출력
+- JSON 파싱 실패 시 None 반환 (fail-open)
+- `enabled=False` 시 모든 호출이 None 반환
+- LLM은 시그널을 **필터링만** 함 (새 시그널 생성 안 함)
+
+---
+
+## MarketAnalyzer - 일일 시장 데이터 분석
+
+### 개요
+
+`MarketAnalyzer` 클래스는 KIS API로 해외주식 시장 데이터를 수집하고, LLM 프롬프트를 생성하여 Notion에 일일 분석 리포트를 작성합니다.
+- **데이터 수집**: KIS API를 통해 OHLCV, 거래량, 기술적 지표 수집
+- **프롬프트 생성**: `MarketAnalysisPromptBuilder`로 구조화된 LLM 프롬프트 생성
+- **Notion 연동**: 분석 결과를 Notion 페이지에 자동 작성
+
+### 기본 사용법
+
+```python
+from trading_bot.market_analyzer import MarketAnalyzer
+
+# 1. 초기화 (환경변수에서 설정 로드)
+analyzer = MarketAnalyzer()
+
+# 2. 시장 데이터 수집
+data = analyzer.collect_market_data()
+
+# 3. 분석 프롬프트 생성
+prompt = analyzer.build_analysis_prompt(data)
+
+# 4. Notion에 리포트 작성
+analyzer.publish_to_notion(analysis_result)
+```
+
+### 환경변수
+
+```bash
+MARKET_ANALYSIS_ENABLED=true
+MARKET_ANALYSIS_SYMBOLS=AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AVGO,LLY,WMT
+NOTION_MARKET_ANALYSIS_PAGE_ID=30dd62f0-dffd-80a6-b624-e5a061ed26a9
+```
+
+### MarketAnalysisPromptBuilder
+
+`market_analysis_prompt.py`는 수집된 시장 데이터를 LLM이 분석할 수 있는 구조화된 프롬프트로 변환합니다.
+
+```python
+from trading_bot.market_analysis_prompt import MarketAnalysisPromptBuilder
+
+builder = MarketAnalysisPromptBuilder()
+prompt = builder.build(market_data)
+# 섹터별 분석, 기술적 지표 요약, 시장 전망 프롬프트 포함
+```
+
+### 주의사항
+
+- KIS API 인증 필요 (`.env`에 KIS_APPKEY, KIS_APPSECRET 설정)
+- Notion API는 `notion-client` MCP 도구를 통해 연동
+- `MARKET_ANALYSIS_ENABLED=false`로 비활성화 가능
+- 스케줄러 통합: `scheduler.py`에서 장 마감 후 자동 실행
 
 ---
 

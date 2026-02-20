@@ -162,6 +162,36 @@ class BollingerBandsStrategy(BaseStrategy):
 
         return signals
 
+    def get_entries_exits(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
+        """
+        VBT 호환 진입/청산 Boolean Series 반환
+
+        - entries: 가격이 Lower Band 아래로 교차하는 시점
+        - exits: 가격이 Upper Band 위로 교차하는 시점
+        """
+        if df.empty:
+            return pd.Series(dtype=bool), pd.Series(dtype=bool)
+
+        self.validate_dataframe(df)
+
+        close = df['close']
+        bb_middle = close.rolling(window=self.period).mean()
+        bb_std = close.rolling(window=self.period).std()
+        bb_upper = bb_middle + (self.num_std * bb_std)
+        bb_lower = bb_middle - (self.num_std * bb_std)
+
+        entries = (
+            (close < bb_lower) &
+            (close.shift(1) >= bb_lower.shift(1))
+        ).fillna(False).astype(bool)
+
+        exits = (
+            (close > bb_upper) &
+            (close.shift(1) <= bb_upper.shift(1))
+        ).fillna(False).astype(bool)
+
+        return entries, exits
+
     def get_params(self) -> Dict:
         return {
             'period': self.period,

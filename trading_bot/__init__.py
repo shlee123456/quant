@@ -28,6 +28,38 @@ except ImportError:
     ReportGenerator = None
     _has_automation = False
 
+# VBT backtester (requires vectorbt)
+try:
+    from .vbt_backtester import VBTBacktester
+    _has_vbt = True
+except ImportError:
+    VBTBacktester = None
+    _has_vbt = False
+
+# Regime detection
+try:
+    from .regime_detector import RegimeDetector, MarketRegime, RegimeResult
+    _has_regime = True
+except ImportError:
+    RegimeDetector = MarketRegime = RegimeResult = None
+    _has_regime = False
+
+# LLM client
+try:
+    from .llm_client import LLMClient, LLMConfig
+    _has_llm = True
+except ImportError:
+    LLMClient = LLMConfig = None
+    _has_llm = False
+
+# Market analyzer
+try:
+    from .market_analyzer import MarketAnalyzer
+    _has_market_analyzer = True
+except ImportError:
+    MarketAnalyzer = None
+    _has_market_analyzer = False
+
 # Optional imports (require additional dependencies)
 try:
     from .data_handler import DataHandler
@@ -61,9 +93,17 @@ __all__ = [
     'OrderExecutionVerifier',
 ]
 
+if _has_vbt:
+    __all__.append('VBTBacktester')
 if _has_ccxt:
     __all__.append('DataHandler')
 if _has_paper_trader:
     __all__.append('PaperTrader')
 if _has_automation:
     __all__.extend(['TradingDatabase', 'ReportGenerator'])
+if _has_regime:
+    __all__.extend(['RegimeDetector', 'MarketRegime', 'RegimeResult'])
+if _has_llm:
+    __all__.extend(['LLMClient', 'LLMConfig'])
+if _has_market_analyzer:
+    __all__.append('MarketAnalyzer')

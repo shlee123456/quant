@@ -80,6 +80,25 @@ class BaseStrategy(ABC):
         """
         pass
 
+    @abstractmethod
+    def get_entries_exits(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
+        """
+        VBT 호환 진입/청산 Boolean Series 반환
+
+        entries=True인 시점에서 매수, exits=True인 시점에서 매도.
+        교차(crossing) 시점만 True이며, 지속 구간은 False.
+        NaN 행은 False로 처리.
+
+        Args:
+            df: OHLCV 데이터 (columns: open, high, low, close, volume)
+
+        Returns:
+            Tuple of (entries, exits)
+            - entries: Boolean pd.Series (True = BUY 시점)
+            - exits: Boolean pd.Series (True = SELL 시점)
+        """
+        pass
+
     def validate_signal(self, signal: int) -> bool:
         """
         시그널 값이 유효한지 검증
