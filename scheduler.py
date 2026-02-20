@@ -45,6 +45,34 @@ from trading_bot.strategy_presets import StrategyPresetManager
 from trading_bot.reports import ReportGenerator
 from trading_bot.brokers import KoreaInvestmentBroker
 
+# Regime detection + LLM (optional)
+try:
+    from trading_bot.regime_detector import RegimeDetector
+    _has_regime = True
+except ImportError:
+    RegimeDetector = None
+    _has_regime = False
+
+try:
+    from trading_bot.llm_client import LLMClient, LLMConfig
+    _has_llm = True
+except ImportError:
+    LLMClient = LLMConfig = None
+    _has_llm = False
+
+# Market analysis (optional)
+try:
+    from trading_bot.market_analyzer import MarketAnalyzer
+    from trading_bot.market_analysis_prompt import build_analysis_prompt
+    _has_market_analyzer = True
+except ImportError:
+    MarketAnalyzer = None
+    build_analysis_prompt = None
+    _has_market_analyzer = False
+
+import subprocess
+import os
+
 # Load environment variables
 load_dotenv()
 
@@ -83,6 +111,17 @@ preset_manager = StrategyPresetManager()
 optimized_params = None
 # 최적화에서 선택된 전략 클래스 (기본: RSIMACDComboStrategy)
 optimized_strategy_class = None
+
+# Global regime detector + LLM client (optional)
+global_regime_detector = RegimeDetector() if _has_regime else None
+global_llm_client = None
+if _has_llm:
+    import os as _os
+    _llm_config = LLMConfig(
+        base_url=_os.getenv('LLM_BASE_URL', 'http://192.168.45.222:8080'),
+        enabled=_os.getenv('LLM_ENABLED', 'true').lower() in ('true', '1', 'yes'),
+    )
+    global_llm_client = LLMClient(_llm_config)
 
 
 def _create_kis_broker() -> Optional[KoreaInvestmentBroker]:
@@ -248,6 +287,35 @@ def optimize_strategy():
             data_source = "시뮬레이션"
 
         logger.info(f"최적화 데이터 소스: {data_source} ({len(df)}개 봉)")
+
+        # 2.5. 레짐 감지 (최적화 전 시장 상태 파악)
+        if global_regime_detector and len(df) > 0:
+            try:
+                regime_result = global_regime_detector.detect(df)
+                logger.info(f"현재 시장 레짐: {regime_result.regime.value} (신뢰도: {regime_result.confidence:.2f})")
+                logger.info(f"  ADX: {regime_result.adx:.1f}, 추세: {regime_result.trend_direction:.2f}")
+                logger.info(f"  변동성 백분위: {regime_result.volatility_percentile:.1f}%")
+                logger.info(f"  추천 전략: {', '.join(regime_result.recommended_strategies)}")
+
+                # LLM 레짐 판단 보강 (14B 모델)
+                if global_llm_client:
+                    try:
+                        from dataclasses import asdict
+                        regime_dict = asdict(regime_result)
+                        regime_dict['regime'] = regime_result.regime.value
+                        recent_returns = df['close'].pct_change().tail(10).tolist()
+                        judgment = global_llm_client.judge_regime({
+                            'statistical_regime': regime_dict,
+                            'market_data': {'recent_returns': recent_returns},
+                            'active_strategies': list(STRATEGY_CLASS_MAP.keys()),
+                        })
+                        if judgment:
+                            logger.info(f"LLM 레짐 판단: override={judgment.regime_override}, 신뢰도={judgment.confidence:.2f}")
+                            logger.info(f"  분석: {judgment.analysis[:200]}")
+                    except Exception as e:
+                        logger.warning(f"LLM 레짐 판단 실패 (무시): {e}")
+            except Exception as e:
+                logger.warning(f"레짐 감지 실패 (무시): {e}")
 
         # 3. 다전략 비교 최적화
         # RSI/MACD 단독 전략이 Combo보다 신호 빈도가 높아 거래 발생 가능성이 큼
@@ -468,7 +536,7 @@ def _start_single_session(label: str, config: Optional[Dict]):
             preset_name=label if config else None
         )
 
-        # 페이퍼 트레이더 생성
+        # 페이퍼 트레이더 생성 (레짐 감지 + LLM 통합)
         trader = PaperTrader(
             strategy=strategy,
             symbols=symbols,
@@ -480,7 +548,9 @@ def _start_single_session(label: str, config: Optional[Dict]):
             enable_stop_loss=enable_stop_loss,
             enable_take_profit=enable_take_profit,
             db=db,
-            display_name=display_name
+            display_name=display_name,
+            regime_detector=global_regime_detector,
+            llm_client=global_llm_client,
         )
 
         # Attach notifier to trader for stop loss/take profit notifications
@@ -690,6 +760,91 @@ def stop_paper_trading():
     logger.info(f"✓ 전체 {len(labels)}개 세션 중지 완료")
 
 
+def run_market_analysis():
+    """
+    장 마감 후 시장 분석: MarketAnalyzer로 데이터 수집 + Claude로 노션 작성
+    06:10 KST 실행
+    """
+    logger.info("=" * 60)
+    logger.info("시장 분석 시작...")
+    logger.info("=" * 60)
+
+    if not _has_market_analyzer:
+        logger.warning("MarketAnalyzer 모듈 미설치 - 시장 분석 건너뜀")
+        return
+
+    # 환경 변수에서 설정 읽기
+    enabled = os.getenv('MARKET_ANALYSIS_ENABLED', 'true').strip().lower()
+    if enabled not in ('true', '1', 'yes'):
+        logger.info("MARKET_ANALYSIS_ENABLED=false - 시장 분석 비활성화됨")
+        return
+
+    symbols_str = os.getenv(
+        'MARKET_ANALYSIS_SYMBOLS',
+        'AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AVGO,LLY,WMT'
+    )
+    symbols = [s.strip() for s in symbols_str.split(',') if s.strip()]
+
+    try:
+        # 브로커 초기화
+        broker = _create_kis_broker()
+        if not broker:
+            logger.error("KIS 브로커 초기화 실패 - 시장 분석 불가")
+            notifier.notify_error("KIS 브로커 초기화 실패", context="시장 분석")
+            return
+
+        # MarketAnalyzer로 데이터 수집
+        analyzer = MarketAnalyzer()
+        logger.info(f"분석 대상 종목: {', '.join(symbols)}")
+        result = analyzer.analyze(symbols, broker)
+
+        # JSON 저장
+        json_path = analyzer.save_json(result)
+        logger.info(f"분석 결과 저장: {json_path}")
+
+        # Claude로 노션 작성
+        prompt = build_analysis_prompt(json_path)
+        logger.info("Claude에게 노션 작성 요청 중...")
+
+        # CLAUDECODE 환경 변수 제거 (중첩 세션 방지), stdin으로 프롬프트 전달
+        env = {k: v for k, v in os.environ.items() if k != 'CLAUDECODE'}
+        proc = subprocess.run(
+            ["claude", "-p", "--allowedTools", "mcp__claude_ai_Notion__*,Read"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            env=env,
+        )
+
+        if proc.returncode == 0:
+            logger.info("노션 작성 완료")
+            notifier.send_slack(
+                f"*시장 분석 완료*\n\n"
+                f"분석 종목: {', '.join(symbols)}\n"
+                f"결과 파일: {json_path}\n"
+                f"노션 페이지 작성 완료",
+                color='good'
+            )
+        else:
+            logger.warning(f"Claude 노션 작성 실패 (returncode={proc.returncode})")
+            logger.warning(f"stderr: {proc.stderr[:500] if proc.stderr else 'N/A'}")
+            notifier.send_slack(
+                f"*시장 분석 완료 (노션 작성 실패)*\n\n"
+                f"분석 종목: {', '.join(symbols)}\n"
+                f"결과 파일: {json_path}\n"
+                f"노션 작성 오류: {proc.stderr[:200] if proc.stderr else 'unknown'}",
+                color='warning'
+            )
+
+    except subprocess.TimeoutExpired:
+        logger.error("Claude 노션 작성 타임아웃 (120초 초과)")
+        notifier.notify_error("Claude 노션 작성 타임아웃", context="시장 분석")
+    except Exception as e:
+        logger.error(f"시장 분석 실패: {e}", exc_info=True)
+        notifier.notify_error(f"시장 분석 실패: {e}", context="시장 분석")
+
+
 def signal_handler(signum, frame):
     """종료 신호를 우아하게 처리"""
     logger.info("\n\n⚠ 종료 신호 수신")
@@ -777,7 +932,7 @@ def main():
 
     # 스케줄러 생성 (ThreadPoolExecutor로 블로킹 방지)
     executors = {
-        'default': ThreadPoolExecutor(max_workers=3)
+        'default': ThreadPoolExecutor(max_workers=4)
     }
     scheduler = BlockingScheduler(timezone='Asia/Seoul', executors=executors)
 
@@ -795,6 +950,7 @@ def main():
     logger.info("  23:00 KST - 전략 최적화")
     logger.info("  23:30 KST - 페이퍼 트레이딩 시작")
     logger.info("  06:00 KST - 트레이딩 중지 및 리포트")
+    logger.info("  06:10 KST - 시장 분석 + 노션 작성")
     logger.info("=" * 60)
 
     # 스케줄 작업 추가
@@ -824,6 +980,15 @@ def main():
         id='stop_trading',
         name='페이퍼 트레이딩 중지',
         misfire_grace_time=300
+    )
+
+    # 장 마감 후: 시장 분석 + 노션 작성 (06:10 KST)
+    scheduler.add_job(
+        run_market_analysis,
+        CronTrigger(hour=6, minute=10),
+        id='market_analysis',
+        name='시장 분석 + 노션 작성',
+        misfire_grace_time=600
     )
 
     # 스케줄러 시작 (블로킹)

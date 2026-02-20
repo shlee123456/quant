@@ -443,3 +443,159 @@ def test_context_manager_sets_row_factory(temp_db):
         row = cursor.fetchone()
         # sqlite3.Row는 dict처럼 키로 접근 가능
         assert row['strategy_name'] == 'RowFactoryTest'
+
+
+class TestRegimeHistory:
+    """Tests for regime_history table"""
+
+    @pytest.fixture
+    def db(self, tmp_path):
+        db_path = str(tmp_path / "test.db")
+        return TradingDatabase(db_path)
+
+    @pytest.fixture
+    def session_id(self, db):
+        return db.create_session("TestStrategy", 10000.0)
+
+    def test_regime_table_exists(self, db):
+        conn = sqlite3.connect(db.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='regime_history'")
+        assert cursor.fetchone() is not None
+        conn.close()
+
+    def test_log_regime(self, db, session_id):
+        regime_data = {
+            'symbol': 'AAPL',
+            'timestamp': datetime.now(),
+            'regime': 'BULLISH',
+            'confidence': 0.85,
+            'adx': 32.5,
+            'trend_direction': 1.5,
+            'volatility_percentile': 45.0,
+            'recommended_strategies': ['MACD Strategy'],
+            'details': {'adx_period': 14}
+        }
+        db.log_regime(session_id, regime_data)
+
+        history = db.get_regime_history(session_id)
+        assert len(history) == 1
+        assert history[0]['regime'] == 'BULLISH'
+        assert history[0]['confidence'] == 0.85
+        assert history[0]['recommended_strategies'] == ['MACD Strategy']
+
+    def test_get_regime_history_with_symbol(self, db, session_id):
+        for symbol in ['AAPL', 'MSFT', 'AAPL']:
+            db.log_regime(session_id, {
+                'symbol': symbol,
+                'timestamp': datetime.now(),
+                'regime': 'BULLISH',
+                'confidence': 0.8,
+            })
+
+        all_history = db.get_regime_history(session_id)
+        assert len(all_history) == 3
+
+        aapl_history = db.get_regime_history(session_id, symbol='AAPL')
+        assert len(aapl_history) == 2
+
+    def test_get_regime_history_limit(self, db, session_id):
+        for i in range(10):
+            db.log_regime(session_id, {
+                'symbol': 'AAPL',
+                'timestamp': datetime.now(),
+                'regime': 'BULLISH',
+                'confidence': 0.8,
+            })
+
+        limited = db.get_regime_history(session_id, limit=3)
+        assert len(limited) == 3
+
+
+class TestLLMDecisions:
+    """Tests for llm_decisions table"""
+
+    @pytest.fixture
+    def db(self, tmp_path):
+        db_path = str(tmp_path / "test.db")
+        return TradingDatabase(db_path)
+
+    @pytest.fixture
+    def session_id(self, db):
+        return db.create_session("TestStrategy", 10000.0)
+
+    def test_llm_table_exists(self, db):
+        conn = sqlite3.connect(db.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_decisions'")
+        assert cursor.fetchone() is not None
+        conn.close()
+
+    def test_log_llm_decision(self, db, session_id):
+        decision_data = {
+            'symbol': 'AAPL',
+            'timestamp': datetime.now(),
+            'decision_type': 'signal_filter',
+            'request_context': {'signal': 'BUY', 'regime': 'BULLISH'},
+            'response': {'action': 'execute', 'confidence': 0.85},
+            'latency_ms': 150.5,
+            'model_name': 'Qwen2.5-7B'
+        }
+        db.log_llm_decision(session_id, decision_data)
+
+        decisions = db.get_llm_decisions(session_id)
+        assert len(decisions) == 1
+        assert decisions[0]['decision_type'] == 'signal_filter'
+        assert decisions[0]['response']['action'] == 'execute'
+        assert decisions[0]['latency_ms'] == 150.5
+
+    def test_get_llm_decisions_by_type(self, db, session_id):
+        for dtype in ['signal_filter', 'regime_judge', 'signal_filter']:
+            db.log_llm_decision(session_id, {
+                'symbol': 'AAPL',
+                'timestamp': datetime.now(),
+                'decision_type': dtype,
+                'request_context': {},
+                'response': {},
+            })
+
+        all_decisions = db.get_llm_decisions(session_id)
+        assert len(all_decisions) == 3
+
+        filter_only = db.get_llm_decisions(session_id, decision_type='signal_filter')
+        assert len(filter_only) == 2
+
+    def test_get_llm_decisions_limit(self, db, session_id):
+        for i in range(10):
+            db.log_llm_decision(session_id, {
+                'symbol': 'AAPL',
+                'timestamp': datetime.now(),
+                'decision_type': 'signal_filter',
+                'request_context': {},
+                'response': {},
+            })
+
+        limited = db.get_llm_decisions(session_id, limit=3)
+        assert len(limited) == 3
+
+    def test_delete_session_cascades(self, db, session_id):
+        db.log_regime(session_id, {
+            'symbol': 'AAPL', 'timestamp': datetime.now(),
+            'regime': 'BULLISH', 'confidence': 0.8,
+        })
+        db.log_llm_decision(session_id, {
+            'symbol': 'AAPL', 'timestamp': datetime.now(),
+            'decision_type': 'signal_filter',
+            'request_context': {}, 'response': {},
+        })
+
+        # Mark session as completed so it can be deleted
+        db.update_session(session_id, {'status': 'completed'})
+
+        # Delete session
+        result = db.delete_session(session_id)
+        assert result is True
+
+        # Verify cascaded deletion
+        assert len(db.get_regime_history(session_id)) == 0
+        assert len(db.get_llm_decisions(session_id)) == 0

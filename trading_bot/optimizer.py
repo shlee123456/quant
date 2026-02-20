@@ -284,6 +284,73 @@ class StrategyOptimizer:
         sorted_results = sorted(self.results, key=lambda x: x[metric], reverse=True)
         return sorted_results[:n]
 
+    def optimize_by_regime(
+        self,
+        strategy_classes: List[Type],
+        df: pd.DataFrame,
+        param_grids: List[Dict[str, List[Any]]],
+        regime_detector=None,
+        use_vbt: bool = False,
+    ) -> Dict[str, Dict]:
+        """
+        레짐별 최적 전략/파라미터 탐색
+
+        Args:
+            strategy_classes: 전략 클래스 리스트
+            df: OHLCV 데이터
+            param_grids: 전략별 파라미터 그리드 리스트 (strategy_classes와 동일 순서)
+            regime_detector: RegimeDetector 인스턴스
+            use_vbt: VBTBacktester 사용 여부
+
+        Returns:
+            Dict[regime_name -> {'strategy_class', 'best_params', 'results'}]
+        """
+        if regime_detector is None:
+            from .regime_detector import RegimeDetector
+            regime_detector = RegimeDetector()
+
+        # 전체 바에 레짐 라벨링
+        labeled_df = regime_detector.detect_series(df)
+
+        regime_results = {}
+
+        for regime_name in ['BULLISH', 'BEARISH', 'SIDEWAYS', 'VOLATILE']:
+            regime_mask = labeled_df['regime'] == regime_name
+            regime_df = df[regime_mask].copy()
+
+            if len(regime_df) < 50:
+                print(f"\n[{regime_name}] 데이터 부족 ({len(regime_df)}행) - 건너뜀")
+                continue
+
+            print(f"\n{'='*60}")
+            print(f"[{regime_name}] 레짐 데이터: {len(regime_df)}행")
+            print(f"{'='*60}")
+
+            best_for_regime = None
+            best_return = float('-inf')
+
+            for strategy_class, param_grid in zip(strategy_classes, param_grids):
+                try:
+                    result = self.optimize(strategy_class, regime_df, param_grid, use_vbt=use_vbt)
+                    if result['total_return'] > best_return:
+                        best_return = result['total_return']
+                        best_for_regime = {
+                            'strategy_class': strategy_class,
+                            'strategy_name': strategy_class.__name__,
+                            'best_params': result['params'],
+                            'results': result,
+                        }
+                except Exception as e:
+                    print(f"  {strategy_class.__name__} 최적화 실패: {e}")
+
+            if best_for_regime:
+                regime_results[regime_name] = best_for_regime
+                print(f"\n[{regime_name}] 최적 전략: {best_for_regime['strategy_name']}")
+                print(f"  파라미터: {best_for_regime['best_params']}")
+                print(f"  수익률: {best_return:.2f}%")
+
+        return regime_results
+
     def analyze_parameter_sensitivity(self, param_name: str, metric: str = 'total_return') -> pd.DataFrame:
         """
         Analyze how a single parameter affects performance

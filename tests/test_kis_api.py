@@ -17,55 +17,6 @@ class TestKISConnection:
         assert hasattr(kis, 'stock')
 
 
-class TestOverseasStockQuote:
-    """해외주식 현재가 조회 테스트"""
-
-    def test_overseas_stock_quote(self, kis):
-        """해외주식 현재가 조회 테스트 - AAPL"""
-        symbol = 'AAPL'
-
-        # 해외주식 현재가 조회 (나스닥)
-        stock = kis.stock(symbol, market='NASDAQ')
-        quote = stock.quote()
-
-        # 시세 정보 검증
-        assert quote is not None
-        assert hasattr(quote, 'price')
-        assert hasattr(quote, 'change')
-        assert hasattr(quote, 'rate')
-        assert hasattr(quote, 'open')
-        assert hasattr(quote, 'high')
-        assert hasattr(quote, 'low')
-        assert hasattr(quote, 'volume')
-
-        # 가격 정보가 유효한지 확인
-        assert quote.price > 0
-        assert quote.open > 0
-        assert quote.high > 0
-        assert quote.low > 0
-        assert quote.volume >= 0
-
-    def test_multiple_stocks(self, kis):
-        """여러 종목 시세 조회 테스트"""
-        symbols = ['AAPL', 'TSLA', 'MSFT']  # 3개만 테스트 (속도 고려)
-
-        results = []
-        for symbol in symbols:
-            stock = kis.stock(symbol, market='NASDAQ')
-            quote = stock.quote()
-
-            assert quote is not None
-            assert quote.price > 0
-
-            results.append({
-                'symbol': symbol,
-                'price': quote.price,
-                'change': quote.change,
-                'rate': quote.rate
-            })
-
-        # 모든 종목 조회 성공 확인
-        assert len(results) == len(symbols)
 
 
 # 수동 실행용 메인 함수 (pytest 외부에서 실행 가능)

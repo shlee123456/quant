@@ -148,6 +148,50 @@ class TradingDatabase:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON strategy_signals(session_id, timestamp)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON paper_trading_sessions(status)")
 
+        # Regime history table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS regime_history (
+                regime_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                regime TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                adx REAL,
+                trend_direction REAL,
+                volatility_percentile REAL,
+                recommended_strategies TEXT,
+                details TEXT,
+                FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
+            )
+        """)
+
+        # LLM decisions table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS llm_decisions (
+                decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                decision_type TEXT NOT NULL,
+                request_context TEXT,
+                response TEXT,
+                latency_ms REAL,
+                model_name TEXT,
+                FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
+            )
+        """)
+
+        # Indexes for regime_history
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_session_id ON regime_history(session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_session_ts ON regime_history(session_id, timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_symbol_ts ON regime_history(symbol, timestamp)")
+
+        # Indexes for llm_decisions
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_llm_session_id ON llm_decisions(session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_llm_session_ts ON llm_decisions(session_id, timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_llm_type ON llm_decisions(decision_type)")
+
         # Migrate existing DB: add display_name column if missing
         try:
             cursor.execute("SELECT display_name FROM paper_trading_sessions LIMIT 1")
@@ -540,6 +584,8 @@ class TradingDatabase:
                     return False
 
                 # 관련 데이터 삭제 (자식 테이블 먼저)
+                cursor.execute("DELETE FROM regime_history WHERE session_id = ?", (session_id,))
+                cursor.execute("DELETE FROM llm_decisions WHERE session_id = ?", (session_id,))
                 cursor.execute("DELETE FROM trades WHERE session_id = ?", (session_id,))
                 cursor.execute("DELETE FROM portfolio_snapshots WHERE session_id = ?", (session_id,))
                 cursor.execute("DELETE FROM strategy_signals WHERE session_id = ?", (session_id,))
@@ -549,6 +595,164 @@ class TradingDatabase:
 
         except Exception:
             return False
+
+    def log_regime(self, session_id: str, regime_data: Dict[str, Any]):
+        """
+        Log regime detection result
+
+        Args:
+            session_id: Session identifier
+            regime_data: Dict with keys:
+                - symbol: str
+                - timestamp: datetime or str
+                - regime: str (BULLISH/BEARISH/SIDEWAYS/VOLATILE)
+                - confidence: float
+                - adx: float
+                - trend_direction: float
+                - volatility_percentile: float
+                - recommended_strategies: list
+                - details: dict
+        """
+        timestamp = regime_data['timestamp']
+        if isinstance(timestamp, datetime):
+            timestamp = timestamp.isoformat()
+
+        recommended = json.dumps(regime_data.get('recommended_strategies', []))
+        details = json.dumps(regime_data.get('details', {}), default=str)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO regime_history
+                (session_id, symbol, timestamp, regime, confidence, adx,
+                 trend_direction, volatility_percentile, recommended_strategies, details)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session_id,
+                regime_data.get('symbol', 'UNKNOWN'),
+                timestamp,
+                regime_data['regime'],
+                regime_data['confidence'],
+                regime_data.get('adx'),
+                regime_data.get('trend_direction'),
+                regime_data.get('volatility_percentile'),
+                recommended,
+                details
+            ))
+
+    def get_regime_history(self, session_id: str, symbol: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get regime history for a session
+
+        Args:
+            session_id: Session identifier
+            symbol: Optional symbol filter
+            limit: Maximum number of records
+
+        Returns:
+            List of regime dicts with deserialized JSON fields
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if symbol:
+                cursor.execute("""
+                    SELECT * FROM regime_history
+                    WHERE session_id = ? AND symbol = ?
+                    ORDER BY timestamp DESC LIMIT ?
+                """, (session_id, symbol, limit))
+            else:
+                cursor.execute("""
+                    SELECT * FROM regime_history
+                    WHERE session_id = ?
+                    ORDER BY timestamp DESC LIMIT ?
+                """, (session_id, limit))
+            rows = cursor.fetchall()
+
+        results = []
+        for row in rows:
+            r = dict(row)
+            r['recommended_strategies'] = json.loads(r['recommended_strategies']) if r['recommended_strategies'] else []
+            r['details'] = json.loads(r['details']) if r['details'] else {}
+            results.append(r)
+
+        return results
+
+    def log_llm_decision(self, session_id: str, decision_data: Dict[str, Any]):
+        """
+        Log LLM decision
+
+        Args:
+            session_id: Session identifier
+            decision_data: Dict with keys:
+                - symbol: str
+                - timestamp: datetime or str
+                - decision_type: str ("signal_filter" or "regime_judge")
+                - request_context: dict
+                - response: dict
+                - latency_ms: float
+                - model_name: str
+        """
+        timestamp = decision_data['timestamp']
+        if isinstance(timestamp, datetime):
+            timestamp = timestamp.isoformat()
+
+        request_ctx = json.dumps(decision_data.get('request_context', {}), default=str)
+        response = json.dumps(decision_data.get('response', {}), default=str)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO llm_decisions
+                (session_id, symbol, timestamp, decision_type, request_context,
+                 response, latency_ms, model_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session_id,
+                decision_data.get('symbol', 'UNKNOWN'),
+                timestamp,
+                decision_data['decision_type'],
+                request_ctx,
+                response,
+                decision_data.get('latency_ms'),
+                decision_data.get('model_name')
+            ))
+
+    def get_llm_decisions(self, session_id: str, decision_type: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get LLM decisions for a session
+
+        Args:
+            session_id: Session identifier
+            decision_type: Optional filter ("signal_filter" or "regime_judge")
+            limit: Maximum number of records
+
+        Returns:
+            List of decision dicts with deserialized JSON fields
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if decision_type:
+                cursor.execute("""
+                    SELECT * FROM llm_decisions
+                    WHERE session_id = ? AND decision_type = ?
+                    ORDER BY timestamp DESC LIMIT ?
+                """, (session_id, decision_type, limit))
+            else:
+                cursor.execute("""
+                    SELECT * FROM llm_decisions
+                    WHERE session_id = ?
+                    ORDER BY timestamp DESC LIMIT ?
+                """, (session_id, limit))
+            rows = cursor.fetchall()
+
+        results = []
+        for row in rows:
+            r = dict(row)
+            r['request_context'] = json.loads(r['request_context']) if r['request_context'] else {}
+            r['response'] = json.loads(r['response']) if r['response'] else {}
+            results.append(r)
+
+        return results
 
     def get_active_sessions(self) -> List[Dict[str, Any]]:
         """
