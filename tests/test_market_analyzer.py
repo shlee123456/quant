@@ -553,6 +553,80 @@ class TestMarketAnalyzerNewsIntegration:
             assert 'news' not in results
 
 
+class TestMarketAnalyzerFearGreedIntegration:
+    """Fear & Greed Index 통합 테스트"""
+
+    def test_analyze_with_fear_greed_includes_key(self, analyzer, mock_broker):
+        """collect_fear_greed=True 시 결과에 fear_greed_index 키 포함"""
+        mock_fg_data = {
+            'current': {'value': 42.5, 'classification': 'Fear', 'timestamp': '2026-02-20T10:30:00'},
+            'history': [{'date': '2026-02-20', 'value': 42.5, 'classification': 'Fear'}],
+        }
+        with unittest.mock.patch('trading_bot.market_analyzer._has_fear_greed', True), \
+             unittest.mock.patch('trading_bot.market_analyzer.FearGreedCollector') as MockCollector:
+            mock_instance = MockCollector.return_value
+            mock_instance.collect.return_value = mock_fg_data
+            mock_instance.generate_chart.return_value = '/tmp/fear_greed_chart.png'
+
+            results = analyzer.analyze(['AAPL'], mock_broker, collect_fear_greed=True)
+
+            assert 'fear_greed_index' in results
+            assert results['fear_greed_index']['current']['value'] == 42.5
+            assert results['fear_greed_index']['chart_path'] == '/tmp/fear_greed_chart.png'
+
+    def test_analyze_without_fear_greed(self, analyzer, mock_broker):
+        """collect_fear_greed=False 시 fear_greed_index 키 없음"""
+        results = analyzer.analyze(['AAPL'], mock_broker, collect_fear_greed=False)
+        assert 'fear_greed_index' not in results
+
+    def test_analyze_fear_greed_failure_continues(self, analyzer, mock_broker):
+        """F&G 수집 실패 시 기술적 분석은 정상 진행"""
+        with unittest.mock.patch('trading_bot.market_analyzer._has_fear_greed', True), \
+             unittest.mock.patch('trading_bot.market_analyzer.FearGreedCollector') as MockCollector:
+            mock_instance = MockCollector.return_value
+            mock_instance.collect.side_effect = Exception("API Error")
+
+            results = analyzer.analyze(['AAPL'], mock_broker, collect_fear_greed=True)
+
+            assert 'AAPL' in results['stocks']
+            assert 'indicators' in results['stocks']['AAPL']
+            assert 'fear_greed_index' not in results
+
+    def test_analyze_fear_greed_returns_none(self, analyzer, mock_broker):
+        """F&G API가 None 반환 시 키 미포함"""
+        with unittest.mock.patch('trading_bot.market_analyzer._has_fear_greed', True), \
+             unittest.mock.patch('trading_bot.market_analyzer.FearGreedCollector') as MockCollector:
+            mock_instance = MockCollector.return_value
+            mock_instance.collect.return_value = None
+
+            results = analyzer.analyze(['AAPL'], mock_broker, collect_fear_greed=True)
+
+            assert 'fear_greed_index' not in results
+
+    def test_analyze_no_fear_greed_collector_installed(self, analyzer, mock_broker):
+        """FearGreedCollector 미설치 시 fear_greed_index 키 없음"""
+        with unittest.mock.patch('trading_bot.market_analyzer._has_fear_greed', False):
+            results = analyzer.analyze(['AAPL'], mock_broker, collect_fear_greed=True)
+            assert 'fear_greed_index' not in results
+
+    def test_analyze_fear_greed_without_chart(self, analyzer, mock_broker):
+        """차트 생성 실패 시 chart_path 미포함"""
+        mock_fg_data = {
+            'current': {'value': 55.0, 'classification': 'Greed', 'timestamp': '2026-02-20T10:30:00'},
+            'history': [],
+        }
+        with unittest.mock.patch('trading_bot.market_analyzer._has_fear_greed', True), \
+             unittest.mock.patch('trading_bot.market_analyzer.FearGreedCollector') as MockCollector:
+            mock_instance = MockCollector.return_value
+            mock_instance.collect.return_value = mock_fg_data
+            mock_instance.generate_chart.return_value = None
+
+            results = analyzer.analyze(['AAPL'], mock_broker, collect_fear_greed=True)
+
+            assert 'fear_greed_index' in results
+            assert 'chart_path' not in results['fear_greed_index']
+
+
 class TestBuildAnalysisPromptWithNews:
     """뉴스 데이터 포함 프롬프트 테스트"""
 
@@ -596,3 +670,51 @@ class TestBuildAnalysisPromptWithNews:
             prompt = build_analysis_prompt(path)
 
             assert '뉴스 & 이벤트 분석' in prompt
+
+
+class TestBuildAnalysisPromptWithFearGreed:
+    """Fear & Greed 데이터 포함 프롬프트 테스트"""
+
+    def test_prompt_includes_fear_greed_section(self, analyzer, mock_broker):
+        """F&G 데이터가 있으면 프롬프트에 공포/탐욕 지수 섹션 포함"""
+        results = analyzer.analyze(['AAPL'], mock_broker, collect_news=False, collect_fear_greed=False)
+        # 수동으로 F&G 데이터 추가
+        results['fear_greed_index'] = {
+            'current': {'value': 42.5, 'classification': 'Fear', 'timestamp': '2026-02-20T10:30:00'},
+            'history': [
+                {'date': '2026-02-20', 'value': 42.5, 'classification': 'Fear'},
+                {'date': '2026-02-19', 'value': 40.0, 'classification': 'Fear'},
+            ],
+            'chart_path': '/tmp/charts/fear_greed_2026-02-20.png',
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = analyzer.save_json(results, output_dir=tmpdir)
+            prompt = build_analysis_prompt(path)
+
+            assert '공포/탐욕 지수' in prompt
+            assert 'Fear & Greed Index' in prompt
+            assert '42.5' in prompt
+            assert 'Fear' in prompt
+            assert 'fear_greed_2026-02-20.png' in prompt
+            assert 'Read 도구' in prompt
+
+    def test_prompt_without_fear_greed_no_section(self, analyzer, mock_broker):
+        """F&G 데이터 없으면 해당 섹션 미포함"""
+        results = analyzer.analyze(['AAPL'], mock_broker, collect_news=False, collect_fear_greed=False)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = analyzer.save_json(results, output_dir=tmpdir)
+            prompt = build_analysis_prompt(path)
+
+            assert '공포/탐욕 지수 (Fear & Greed Index)' not in prompt
+
+    def test_prompt_fear_greed_section_number(self, analyzer, mock_broker):
+        """프롬프트에 '공포/탐욕 지수 분석' 섹션 번호 포함"""
+        results = analyzer.analyze(['AAPL'], mock_broker, collect_news=False, collect_fear_greed=False)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = analyzer.save_json(results, output_dir=tmpdir)
+            prompt = build_analysis_prompt(path)
+
+            assert '공포/탐욕 지수 분석' in prompt
