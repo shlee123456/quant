@@ -27,6 +27,13 @@ import pandas as pd
 
 from .regime_detector import RegimeDetector
 
+try:
+    from .news_collector import NewsCollector
+    _has_news_collector = True
+except ImportError:
+    NewsCollector = None
+    _has_news_collector = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,13 +61,14 @@ class MarketAnalyzer:
         self.api_delay = api_delay
         self.regime_detector = RegimeDetector()
 
-    def analyze(self, symbols: List[str], broker: Any) -> Dict:
+    def analyze(self, symbols: List[str], broker: Any, collect_news: bool = True) -> Dict:
         """
-        전체 분석 실행: 데이터 수집 + 지표 계산 + 레짐 감지
+        전체 분석 실행: 데이터 수집 + 지표 계산 + 레짐 감지 + 뉴스 수집
 
         Args:
             symbols: 분석 대상 종목 리스트
             broker: KoreaInvestmentBroker 인스턴스
+            collect_news: 뉴스 수집 여부 (기본 True)
 
         Returns:
             구조화된 분석 결과 딕셔너리
@@ -114,11 +122,26 @@ class MarketAnalyzer:
 
         summary = self._generate_summary(stocks_results)
 
-        return {
+        result = {
             'date': today,
             'market_summary': summary,
             'stocks': stocks_results,
         }
+
+        # 뉴스 수집 (옵션)
+        if collect_news and _has_news_collector:
+            try:
+                news_collector = NewsCollector()
+                news_data = news_collector.collect(symbols)
+                result['news'] = news_data
+                logger.info(f"뉴스 수집 완료: 시장 {len(news_data.get('market_news', []))}건, "
+                            f"종목 {sum(len(v) for v in news_data.get('stock_news', {}).values())}건")
+            except Exception as e:
+                logger.warning(f"뉴스 수집 실패 (기술적 분석은 정상 진행): {e}")
+        elif collect_news and not _has_news_collector:
+            logger.info("NewsCollector 미설치 - 뉴스 수집 건너뜀 (feedparser 설치 필요)")
+
+        return result
 
     def _fetch_data(self, symbol: str, broker: Any) -> Optional[pd.DataFrame]:
         """KIS 브로커로 OHLCV 일봉 조회 (거래소 폴백 포함)

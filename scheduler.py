@@ -809,7 +809,7 @@ def run_market_analysis():
         # CLAUDECODE 환경 변수 제거 (중첩 세션 방지), stdin으로 프롬프트 전달
         env = {k: v for k, v in os.environ.items() if k != 'CLAUDECODE'}
         proc = subprocess.run(
-            ["claude", "-p", "--model", "opus", "--allowedTools", "mcp__claude_ai_Notion__*,Read"],
+            ["claude", "-p", "--model", "claude-opus-4-6", "--allowedTools", "mcp__claude_ai_Notion__*,Read,WebSearch"],
             input=prompt,
             capture_output=True,
             text=True,

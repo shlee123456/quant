@@ -28,6 +28,7 @@ python-dotenv>=1.0.0  # Environment variables
 APScheduler>=3.10.0   # Task scheduling
 requests>=2.31.0      # HTTP requests for notifications
 slack-sdk>=3.23.0     # Slack API for file uploads
+feedparser>=6.0.0     # Google News RSS parsing
 docker>=7.0.0         # Docker container management
 
 # Vectorized backtesting (Phase 5 - VBT Migration)
