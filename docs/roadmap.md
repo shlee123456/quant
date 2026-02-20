@@ -461,7 +461,7 @@ class NotificationService:
 - [x] .env.example 업데이트 (알림 설정)
 - [x] 테스트 스크립트 작성 (examples/test_notifications.py)
 - [x] 테스트 스크립트 작성 (examples/test_slack_file_upload.py)
-- [x] 채널 ID 조회 도구 (examples/debug_slack_channels.py)
+- [x] 채널 ID 조회 도구 (scripts/debug_slack_channels.py)
 - [ ] 로그 모니터링 (Sentry, CloudWatch 등) - 선택사항
 
 ---

@@ -8,7 +8,7 @@ echo "================================"
 echo ""
 
 # 프로젝트 디렉토리로 이동
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 # 실행 여부 확인
 if pgrep -f "python.*scheduler.py" > /dev/null; then

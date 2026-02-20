@@ -8,7 +8,7 @@ echo "================================"
 echo ""
 
 # 프로젝트 디렉토리로 이동
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 # PID 파일 확인
 if [ -f logs/scheduler.pid ]; then
