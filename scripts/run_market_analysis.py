@@ -128,7 +128,7 @@ def main():
 
     try:
         proc = subprocess.run(
-            ["claude", "-p", "--allowedTools", "mcp__claude_ai_Notion__*,Read", prompt],
+            ["claude", "-p", "--model", "opus", "--allowedTools", "mcp__claude_ai_Notion__*,Read", prompt],
             capture_output=True,
             text=True,
             timeout=180,
