@@ -217,6 +217,11 @@ class TestRegisterDecorator:
             def get_all_signals(self, df):
                 return []
 
+            def get_entries_exits(self, df):
+                import pandas as pd
+                empty = pd.Series(False, index=df.index)
+                return empty, empty
+
         registry = StrategyRegistry()
         assert "TestDecorated" in registry.list_strategies()
 
