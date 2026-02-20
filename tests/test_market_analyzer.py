@@ -8,6 +8,7 @@ SimulationDataGenerator로 모의 데이터를 생성하여
 import json
 import os
 import tempfile
+import unittest.mock
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -498,3 +499,100 @@ class TestMarketAnalyzerExchange:
         analyzer._fetch_data('AAPL', broker)
         call_kwargs = broker.fetch_ohlcv.call_args[1]
         assert call_kwargs['market'] == 'NASDAQ'
+
+
+# ─── 뉴스 통합 테스트 ───
+
+
+class TestMarketAnalyzerNewsIntegration:
+    """뉴스 수집 통합 테스트"""
+
+    def test_analyze_with_news_includes_news_key(self, analyzer, mock_broker):
+        """collect_news=True 시 결과에 news 키 포함"""
+        with unittest.mock.patch('trading_bot.market_analyzer._has_news_collector', True), \
+             unittest.mock.patch('trading_bot.market_analyzer.NewsCollector') as MockCollector:
+            mock_instance = MockCollector.return_value
+            mock_instance.collect.return_value = {
+                'collected_at': '2026-02-20T06:10:00',
+                'market_news': [{'title': 'Test News', 'source': 'Reuters', 'published': '2026-02-20', 'link': 'http://example.com'}],
+                'stock_news': {
+                    'AAPL': [{'title': 'Apple News', 'source': 'CNBC', 'published': '2026-02-20', 'link': 'http://example.com'}]
+                }
+            }
+
+            results = analyzer.analyze(['AAPL'], mock_broker, collect_news=True)
+
+            assert 'news' in results
+            assert len(results['news']['market_news']) == 1
+            assert 'AAPL' in results['news']['stock_news']
+
+    def test_analyze_without_news(self, analyzer, mock_broker):
+        """collect_news=False 시 news 키 없음"""
+        results = analyzer.analyze(['AAPL'], mock_broker, collect_news=False)
+        assert 'news' not in results
+
+    def test_analyze_news_failure_continues(self, analyzer, mock_broker):
+        """뉴스 수집 실패 시 기술적 분석은 정상 진행"""
+        with unittest.mock.patch('trading_bot.market_analyzer._has_news_collector', True), \
+             unittest.mock.patch('trading_bot.market_analyzer.NewsCollector') as MockCollector:
+            mock_instance = MockCollector.return_value
+            mock_instance.collect.side_effect = Exception("RSS fetch failed")
+
+            results = analyzer.analyze(['AAPL'], mock_broker, collect_news=True)
+
+            # 기술적 분석은 정상
+            assert 'AAPL' in results['stocks']
+            assert 'indicators' in results['stocks']['AAPL']
+            # 뉴스는 없음
+            assert 'news' not in results
+
+    def test_analyze_no_news_collector_installed(self, analyzer, mock_broker):
+        """NewsCollector 미설치 시 news 키 없음"""
+        with unittest.mock.patch('trading_bot.market_analyzer._has_news_collector', False):
+            results = analyzer.analyze(['AAPL'], mock_broker, collect_news=True)
+            assert 'news' not in results
+
+
+class TestBuildAnalysisPromptWithNews:
+    """뉴스 데이터 포함 프롬프트 테스트"""
+
+    def test_prompt_includes_news_section(self, analyzer, mock_broker):
+        """뉴스 데이터가 있으면 프롬프트에 뉴스 섹션 포함"""
+        results = analyzer.analyze(['AAPL'], mock_broker, collect_news=False)
+        # 수동으로 뉴스 데이터 추가
+        results['news'] = {
+            'collected_at': '2026-02-20T06:10:00',
+            'market_news': [{'title': 'Fed holds rates', 'source': 'Reuters', 'published': '2026-02-20', 'link': ''}],
+            'stock_news': {
+                'AAPL': [{'title': 'Apple beats earnings', 'source': 'CNBC', 'published': '2026-02-20', 'link': ''}]
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = analyzer.save_json(results, output_dir=tmpdir)
+            prompt = build_analysis_prompt(path)
+
+            assert '뉴스' in prompt
+            assert 'WebSearch' in prompt
+            assert 'Fed holds rates' in prompt
+            assert 'Apple beats earnings' in prompt
+
+    def test_prompt_without_news_still_has_websearch(self, analyzer, mock_broker):
+        """뉴스 데이터 없어도 WebSearch 안내 포함"""
+        results = analyzer.analyze(['AAPL'], mock_broker, collect_news=False)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = analyzer.save_json(results, output_dir=tmpdir)
+            prompt = build_analysis_prompt(path)
+
+            assert 'WebSearch' in prompt
+
+    def test_prompt_includes_news_event_section(self, analyzer, mock_broker):
+        """프롬프트에 '뉴스 & 이벤트 분석' 섹션 포함"""
+        results = analyzer.analyze(['AAPL'], mock_broker, collect_news=False)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = analyzer.save_json(results, output_dir=tmpdir)
+            prompt = build_analysis_prompt(path)
+
+            assert '뉴스 & 이벤트 분석' in prompt

@@ -60,6 +60,14 @@ except ImportError:
     MarketAnalyzer = None
     _has_market_analyzer = False
 
+# News collector
+try:
+    from .news_collector import NewsCollector
+    _has_news_collector = True
+except ImportError:
+    NewsCollector = None
+    _has_news_collector = False
+
 # Optional imports (require additional dependencies)
 try:
     from .data_handler import DataHandler
@@ -107,3 +115,5 @@ if _has_llm:
     __all__.extend(['LLMClient', 'LLMConfig'])
 if _has_market_analyzer:
     __all__.append('MarketAnalyzer')
+if _has_news_collector:
+    __all__.append('NewsCollector')

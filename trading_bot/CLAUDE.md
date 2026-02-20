@@ -37,6 +37,7 @@ trading_bot/
 ├── llm_client.py                # LLM API 클라이언트 (vLLM, 시그널 필터/레짐 판단)
 ├── market_analyzer.py           # 일일 시장 데이터 분석 (KIS API + Notion 연동)
 ├── market_analysis_prompt.py    # 시장 분석 LLM 프롬프트 빌더
+├── news_collector.py            # Google News RSS 뉴스 수집기
 └── strategies/
     ├── __init__.py
     ├── base_strategy.py         # 전략 추상 기본 클래스 (ABC)
@@ -265,6 +266,7 @@ def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
 | `llm_client.py` | LLM API 클라이언트 (vLLM, 시그널 필터/레짐 판단) | 공통 |
 | `market_analyzer.py` | 일일 시장 데이터 분석 (KIS API 데이터 수집 + Notion 리포트) | 해외주식 |
 | `market_analysis_prompt.py` | 시장 분석 LLM 프롬프트 빌더 (섹터별 분석, 기술적 지표) | 해외주식 |
+| `news_collector.py` | Google News RSS 뉴스 수집기 (feedparser 기반, 종목별 최신 뉴스) | 해외주식 |
 
 ---
 

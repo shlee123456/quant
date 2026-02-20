@@ -127,11 +127,14 @@ def main():
     prompt = build_analysis_prompt(json_path)
 
     try:
+        env = {k: v for k, v in os.environ.items() if k != 'CLAUDECODE'}
         proc = subprocess.run(
-            ["claude", "-p", "--model", "opus", "--allowedTools", "mcp__claude_ai_Notion__*,Read", prompt],
+            ["claude", "-p", "--model", "claude-opus-4-6", "--allowedTools", "mcp__claude_ai_Notion__*,Read,WebSearch"],
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=180,
+            env=env,
         )
 
         if proc.returncode == 0:
