@@ -223,23 +223,7 @@ class SchedulerManager:
             # 최적 파라미터 저장
             self.optimized_params = best_result['params']
 
-            # 프리셋으로 저장
-            preset_name = f"자동최적화_{datetime.now().strftime('%Y%m%d_%H%M')}"
-            self.preset_manager.save_preset(
-                name=preset_name,
-                description=f"자동 최적화 결과 (Sharpe: {best_result['sharpe_ratio']:.2f})",
-                strategy="RSI+MACD Combo Strategy",
-                strategy_params=best_result['params'],
-                symbols=self.symbols,
-                initial_capital=self.initial_capital,
-                position_size=self.position_size,
-                stop_loss_pct=self.stop_loss_pct,
-                take_profit_pct=self.take_profit_pct,
-                enable_stop_loss=True,
-                enable_take_profit=True
-            )
-
-            self._add_log(f"✓ 최적 파라미터 프리셋 저장: {preset_name}")
+            self._add_log(f"✓ 최적 파라미터 저장 완료 (다음 세션에서 자동 적용)")
 
         except Exception as e:
             self._add_log(f"✗ 최적화 실패: {e}")

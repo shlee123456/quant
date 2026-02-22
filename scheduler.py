@@ -464,23 +464,7 @@ def optimize_strategy():
         optimized_params = best_result['params']
         optimized_strategy_class = best_strategy_class
 
-        # 프리셋으로 저장 (영속성)
-        preset_name = f"자동최적화_{datetime.now().strftime('%Y%m%d_%H%M')}"
-        preset_manager.save_preset(
-            name=preset_name,
-            description=f"자동 최적화 결과 (데이터: {data_source}, 전략: {best_strategy_name}, Sharpe: {best_result['sharpe_ratio']:.2f}, 거래: {best_result.get('total_trades', 0)}회)",
-            strategy=mapped_strategy_name,
-            strategy_params=best_result['params'],
-            symbols=optimization_symbols,
-            initial_capital=10000.0,
-            position_size=0.2,
-            stop_loss_pct=0.03,
-            take_profit_pct=0.05,
-            enable_stop_loss=True,
-            enable_take_profit=True
-        )
-
-        logger.info(f"✓ 최적 파라미터 프리셋 저장: {preset_name}")
+        logger.info(f"✓ 최적 파라미터 전역 변수에 저장 완료 (전략: {best_strategy_name})")
 
     except Exception as e:
         logger.error(f"✗ 최적화 실패: {e}", exc_info=True)
