@@ -39,13 +39,19 @@ trading_bot/
 ├── market_analysis_prompt.py    # 시장 분석 LLM 프롬프트 빌더
 ├── news_collector.py            # Google News RSS 뉴스 수집기
 ├── fear_greed_collector.py      # CNN Fear & Greed Index 수집기 + 차트 생성
+├── reports.py                   # 일일 리포트 생성 (CSV/JSON)
+├── logging_config.py            # 로깅 설정
+├── retry_utils.py               # API 재시도 유틸리티
+├── vbt_backtester.py            # vectorbt 기반 벡터화 백테스터
+├── custom_combo_strategy.py     # RSI+MACD 커스텀 콤보 전략 (루트 레벨)
 └── strategies/
     ├── __init__.py
     ├── base_strategy.py         # 전략 추상 기본 클래스 (ABC)
     ├── rsi_strategy.py          # RSI 전략
     ├── macd_strategy.py         # MACD 전략
     ├── bollinger_bands_strategy.py  # 볼린저 밴드
-    └── stochastic_strategy.py   # 스토캐스틱
+    ├── stochastic_strategy.py   # 스토캐스틱
+    └── rsi_macd_combo_strategy.py # RSI+MACD 콤보 전략
 ```
 
 ---
@@ -59,7 +65,7 @@ trading_bot/
 - **거래 수수료**: 0.1% ~ 0.25% (거래소별 상이)
 
 ### 해외주식 트레이딩
-- **증권사 연동**: 증권사 API (키움, 이베스트, Interactive Brokers 등)
+- **증권사 연동**: 한국투자증권 API (python-kis)
 - **거래 시간**: 장중 거래 시간 제한 (미국: 23:30~06:00 KST)
 - **안정적 변동성**: 암호화폐 대비 낮은 변동성
 - **거래 수수료**: 증권사별 상이
@@ -269,6 +275,11 @@ def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
 | `market_analysis_prompt.py` | 시장 분석 LLM 프롬프트 빌더 (섹터별 분석, 기술적 지표) | 해외주식 |
 | `news_collector.py` | Google News RSS 뉴스 수집기 (feedparser 기반, 종목별 최신 뉴스) | 해외주식 |
 | `fear_greed_collector.py` | CNN Fear & Greed Index 수집기 (API 호출 + matplotlib 차트 생성) | 공통 |
+| `reports.py` | 일일 리포트 생성 (CSV/JSON 세션 리포트) | 공통 |
+| `logging_config.py` | 로깅 설정 (포맷, 핸들러) | 공통 |
+| `retry_utils.py` | API 재시도 유틸리티 (에러 복구, Rate Limiting) | 공통 |
+| `vbt_backtester.py` | vectorbt 기반 벡터화 백테스터 | 공통 |
+| `custom_combo_strategy.py` | RSI+MACD 커스텀 콤보 전략 (루트 레벨 구현) | 공통 |
 
 ---
 

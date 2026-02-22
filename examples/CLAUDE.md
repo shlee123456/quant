@@ -38,7 +38,6 @@ examples/
 ├── test_slack_file_upload.py        # Slack 파일 업로드 테스트
 ├── test_automation_features.py      # 자동화 기능 테스트
 ├── test_yfinance.py                 # yfinance 기본 테스트
-├── test_yfinance_integration.py     # yfinance 통합 테스트
 └── test_yfinance_integration.py     # yfinance 통합 테스트
 ```
 

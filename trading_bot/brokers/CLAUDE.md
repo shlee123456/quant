@@ -675,15 +675,14 @@ API 키 생성 시 필요한 권한만 부여합니다.
 
 ### 10.2 관련 문서
 
-- [docs/broker_comparison.md](../../docs/broker_comparison.md): 브로커 비교 및 통합 전략
-- [docs/kiwoom_api_research.md](../../docs/kiwoom_api_research.md): 키움증권 조사 보고서
-- [docs/korea_investment_api_research.md](../../docs/korea_investment_api_research.md): 한국투자증권 조사 보고서
+- [docs/yfinance_integration.md](../../docs/yfinance_integration.md): yfinance 통합 가이드
+- [docs/roadmap.md](../../docs/roadmap.md): 프로젝트 로드맵
 
 ### 10.3 테스트 파일
 
-- `tests/test_brokers.py`: 브로커 통합 테스트
-- `tests/test_ccxt_broker.py`: CCXT 브로커 테스트
+- `tests/test_brokers.py`: 브로커 통합 테스트 (CCXT 포함)
 - `tests/test_korea_investment_broker.py`: 한국투자증권 브로커 테스트
+- `tests/test_kis_api.py`: KIS API 직접 호출 테스트
 
 ---
 

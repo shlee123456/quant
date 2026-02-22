@@ -61,8 +61,14 @@ Python 기반 멀티-마켓 트레이딩 봇
 - **Brokers**:
   - ccxt 4.0+ (암호화폐 거래소)
   - python-kis (한국투자증권 - 국내/해외주식)
+- **Market Data**: yfinance 0.2.50+ (Yahoo Finance)
+- **Backtesting**: vectorbt 0.26+ (벡터화 백테스팅)
+- **Scheduling**: APScheduler 3.10+
 - **Dashboard**: Streamlit 1.28+, Plotly 5.17+
 - **Visualization**: matplotlib 3.7+, seaborn 0.12+
+- **Notifications**: slack-sdk 3.23+, requests 2.31+
+- **News/Sentiment**: feedparser 6.0+ (Google News RSS)
+- **Utilities**: python-dotenv, pytz, python-dateutil
 - **Testing**: pytest 7.4+, pytest-cov 4.1+
 
 ## 전역 코딩 컨벤션
@@ -81,10 +87,11 @@ Python 기반 멀티-마켓 트레이딩 봇
 |------|------|------|
 | [trading_bot/CLAUDE.md](trading_bot/CLAUDE.md) | 트레이딩 봇 핵심 모듈 (전략, 백테스터, 최적화) | 암호화폐 + 해외주식 |
 | [trading_bot/brokers/CLAUDE.md](trading_bot/brokers/CLAUDE.md) | 브로커 통합 인터페이스 (CCXT, 한국투자증권) | 암호화폐 + 주식 |
-| [trading_bot/strategies/CLAUDE.md](trading_bot/strategies/CLAUDE.md) | 전략 구현 가이드 (RSI, MACD, MA 등) | 암호화폐 + 해외주식 |
+| [trading_bot/strategies/CLAUDE.md](trading_bot/strategies/CLAUDE.md) | 전략 구현 가이드 (RSI, MACD, Bollinger, Stochastic, RSI+MACD Combo) | 암호화폐 + 해외주식 |
 | [dashboard/CLAUDE.md](dashboard/CLAUDE.md) | Streamlit 대시보드 규칙 | 공통 |
 | [tests/CLAUDE.md](tests/CLAUDE.md) | 테스트 작성 가이드 | 공통 |
 | [examples/CLAUDE.md](examples/CLAUDE.md) | 예제 스크립트 사용법 | 공통 |
+| [scripts/ralph/CLAUDE.md](scripts/ralph/CLAUDE.md) | Ralph 자율 코딩 에이전트 지시 (PRD 기반 태스크 실행) | 공통 |
 
 ## 자주 사용하는 명령어
 
@@ -106,6 +113,18 @@ pip install -r requirements.txt 2>&1 | tee .context/terminal/install_$(date +%s)
 
 # 백테스트 예제 실행
 python examples/run_backtest_example.py 2>&1 | tee .context/terminal/backtest_$(date +%s).log
+
+# 일일 시장 분석 수동 실행
+python scripts/run_market_analysis.py 2>&1 | tee .context/terminal/market_analysis_$(date +%s).log
+
+# 스케줄러 (멀티 프리셋)
+python scheduler.py --presets "프리셋1" "프리셋2" 2>&1 | tee .context/terminal/scheduler_$(date +%s).log
+python scheduler.py --list-presets
+
+# Docker
+docker compose up -d
+docker compose logs -f trading-bot-scheduler
+docker compose down
 ```
 
 ## 터미널 로그 정리
@@ -128,6 +147,7 @@ The bot follows a modular architecture with clear separation of concerns:
 3. **Strategy Layer**: Trading logic and signal generation
 4. **Execution Layer**: Backtesting and paper trading
 5. **Analysis Layer**: Performance metrics and optimization
+6. **Market Intelligence Layer**: Daily market data collection, news, Fear & Greed index, LLM signal filtering, Notion reporting
 
 ## Core Components
 
@@ -210,6 +230,22 @@ class Strategy:
 - MACD crosses above Signal → BUY
 - MACD crosses below Signal → SELL
 - Parameters: `fast_period`, `slow_period`, `signal_period`
+
+**Bollinger Bands Strategy** (`trading_bot/strategies/bollinger_bands_strategy.py`)
+- Upper/Lower Band = SMA ± (std_dev * σ)
+- Price touches Lower Band → BUY
+- Price touches Upper Band → SELL
+- Parameters: `period`, `std_dev`
+
+**Stochastic Strategy** (`trading_bot/strategies/stochastic_strategy.py`)
+- %K crosses above %D in oversold zone → BUY
+- %K crosses below %D in overbought zone → SELL
+- Parameters: `k_period`, `d_period`, `overbought`, `oversold`
+
+**RSI+MACD Combo Strategy** (`trading_bot/strategies/rsi_macd_combo_strategy.py`)
+- RSI oversold AND MACD bullish crossover → BUY
+- RSI overbought AND MACD bearish crossover → SELL
+- Parameters: `rsi_period`, `rsi_overbought`, `rsi_oversold`, `macd_fast`, `macd_slow`, `macd_signal`
 
 ### 3. Backtesting Engine
 
@@ -324,13 +360,16 @@ Best Parameters
 
 ### Unit Tests
 
-Each component has corresponding tests in `tests/`:
+Each component has corresponding tests in `tests/` (32 test files). Major test modules:
 
-- `test_rsi_strategy.py`: RSI calculation and signals
-- `test_macd_strategy.py`: MACD calculation and signals
-- `test_simulation_data.py`: Data generation validation
-- `test_optimizer.py`: Optimization logic
-- `test_backtester.py`: Backtest execution
+- `test_rsi_strategy.py`, `test_macd_strategy.py`, `test_bollinger_bands_strategy.py`, `test_stochastic_strategy.py`: Strategy tests
+- `test_backtester.py`, `test_vbt_backtester.py`: Backtesting engine tests
+- `test_optimizer.py`, `test_vbt_optimizer.py`: Optimization tests
+- `test_paper_trading_e2e.py`, `test_paper_trader_db.py`: Paper trading tests
+- `test_market_analyzer.py`, `test_news_collector.py`, `test_fear_greed_collector.py`: Market intelligence tests
+- `test_regime_detector.py`, `test_llm_client.py`: Regime/LLM tests
+- `test_signal_validator.py`, `test_execution_verifier.py`: Validation tests
+- `test_korea_investment_broker.py`, `test_brokers.py`: Broker tests
 
 ### Running Tests
 
@@ -463,18 +502,26 @@ Small edges disappear with commissions. Always include realistic fees.
 ## File Locations
 
 ### Code
-- `/Users/shlee/crypto-trading-bot/trading_bot/` - Main package
-- `/Users/shlee/crypto-trading-bot/trading_bot/strategies/` - Strategy implementations
-- `/Users/shlee/crypto-trading-bot/dashboard/` - Streamlit dashboard
+- `trading_bot/` - Main package
+- `trading_bot/strategies/` - Strategy implementations
+- `trading_bot/brokers/` - Broker integrations
+- `dashboard/` - Streamlit dashboard
+- `scripts/` - Utility scripts
 
 ### Data
-- `/Users/shlee/crypto-trading-bot/data/` - Cached historical data
+- `data/` - Cached historical data, presets, DB
+- `data/market_analysis/` - Daily market analysis JSON + charts
 
 ### Tests
-- `/Users/shlee/crypto-trading-bot/tests/` - Unit tests
+- `tests/` - Unit and integration tests
 
 ### Examples
-- `/Users/shlee/crypto-trading-bot/examples/` - Example scripts
+- `examples/` - Example and test scripts
+
+### Infrastructure
+- `docker-compose.yml` - Docker 배포 설정
+- `Dockerfile` - 컨테이너 이미지
+- `scheduler.py` - 자동화 스케줄러
 
 ## Dependencies
 
@@ -482,6 +529,18 @@ Small edges disappear with commissions. Always include realistic fees.
 - `pandas`: Data manipulation
 - `numpy`: Numerical operations
 - `ccxt`: Exchange connectivity (optional)
+- `python-kis`: Korea Investment Securities API
+
+### Market Data & Analysis
+- `yfinance`: Yahoo Finance data
+- `vectorbt`: Vectorized backtesting
+- `feedparser`: Google News RSS
+
+### Scheduling & Notifications
+- `APScheduler`: Job scheduling
+- `requests`: HTTP client
+- `slack-sdk`: Slack file upload
+- `python-dotenv`: Environment variables
 
 ### Visualization
 - `streamlit`: Dashboard
@@ -534,16 +593,23 @@ Small edges disappear with commissions. Always include realistic fees.
 - ✅ Parameter Persistence (최적화 결과 자동 저장)
 - ✅ API 재시도 로직 (에러 복구, Rate Limiting)
 
-### Phase 3: Live Trading (계획중)
+### Phase 3: Market Intelligence (✅ 완료 - 2026-02-20)
+- ✅ MarketAnalyzer (KIS API + 기술적 지표 수집)
+- ✅ NewsCollector (Google News RSS 뉴스 수집)
+- ✅ FearGreedCollector (CNN Fear & Greed Index + 차트 생성)
+- ✅ Notion 자동 리포트 (Claude CLI 통합)
+- ✅ LLM 시그널 필터 (LLMClient - vLLM 연동)
+- ✅ RegimeDetector (ADX 기반 시장 레짐 감지)
+
+### Phase 4: VBT 마이그레이션 (진행중)
+- ✅ VBTBacktester (vectorbt 기반 벡터화 백테스터)
+- 🔲 전략 VBT 포팅 완료
+
+### Phase 5: Live Trading (계획중)
 - RiskManager 클래스 (일일 손실 제한, 포지션 크기 제한)
 - LiveTrader (실제 주문 실행)
 - 2단계 확인 UI
 - 상세 로깅 및 감사 추적
-
-### Phase 4: Advanced Features (계획중)
-- LLM 통합 (신호 개선)
-- 포트폴리오 최적화 (멀티 전략 배분)
-- 머신러닝 전략 (LSTM, XGBoost)
 
 ## Project Root Files
 
@@ -555,11 +621,16 @@ APScheduler를 사용하여 Paper Trading을 자동으로 실행합니다.
 - 미국 시장 시간에 자동 실행 (23:30-06:00 KST)
 - 장 시작 전 전략 최적화 (23:00 KST)
 - 장 마감 후 자동 종료 및 리포트 생성 (06:00 KST)
+- 장 마감 후 시장 분석 및 Notion 자동 작성 (06:10 KST)
+- 멀티 프리셋 동시 세션 지원 (--presets)
 - Slack/Email 알림 통합
 
 **실행 명령어**:
 ```bash
 python scheduler.py
+python scheduler.py --preset "프리셋이름"
+python scheduler.py --presets "프리셋1" "프리셋2" "프리셋3"
+python scheduler.py --list-presets
 ```
 
 **환경 변수 요구사항**:
@@ -571,10 +642,29 @@ python scheduler.py
 - `23:00 KST`: 전략 최적화
 - `23:30 KST`: Paper Trading 시작 (미국 시장 개장)
 - `06:00 KST`: Paper Trading 종료 (미국 시장 마감)
+- `06:10 KST`: 시장 분석 + Notion 작성 (MarketAnalyzer + Claude CLI)
 
 **로그 파일**:
 - 경로: `logs/scheduler.log`
 - 모든 스케줄 실행 기록 저장
+
+### Docker 배포
+
+`docker-compose.yml`로 대시보드와 스케줄러를 컨테이너로 운영합니다.
+
+**서비스**:
+- `trading-bot-dashboard`: Streamlit 대시보드 (port 8501)
+- `trading-bot-scheduler`: 자동매매 스케줄러 (--presets로 프리셋 지정)
+
+**공유 볼륨**: `data/`, `logs/`, `reports/` (대시보드-스케줄러 간 공유)
+
+**명령어**:
+```bash
+docker compose up -d                              # 전체 시작
+docker compose logs -f trading-bot-scheduler      # 스케줄러 로그
+docker compose stop trading-bot-scheduler         # 스케줄러 중지
+docker compose down                               # 전체 중지
+```
 
 ## Future Enhancements
 
