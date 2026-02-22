@@ -4,10 +4,13 @@ yfinance Helper for Dashboard
 Yahoo Finance API를 사용하여 모든 미국 주식의 시세와 OHLCV 데이터를 조회합니다.
 """
 
+import logging
 import yfinance as yf
 import pandas as pd
 from typing import Dict, Optional
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 
 def fetch_ticker_yfinance(symbol: str) -> Optional[Dict]:
@@ -226,5 +229,9 @@ def validate_symbol(symbol: str) -> bool:
 
         return True
 
-    except Exception:
+    except (ValueError, KeyError, ConnectionError) as e:
+        logger.warning("심볼 유효성 검증 실패 (%s): %s", symbol, e)
+        return False
+    except Exception as e:
+        logger.warning("심볼 유효성 검증 중 예상치 못한 오류 (%s): %s", symbol, e)
         return False

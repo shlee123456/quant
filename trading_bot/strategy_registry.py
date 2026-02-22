@@ -132,7 +132,11 @@ class StrategyRegistry:
                 # 인스턴스 메서드인 경우 임시 인스턴스 생성
                 instance = strategy_class()
                 info["param_info"] = instance.get_param_info()
-            except Exception:
+            except (TypeError, ValueError) as e:
+                logger.warning("전략 '%s' param_info 조회 실패: %s", name, e)
+                info["param_info"] = {}
+            except Exception as e:
+                logger.warning("전략 '%s' param_info 조회 중 예상치 못한 오류: %s", name, e)
                 info["param_info"] = {}
         else:
             info["param_info"] = {}

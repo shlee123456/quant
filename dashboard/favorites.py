@@ -3,10 +3,13 @@ Favorites Widget for Sidebar
 Quick access to frequently traded stocks
 """
 
+import logging
 import streamlit as st
 from typing import List, Optional, Dict, Any
 from dashboard.stock_symbols import StockSymbolDB
 from dashboard.kis_broker import get_kis_broker
+
+logger = logging.getLogger(__name__)
 
 
 def initialize_favorites():
@@ -153,9 +156,10 @@ def render_favorite_item(symbol: str, stock_db: StockSymbolDB, lang: str):
                             price_text = f"${price:.2f} 🔴 +{rate:.2f}%"
                         else:
                             price_text = f"${price:.2f} 🔵 {rate:.2f}%"
-                except Exception:
-                    # Failed to get price, just show symbol
-                    pass
+                except (ConnectionError, TimeoutError, ValueError) as e:
+                    logger.warning("즐겨찾기 시세 조회 실패 (%s): %s", symbol, e)
+                except Exception as e:
+                    logger.warning("즐겨찾기 시세 조회 중 예상치 못한 오류 (%s): %s", symbol, e)
 
         # Display symbol and price
         if price_text:

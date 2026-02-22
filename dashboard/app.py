@@ -4,9 +4,12 @@ Quant Trading Lab - 메인 대시보드 애플리케이션
 라우팅 전용 파일: 각 탭의 UI 로직은 dashboard/pages/ 모듈에 분리되어 있습니다.
 """
 
+import logging
 import streamlit as st
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -70,8 +73,8 @@ def init_session_state():
             recovered = db.recover_zombie_sessions()
             if recovered > 0:
                 st.toast(f"비정상 종료된 세션 {recovered}개를 감지하여 'interrupted' 처리했습니다.")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("좀비 세션 복구 중 오류: %s", e)
         st.session_state.zombie_recovered = True
 
     if 'config' not in st.session_state:

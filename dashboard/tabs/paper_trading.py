@@ -8,11 +8,14 @@ app.py에서 분리된 paper_trading_tab() 및 관련 함수:
 - stop_all_active_sessions(): 모든 활성 세션 일괄 중지
 """
 
+import logging
 import streamlit as st
 import pandas as pd
 import time
 import threading
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 from typing import Dict, Any, Optional, List
 
 from trading_bot.strategy import MovingAverageCrossover
@@ -1096,8 +1099,11 @@ def paper_trading_tab():
                     try:
                         ticker = broker.fetch_ticker(symbol, overseas=True, market='NASDAQ')
                         current_prices[symbol] = ticker['last']
-                    except Exception:
-                        # If fetching fails for a symbol, use last known price or 0
+                    except (ConnectionError, TimeoutError, ValueError) as e:
+                        logger.warning("시세 조회 실패 (%s): %s", symbol, e)
+                        current_prices[symbol] = 0.0
+                    except Exception as e:
+                        logger.warning("시세 조회 중 예상치 못한 오류 (%s): %s", symbol, e)
                         current_prices[symbol] = 0.0
 
                 # Calculate portfolio value

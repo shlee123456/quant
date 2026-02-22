@@ -9,16 +9,16 @@ from .strategies.base_strategy import BaseStrategy
 from .data_handler import DataHandler
 from .brokers.base_broker import BaseBroker
 from .database import TradingDatabase
-from .signal_validator import SignalValidator
 from .execution_verifier import OrderExecutionVerifier
 from .retry_utils import retry_with_backoff, CircuitBreaker
 from .performance_calculator import PerformanceCalculator
 from .order_executor import OrderExecutor
 from .risk_manager import RiskManager
+from .portfolio_manager import PortfolioManager
+from .signal_pipeline import SignalPipeline
 import time
 import json
 import threading
-import numpy as np
 import logging
 
 
@@ -99,16 +99,6 @@ class PaperTrader:
         self.enable_stop_loss = enable_stop_loss
         self.enable_take_profit = enable_take_profit
 
-        # Trading state - track positions per symbol
-        self.capital = initial_capital
-        self.positions: Dict[str, float] = {symbol: 0.0 for symbol in self.symbols}
-        self.entry_prices: Dict[str, float] = {symbol: 0.0 for symbol in self.symbols}
-        self.last_signals: Dict[str, int] = {symbol: 0 for symbol in self.symbols}
-
-        # History
-        self.trades: List[Dict[str, Any]] = []
-        self.equity_history: List[Dict[str, Any]] = []
-
         # Running flag
         self.is_running = False
 
@@ -123,17 +113,16 @@ class PaperTrader:
 
         # Verification
         self.enable_verification = enable_verification
-        self._signal_validator = SignalValidator()
         self._execution_verifier = OrderExecutionVerifier()
 
-        # Regime detection + LLM integration (optional)
+        # Regime detection + LLM integration (optional) -- kept for attribute access
         self.regime_detector = regime_detector
         self.llm_client = llm_client
 
         # Notifier
         self.notifier = notifier
 
-        # Threading lock for state mutations
+        # Threading lock for state mutations (shared with portfolio manager)
         self._lock = threading.RLock()
 
         # Symbol-level circuit breaker for iteration errors
@@ -144,9 +133,26 @@ class PaperTrader:
         self._ohlcv_circuit_breaker = CircuitBreaker(failure_threshold=5, timeout=120.0)
 
         # Memory cap for equity history
-        self.EQUITY_HISTORY_MAX_SIZE = 5000
+        from trading_bot.config import Config
+        _cfg = Config()
+        self.EQUITY_HISTORY_MAX_SIZE = _cfg.get('paper_trading.equity_history_max_size', 5000)
 
         # --- Extracted helper classes ---
+        self._portfolio = PortfolioManager(
+            symbols=self.symbols,
+            initial_capital=initial_capital,
+            db=db,
+            max_equity_history=self.EQUITY_HISTORY_MAX_SIZE,
+        )
+        # Share the same lock
+        self._portfolio._lock = self._lock
+
+        self._signal_pipeline = SignalPipeline(
+            regime_detector=regime_detector,
+            llm_client=llm_client,
+            enable_verification=enable_verification,
+        )
+
         self._performance_calculator = PerformanceCalculator(timeframe='1h')
         self._order_executor = OrderExecutor(
             commission=commission,
@@ -160,6 +166,58 @@ class PaperTrader:
             enable_take_profit=enable_take_profit,
         )
 
+    # ---- Backward-compatible property accessors delegating to PortfolioManager ----
+
+    @property
+    def capital(self) -> float:
+        return self._portfolio.capital
+
+    @capital.setter
+    def capital(self, value: float):
+        self._portfolio.capital = value
+
+    @property
+    def positions(self) -> Dict[str, float]:
+        return self._portfolio.positions
+
+    @positions.setter
+    def positions(self, value: Dict[str, float]):
+        self._portfolio.positions = value
+
+    @property
+    def entry_prices(self) -> Dict[str, float]:
+        return self._portfolio.entry_prices
+
+    @entry_prices.setter
+    def entry_prices(self, value: Dict[str, float]):
+        self._portfolio.entry_prices = value
+
+    @property
+    def last_signals(self) -> Dict[str, int]:
+        return self._portfolio.last_signals
+
+    @last_signals.setter
+    def last_signals(self, value: Dict[str, int]):
+        self._portfolio.last_signals = value
+
+    @property
+    def trades(self) -> List[Dict[str, Any]]:
+        return self._portfolio.trades
+
+    @trades.setter
+    def trades(self, value: List[Dict[str, Any]]):
+        self._portfolio.trades = value
+
+    @property
+    def equity_history(self) -> List[Dict[str, Any]]:
+        return self._portfolio.equity_history
+
+    @equity_history.setter
+    def equity_history(self, value: List[Dict[str, Any]]):
+        self._portfolio.equity_history = value
+
+    # ---- Public API ----
+
     def get_portfolio_value(self, current_prices: Optional[Dict[str, float]] = None) -> float:
         """
         Calculate current portfolio value
@@ -171,18 +229,7 @@ class PaperTrader:
         Returns:
             Total portfolio value (cash + positions)
         """
-        if current_prices is None:
-            current_prices = {}
-
-        # Start with cash
-        total_value = self.capital
-
-        # Add value of all positions
-        for symbol, position in self.positions.items():
-            if position > 0 and symbol in current_prices:
-                total_value += position * current_prices[symbol]
-
-        return total_value
+        return self._portfolio.get_portfolio_value(current_prices)
 
     def start(self):
         """
@@ -234,7 +281,7 @@ class PaperTrader:
                 'commission': trade_capital * self.commission
             }
 
-            self.trades.append(trade)
+            self._portfolio.record_trade(trade)
 
         self._log_trade(trade)
 
@@ -291,7 +338,7 @@ class PaperTrader:
                 'reason': reason
             }
 
-            self.trades.append(trade)
+            self._portfolio.record_trade(trade)
 
             reason_text = {
                 'signal': '전략 시그널',
@@ -358,7 +405,7 @@ class PaperTrader:
                 'signal': signal,
                 'indicator_values': info,
                 'market_price': current_price,
-                'executed': False  # Will be updated after trade execution
+                'executed': False
             }
             self.db.log_signal(self.session_id, signal_data)
 
@@ -378,16 +425,14 @@ class PaperTrader:
 
         # Execute trades based on signal
         executed = False
-        if signal == 1 and self.last_signals[symbol] != 1:  # New BUY signal
+        if signal == 1 and self.last_signals[symbol] != 1:
             self.execute_buy(symbol, current_price, timestamp)
             executed = True
-        elif signal == -1 and self.last_signals[symbol] != -1:  # New SELL signal
+        elif signal == -1 and self.last_signals[symbol] != -1:
             self.execute_sell(symbol, current_price, timestamp)
             executed = True
 
-        # Update signal executed status if needed
         if executed and self.db and self.session_id:
-            # Note: This is simplified - in production, we'd update the specific signal record
             pass
 
         self.last_signals[symbol] = signal
@@ -440,16 +485,7 @@ class PaperTrader:
         """
         Check and execute stop loss or take profit if triggered.
         Delegates to RiskManager for the check logic.
-
-        Args:
-            symbol: Trading symbol
-            current_price: Current market price
-            timestamp: Current timestamp
-
-        Returns:
-            True if stop loss or take profit was triggered, False otherwise
         """
-        # Skip if no position
         if self.positions[symbol] == 0:
             return False
 
@@ -481,16 +517,7 @@ class PaperTrader:
         return True
 
     def _fetch_ticker_with_retry(self, symbol: str, overseas: bool = False):
-        """
-        Fetch ticker with retry logic
-
-        Args:
-            symbol: Trading symbol
-            overseas: Whether to use overseas parameter (for KIS broker)
-
-        Returns:
-            Ticker dict with 'last' price
-        """
+        """Fetch ticker with retry logic"""
         @self._ticker_circuit_breaker
         @retry_with_backoff(max_retries=3, backoff_factor=2.0, initial_delay=2.0)
         def _fetch():
@@ -502,21 +529,10 @@ class PaperTrader:
         return _fetch()
 
     def _fetch_ohlcv_with_retry(self, symbol: str, timeframe: str, limit: int = 100):
-        """
-        Fetch OHLCV with retry logic
-
-        Args:
-            symbol: Trading symbol
-            timeframe: Timeframe (e.g., '1d', '1h')
-            limit: Number of bars to fetch
-
-        Returns:
-            DataFrame with OHLCV data
-        """
+        """Fetch OHLCV with retry logic"""
         @self._ohlcv_circuit_breaker
         @retry_with_backoff(max_retries=3, backoff_factor=2.0, initial_delay=2.0)
         def _fetch():
-            # Check if broker supports overseas parameter (KIS broker)
             from .brokers.korea_investment_broker import KoreaInvestmentBroker
             if isinstance(self.broker, KoreaInvestmentBroker):
                 return self.broker.fetch_ohlcv(symbol, timeframe, limit=limit, overseas=True)
@@ -536,18 +552,14 @@ class PaperTrader:
             raise ValueError("Broker is required for real-time trading")
 
         try:
-            # Collect current prices for all symbols
             current_prices: Dict[str, float] = {}
 
-            # Process each symbol
             for symbol in self.symbols:
-                # Skip symbols that have hit the error threshold
                 if self._symbol_error_counts.get(symbol, 0) >= 3:
                     continue
 
                 try:
                     # Fetch current ticker (with retry)
-                    # Check if broker supports overseas parameter (KoreaInvestmentBroker)
                     from .brokers.korea_investment_broker import KoreaInvestmentBroker
                     if isinstance(self.broker, KoreaInvestmentBroker):
                         ticker = self._fetch_ticker_with_retry(symbol, overseas=True)
@@ -559,13 +571,12 @@ class PaperTrader:
 
                     timestamp = datetime.now()
 
-                    # 손절매/익절매 먼저 체크 (우선순위 높음)
+                    # Stop loss / take profit check (highest priority)
                     if self._check_stop_loss_take_profit(symbol, current_price, timestamp):
-                        # 손절/익절 발생 시 전략 시그널 무시하고 다음 종목으로
                         logger.info(f"[{timestamp}] {symbol}: 손절/익절 실행됨, 전략 시그널 무시")
                         continue
 
-                    # Fetch historical OHLCV data for strategy indicator calculation (with retry)
+                    # Fetch historical OHLCV data for strategy indicator calculation
                     df = self._fetch_ohlcv_with_retry(symbol, timeframe, limit=100)
 
                     if df.empty:
@@ -575,68 +586,20 @@ class PaperTrader:
                     # Get current signal from strategy
                     signal, info = self.strategy.get_current_signal(df)
 
-                    # Validate signal
-                    if self.enable_verification:
-                        if not self._signal_validator.validate_signal_value(signal):
-                            logger.warning(f"유효하지 않은 시그널 값 [{symbol}]: {signal}")
-
-                    # [Regime Detection] 레짐 감지
-                    regime_result = None
-                    if self.regime_detector:
-                        try:
-                            regime_result = self.regime_detector.detect(df)
-                            if self.db and self.session_id:
-                                from dataclasses import asdict
-                                regime_dict = asdict(regime_result)
-                                regime_dict['symbol'] = symbol
-                                regime_dict['timestamp'] = timestamp
-                                regime_dict['regime'] = regime_result.regime.value
-                                self.db.log_regime(self.session_id, regime_dict)
-                        except Exception as e:
-                            logger.warning(f"레짐 감지 실패 [{symbol}]: {e}")
-
-                    # [LLM Signal Filter] 시그널 필터링 (signal != 0일 때만)
-                    if self.llm_client and signal != 0:
-                        try:
-                            from dataclasses import asdict
-                            regime_info = asdict(regime_result) if regime_result else {}
-                            if regime_result:
-                                regime_info['regime'] = regime_result.regime.value
-
-                            decision = self.llm_client.filter_signal({
-                                'signal': signal,
-                                'symbol': symbol,
-                                'strategy': self.strategy.name,
-                                'indicators': info,
-                                'regime': regime_info,
-                                'position_info': {
-                                    'current_positions': sum(1 for v in self.positions.values() if v > 0),
-                                    'capital_pct_used': 1.0 - (self.capital / self.initial_capital) if self.initial_capital > 0 else 0,
-                                }
-                            })
-
-                            if decision:
-                                # DB 기록
-                                if self.db and self.session_id:
-                                    self.db.log_llm_decision(self.session_id, {
-                                        'symbol': symbol,
-                                        'timestamp': timestamp,
-                                        'decision_type': 'signal_filter',
-                                        'request_context': {'signal': signal, 'regime': regime_info},
-                                        'response': {'action': decision.action, 'confidence': decision.confidence, 'reasoning': decision.reasoning},
-                                        'latency_ms': getattr(decision, '_latency_ms', None),
-                                        'model_name': self.llm_client.config.signal_model_name if hasattr(self.llm_client, 'config') else None,
-                                    })
-
-                                if decision.action == 'reject':
-                                    logger.info(f"LLM 시그널 거부 [{symbol}]: {decision.reasoning}")
-                                    signal = 0
-                                elif decision.action == 'hold':
-                                    logger.info(f"LLM 시그널 보류 [{symbol}]: {decision.reasoning}")
-                                    signal = 0
-                                # 'execute' → 원래 시그널 유지
-                        except Exception as e:
-                            logger.warning(f"LLM 시그널 필터 실패 (fail-open) [{symbol}]: {e}")
+                    # Process signal through pipeline (validation, regime, LLM)
+                    signal, _regime_result = self._signal_pipeline.process(
+                        signal=signal,
+                        symbol=symbol,
+                        df=df,
+                        info=info,
+                        timestamp=timestamp,
+                        positions=self.positions,
+                        capital=self.capital,
+                        initial_capital=self.initial_capital,
+                        strategy_name=self.strategy.name,
+                        db=self.db,
+                        session_id=self.session_id,
+                    )
 
                     # Log signal to database
                     if self.db and self.session_id:
@@ -651,21 +614,15 @@ class PaperTrader:
                         self.db.log_signal(self.session_id, signal_data)
 
                     # Execute trades based on signals
-                    executed = False
-                    if signal == 1 and self.last_signals.get(symbol, 0) != 1:  # New BUY signal
+                    if signal == 1 and self.last_signals.get(symbol, 0) != 1:
                         self.execute_buy(symbol, current_price, timestamp)
-                        executed = True
-                    elif signal == -1 and self.last_signals.get(symbol, 0) != -1:  # New SELL signal
+                    elif signal == -1 and self.last_signals.get(symbol, 0) != -1:
                         self.execute_sell(symbol, current_price, timestamp, reason='signal')
-                        executed = True
 
-                    # Update last signal
                     self.last_signals[symbol] = signal
 
-                    # Log status for this symbol
                     logger.info(f"[{timestamp}] {symbol}: 가격=${current_price:.2f}, 시그널={signal}")
 
-                    # Reset error count on success
                     self._symbol_error_counts[symbol] = 0
 
                 except Exception as e:
@@ -680,20 +637,15 @@ class PaperTrader:
             portfolio_value = self.get_portfolio_value(current_prices)
             timestamp = datetime.now()
 
-            with self._lock:
-                self.equity_history.append({
-                    'timestamp': timestamp,
-                    'equity': portfolio_value,
-                    'prices': current_prices.copy(),
-                    'positions': self.positions.copy()
-                })
-
-                if len(self.equity_history) > self.EQUITY_HISTORY_MAX_SIZE:
-                    self.equity_history = self.equity_history[-self.EQUITY_HISTORY_MAX_SIZE:]
+            self._portfolio.record_equity({
+                'timestamp': timestamp,
+                'equity': portfolio_value,
+                'prices': current_prices.copy(),
+                'positions': self.positions.copy()
+            })
 
             self._take_portfolio_snapshot(timestamp, portfolio_value, current_prices)
 
-            # Log portfolio summary
             logger.info(f"Portfolio Value: ${portfolio_value:.2f} | Return: {((portfolio_value - self.initial_capital) / self.initial_capital * 100):+.2f}%")
 
         except Exception as e:
@@ -702,13 +654,7 @@ class PaperTrader:
     def run(self, symbol: str, timeframe: str, update_interval: int = 60):
         """
         Run paper trading in a loop (backward compatibility)
-
-        Args:
-            symbol: Trading pair symbol
-            timeframe: Candle timeframe
-            update_interval: Seconds between updates
         """
-        # Start session
         self.start()
 
         logger.info(f"PAPER TRADING STARTED | Symbol: {symbol} | Timeframe: {timeframe} | "
@@ -739,7 +685,6 @@ class PaperTrader:
 
         # Generate verification report
         if self.enable_verification:
-            # Verify capital consistency
             is_consistent, msg = self._execution_verifier.verify_capital_consistency(
                 initial_capital=self.initial_capital,
                 trades=self.trades,
@@ -748,7 +693,6 @@ class PaperTrader:
             if not is_consistent:
                 logger.warning(f"자본금 정합성 검증 실패: {msg}")
 
-            # Verify position consistency
             inconsistencies = self._execution_verifier.verify_position_consistency(
                 positions=self.positions,
                 trades=self.trades,
@@ -762,7 +706,7 @@ class PaperTrader:
                 f"(통과={report['passed']}, 경고={report['warnings']}, 오류={report['errors']})"
             )
 
-        # Update database session with final metrics (delegates to PerformanceCalculator)
+        # Update database session with final metrics
         if self.db and self.session_id:
             final_value = self.get_portfolio_value()
             if self.equity_history:
@@ -770,7 +714,6 @@ class PaperTrader:
 
             total_return = ((final_value - self.initial_capital) / self.initial_capital) * 100
 
-            # Calculate performance metrics via PerformanceCalculator
             sharpe_ratio = self._calculate_sharpe_ratio()
             max_drawdown = self._calculate_max_drawdown()
             win_rate = self._calculate_win_rate()
@@ -788,55 +731,23 @@ class PaperTrader:
             logger.info(f"Session {self.session_id} finalized")
 
     def _take_portfolio_snapshot(self, timestamp: datetime, total_value: float, current_prices: Optional[Dict[str, float]] = None):
-        """
-        Take a portfolio snapshot and log to database
-
-        Args:
-            timestamp: Snapshot timestamp
-            total_value: Total portfolio value
-            current_prices: Optional dict of current prices (for debugging)
-        """
-        if not self.db or not self.session_id:
-            return
-
-        snapshot = {
-            'timestamp': timestamp,
-            'total_value': total_value,
-            'cash': self.capital,
-            'positions': self.positions.copy()
-        }
-
-        self.db.log_portfolio_snapshot(self.session_id, snapshot)
+        """Take a portfolio snapshot and log to database"""
+        self._portfolio.take_snapshot(self.session_id, timestamp, total_value, current_prices)
 
     def _calculate_sharpe_ratio(self) -> Optional[float]:
-        """
-        Calculate Sharpe ratio from equity history.
-        Delegates to PerformanceCalculator.
-        """
+        """Calculate Sharpe ratio from equity history."""
         return self._performance_calculator.calculate_sharpe_ratio(self.equity_history)
 
     def _calculate_max_drawdown(self) -> Optional[float]:
-        """
-        Calculate maximum drawdown from equity history.
-        Delegates to PerformanceCalculator.
-        """
+        """Calculate maximum drawdown from equity history."""
         return self._performance_calculator.calculate_max_drawdown(self.equity_history)
 
     def _calculate_win_rate(self) -> Optional[float]:
-        """
-        Calculate win rate from completed trades.
-        Delegates to PerformanceCalculator.
-        """
+        """Calculate win rate from completed trades."""
         return self._performance_calculator.calculate_win_rate(self.trades)
 
     def get_performance_summary(self) -> Dict[str, Any]:
-        """
-        Get a complete performance summary.
-        Delegates to PerformanceCalculator.
-
-        Returns:
-            Dict with all performance metrics.
-        """
+        """Get a complete performance summary."""
         return self._performance_calculator.get_performance_summary(
             trades=self.trades,
             equity_history=self.equity_history,
@@ -845,10 +756,8 @@ class PaperTrader:
 
     def _print_status(self, info: Dict, portfolio_value: float):
         """Log current status"""
-        # Build indicator info string dynamically based on available fields
         indicator_parts = [f"Price: ${info['close']:.2f}"]
 
-        # Add strategy-specific indicators if present
         if 'fast_ma' in info and 'slow_ma' in info:
             indicator_parts.append(f"Fast MA: ${info['fast_ma']:.2f}")
             indicator_parts.append(f"Slow MA: ${info['slow_ma']:.2f}")
@@ -896,7 +805,6 @@ class PaperTrader:
 
         try:
             with open(self.log_file, 'a') as f:
-                # Convert timestamp to string for JSON serialization
                 trade_copy = trade.copy()
                 trade_copy['timestamp'] = str(trade_copy['timestamp'])
                 f.write(json.dumps(trade_copy) + '\n')
@@ -905,8 +813,8 @@ class PaperTrader:
 
     def get_trades_df(self) -> pd.DataFrame:
         """Get trades as DataFrame"""
-        return pd.DataFrame(self.trades)
+        return self._portfolio.get_trades_df()
 
     def get_equity_df(self) -> pd.DataFrame:
         """Get equity history as DataFrame"""
-        return pd.DataFrame(self.equity_history)
+        return self._portfolio.get_equity_df()

@@ -3,11 +3,16 @@ Session Manager Widget
 Manages paper trading sessions - view history, recover zombie sessions, inspect logs
 """
 
+import json
+import logging
+import sqlite3
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from typing import Dict, List, Optional, Any
 from trading_bot.database import TradingDatabase
+
+logger = logging.getLogger(__name__)
 
 
 def render_session_manager(lang: str = 'ko') -> None:
@@ -319,7 +324,8 @@ def _render_signals_log(db: TradingDatabase, session_id: str, lang: str) -> None
     """Render strategy signals for a session"""
     try:
         signals = db.get_session_signals(session_id)
-    except Exception:
+    except (sqlite3.Error, json.JSONDecodeError) as e:
+        logger.warning("시그널 조회 실패 (session_id=%s): %s", session_id, e)
         signals = []
 
     if not signals:

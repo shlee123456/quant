@@ -68,6 +68,213 @@ class TestSchedulerCommands:
         assert pending[0]['id'] == id2
 
 
+def _create_session_helper(db: TradingDatabase, name: str, status: str = 'completed') -> str:
+    """테스트용 세션 생성 헬퍼"""
+    session_id = db.create_session(name, initial_capital=10000.0)
+    if status != 'active':
+        db.update_session(session_id, {
+            'status': status,
+            'end_time': datetime.now().isoformat(),
+        })
+    return session_id
+
+
+def _add_snapshots_bulk(db: TradingDatabase, session_id: str, count: int,
+                        start_time: datetime, interval_minutes: int = 1):
+    """지정 간격으로 스냅샷 벌크 추가"""
+    for i in range(count):
+        ts = start_time + timedelta(minutes=i * interval_minutes)
+        db.log_portfolio_snapshot(session_id, {
+            'timestamp': ts,
+            'total_value': 10000.0 + i,
+            'cash': 5000.0,
+            'positions': {'AAPL': 10},
+        })
+
+
+def _add_signals_bulk(db: TradingDatabase, session_id: str, count: int,
+                      start_time: datetime, executed_ratio: float = 0.1):
+    """시그널 벌크 추가 (executed_ratio 비율만 executed=True)"""
+    executed_count = int(count * executed_ratio)
+    for i in range(count):
+        ts = start_time + timedelta(minutes=i)
+        db.log_signal(session_id, {
+            'symbol': 'AAPL',
+            'timestamp': ts,
+            'signal': 1 if i % 2 == 0 else -1,
+            'indicator_values': {'rsi': 30 + i},
+            'market_price': 150.0 + i * 0.1,
+            'executed': i < executed_count,
+        })
+
+
+class TestDownsampleCompletedSessions:
+    """downsample_completed_sessions 메서드 테스트"""
+
+    def test_downsamples_snapshots_to_hourly(self, db):
+        """1분 간격 스냅샷 → 1시간 간격으로 축소"""
+        session_id = _create_session_helper(db, 'TestStrategy', 'completed')
+        start = datetime(2026, 2, 20, 10, 0, 0)
+
+        # 3시간분(180개) 1분 간격 스냅샷 추가
+        _add_snapshots_bulk(db, session_id, 180, start, interval_minutes=1)
+
+        # 다운샘플링 전 확인
+        snapshots_before = db.get_session_snapshots(session_id)
+        assert len(snapshots_before) == 180
+
+        # 다운샘플링
+        result = db.downsample_completed_sessions(hours_interval=1)
+
+        # 다운샘플링 후 확인: 3시간이니 대략 3~4개
+        snapshots_after = db.get_session_snapshots(session_id)
+        assert len(snapshots_after) <= 4
+        assert len(snapshots_after) < 180
+        assert result['snapshots_removed'] == 180 - len(snapshots_after)
+
+    def test_removes_unexecuted_signals(self, db):
+        """executed=False 시그널만 삭제"""
+        session_id = _create_session_helper(db, 'TestStrategy', 'completed')
+        start = datetime(2026, 2, 20, 10, 0, 0)
+
+        # 100개 시그널 추가 (10%만 executed)
+        _add_signals_bulk(db, session_id, 100, start, executed_ratio=0.1)
+
+        # 다운샘플링
+        result = db.downsample_completed_sessions(hours_interval=1)
+
+        # executed=True인 10개만 남아야 함
+        signals_after = db.get_session_signals(session_id)
+        assert len(signals_after) == 10
+        assert all(s['executed'] == 1 for s in signals_after)
+        assert result['signals_removed'] == 90
+
+    def test_does_not_touch_active_sessions(self, db):
+        """active 세션은 건드리지 않음"""
+        active_id = _create_session_helper(db, 'ActiveStrategy', 'active')
+        start = datetime(2026, 2, 20, 10, 0, 0)
+
+        _add_snapshots_bulk(db, active_id, 60, start)
+        _add_signals_bulk(db, active_id, 50, start, executed_ratio=0.1)
+
+        # 다운샘플링
+        result = db.downsample_completed_sessions(hours_interval=1)
+
+        # active 세션은 그대로
+        snapshots = db.get_session_snapshots(active_id)
+        signals = db.get_session_signals(active_id)
+        assert len(snapshots) == 60
+        assert len(signals) == 50
+        assert result['snapshots_removed'] == 0
+        assert result['signals_removed'] == 0
+
+    def test_handles_multiple_completed_sessions(self, db):
+        """여러 완료된 세션을 모두 처리"""
+        start = datetime(2026, 2, 20, 10, 0, 0)
+
+        session1 = _create_session_helper(db, 'Strategy1', 'completed')
+        _add_snapshots_bulk(db, session1, 120, start)
+        _add_signals_bulk(db, session1, 50, start, executed_ratio=0.2)
+
+        session2 = _create_session_helper(db, 'Strategy2', 'interrupted')
+        _add_snapshots_bulk(db, session2, 60, start)
+        _add_signals_bulk(db, session2, 30, start, executed_ratio=0.0)
+
+        result = db.downsample_completed_sessions(hours_interval=1)
+
+        assert result['snapshots_removed'] > 0
+        assert result['signals_removed'] > 0
+
+        # session2의 모든 시그널은 executed=False이므로 전부 삭제
+        signals2 = db.get_session_signals(session2)
+        assert len(signals2) == 0
+
+    def test_no_completed_sessions_returns_zero(self, db):
+        """완료된 세션이 없으면 0 반환"""
+        active_id = _create_session_helper(db, 'ActiveOnly', 'active')
+        start = datetime(2026, 2, 20, 10, 0, 0)
+        _add_snapshots_bulk(db, active_id, 60, start)
+
+        result = db.downsample_completed_sessions(hours_interval=1)
+        assert result == {'snapshots_removed': 0, 'signals_removed': 0}
+
+    def test_terminated_sessions_also_processed(self, db):
+        """terminated 상태 세션도 다운샘플링 대상"""
+        session_id = _create_session_helper(db, 'TerminatedStrategy', 'terminated')
+        start = datetime(2026, 2, 20, 10, 0, 0)
+        _add_snapshots_bulk(db, session_id, 120, start)
+
+        result = db.downsample_completed_sessions(hours_interval=1)
+        snapshots_after = db.get_session_snapshots(session_id)
+
+        assert result['snapshots_removed'] > 0
+        assert len(snapshots_after) < 120
+
+    def test_idempotent_when_run_twice(self, db):
+        """두 번 실행해도 결과 동일"""
+        session_id = _create_session_helper(db, 'TestStrategy', 'completed')
+        start = datetime(2026, 2, 20, 10, 0, 0)
+        _add_snapshots_bulk(db, session_id, 120, start)
+
+        # 1차 실행
+        result1 = db.downsample_completed_sessions(hours_interval=1)
+        count_after_first = len(db.get_session_snapshots(session_id))
+
+        # 2차 실행
+        result2 = db.downsample_completed_sessions(hours_interval=1)
+        count_after_second = len(db.get_session_snapshots(session_id))
+
+        assert result1['snapshots_removed'] > 0
+        assert result2['snapshots_removed'] == 0
+        assert count_after_first == count_after_second
+
+
+class TestGetDbStats:
+    """get_db_stats 메서드 테스트"""
+
+    def test_returns_all_table_counts(self, db):
+        """모든 테이블의 row 수 반환"""
+        stats = db.get_db_stats()
+
+        assert 'tables' in stats
+        expected_tables = [
+            'paper_trading_sessions', 'trades', 'portfolio_snapshots',
+            'strategy_signals', 'regime_history', 'llm_decisions',
+            'scheduler_commands'
+        ]
+        for table in expected_tables:
+            assert table in stats['tables']
+
+    def test_counts_reflect_data(self, db):
+        """데이터 추가 후 count가 반영됨"""
+        session_id = _create_session_helper(db, 'TestStrategy', 'active')
+        start = datetime(2026, 2, 20, 10, 0, 0)
+        _add_snapshots_bulk(db, session_id, 5, start)
+        _add_signals_bulk(db, session_id, 3, start, executed_ratio=1.0)
+
+        stats = db.get_db_stats()
+
+        assert stats['tables']['paper_trading_sessions'] == 1
+        assert stats['tables']['portfolio_snapshots'] == 5
+        assert stats['tables']['strategy_signals'] == 3
+
+    def test_returns_file_size(self, db):
+        """DB 파일 크기 반환"""
+        stats = db.get_db_stats()
+
+        assert 'file_size_bytes' in stats
+        assert 'file_size_mb' in stats
+        assert stats['file_size_bytes'] > 0
+        assert isinstance(stats['file_size_mb'], float)
+
+    def test_empty_db_returns_zero_counts(self, db):
+        """빈 DB는 모든 count가 0"""
+        stats = db.get_db_stats()
+
+        for table, count in stats['tables'].items():
+            assert count == 0
+
+
 class TestPruneOldData:
     """prune_old_data tests"""
 

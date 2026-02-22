@@ -398,7 +398,8 @@ class LLMClient:
                 "signal_filter": models.get('signal_7b', {}).get('status') == 'healthy',
                 "regime_judge": models.get('regime_14b', {}).get('status') == 'healthy',
             }
-        except Exception:
+        except (requests.RequestException, ConnectionError, ValueError) as e:
+            logger.warning("게이트웨이 헬스체크 실패: %s", e)
             return {"signal_filter": False, "regime_judge": False}
 
     def _health_check_direct(self) -> Dict[str, bool]:
@@ -413,7 +414,8 @@ class LLMClient:
                 base_url = url.rsplit('/v1/', 1)[0]
                 resp = requests.get(f"{base_url}/v1/models", timeout=3)
                 results[name] = resp.status_code == 200
-            except Exception:
+            except (requests.RequestException, ConnectionError, ValueError) as e:
+                logger.warning("직접 헬스체크 실패 (%s): %s", name, e)
                 results[name] = False
 
         return results

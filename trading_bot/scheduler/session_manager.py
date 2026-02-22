@@ -1,0 +1,436 @@
+"""
+Paper trading session start/stop/report management.
+
+Handles:
+- Starting single and multi-preset trading sessions
+- Stopping sessions and generating reports
+- Trading day detection (weekends, US holidays)
+- Market analysis after close
+"""
+
+import os
+import threading
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Dict, List
+
+import pytz
+
+from trading_bot.paper_trader import PaperTrader
+from trading_bot.database import TradingDatabase, generate_display_name
+from trading_bot.reports import ReportGenerator
+from trading_bot.us_holidays import is_us_market_holiday
+
+import trading_bot.scheduler.scheduler_state as state
+from trading_bot.scheduler.optimization_runner import _create_kis_broker
+
+logger = logging.getLogger(__name__)
+
+
+def _is_trading_day() -> bool:
+    """
+    오늘이 미국 주식시장 거래일인지 확인합니다.
+    KST 23:30에 호출되므로, 미국 동부시간(EST/EDT) 기준 날짜를 사용합니다.
+
+    Returns:
+        거래일이면 True, 공휴일/주말이면 False
+    """
+    us_eastern = pytz.timezone('US/Eastern')
+    us_now = datetime.now(us_eastern)
+    us_date = us_now.date()
+
+    # 주말 체크
+    if us_date.weekday() >= 5:  # 5=Saturday, 6=Sunday
+        logger.info(f"주말입니다 (미국 동부: {us_date}, {us_date.strftime('%A')}) - 트레이딩 건너뜀")
+        return False
+
+    # 공휴일 체크
+    if is_us_market_holiday(us_date):
+        logger.info(f"미국 시장 공휴일입니다 (미국 동부: {us_date}) - 트레이딩 건너뜀")
+        return False
+
+    return True
+
+
+def _run_trader_thread(label: str, trader: PaperTrader):
+    """
+    daemon thread에서 실행되는 트레이딩 루프
+
+    Args:
+        label: 세션 라벨
+        trader: PaperTrader 인스턴스
+    """
+    log_prefix = f"[{label}]"
+    try:
+        trader.run_realtime(interval_seconds=60, timeframe='1h')
+    except Exception as e:
+        logger.error(f"{log_prefix} ✗ 트레이딩 루프 오류: {e}", exc_info=True)
+    finally:
+        logger.info(f"{log_prefix} 트레이딩 루프 종료됨")
+
+
+def _start_single_session(label: str, config: Optional[Dict]):
+    """
+    단일 트레이딩 세션을 daemon thread로 시작하는 헬퍼
+
+    Args:
+        label: 세션 라벨 (로그 접두어로 사용)
+        config: 프리셋 설정 dict 또는 None (기본 설정 사용)
+    """
+    log_prefix = f"[{label}]"
+
+    # 최대 세션 수 제한 검사
+    if state.max_sessions > 0:
+        with state.traders_lock:
+            current_count = len(state.active_traders)
+        if current_count >= state.max_sessions:
+            logger.warning(f"{log_prefix} ⚠ 최대 세션 수 초과 ({current_count}/{state.max_sessions}) - 세션 시작 거부")
+            return
+
+    try:
+        # 브로커 초기화
+        broker = _create_kis_broker()
+        if not broker:
+            logger.error(f"{log_prefix} ✗ KIS 브로커 초기화 실패 - 세션을 시작할 수 없습니다")
+            state.notifier.notify_error(f"KIS 브로커 초기화 실패", context=f"세션 시작: {label}")
+            return
+
+        # 데이터베이스 초기화
+        db = TradingDatabase()
+
+        # 기본 설정 (Top 10 US Market Cap)
+        strategy_name = "RSI+MACD Combo Strategy"
+        strategy_params = None
+        symbols = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'AVGO', 'LLY', 'WMT']
+        initial_capital = 10000.0
+        position_size = 0.1  # 10종목 x 10% = 100%
+        stop_loss_pct = 0.03
+        take_profit_pct = 0.05
+        enable_stop_loss = True
+        enable_take_profit = True
+
+        # 프리셋에서 설정 적용
+        if config:
+            strategy_name = config.get('strategy', strategy_name)
+            strategy_params = config.get('strategy_params')
+            symbols = config.get('symbols', symbols)
+            initial_capital = config.get('initial_capital', initial_capital)
+            position_size = config.get('position_size', position_size)
+            stop_loss_pct = config.get('stop_loss_pct', stop_loss_pct)
+            take_profit_pct = config.get('take_profit_pct', take_profit_pct)
+            enable_stop_loss = config.get('enable_stop_loss', enable_stop_loss)
+            enable_take_profit = config.get('enable_take_profit', enable_take_profit)
+            logger.info(f"{log_prefix} 프리셋 설정 적용됨: {config.get('_preset_name', label)}")
+
+        # 전략 클래스 결정
+        strategy_class = state.STRATEGY_CLASS_MAP.get(strategy_name, state.STRATEGY_CLASS_MAP['RSI+MACD Combo Strategy'])
+
+        # 전략 생성 (우선순위: CLI 프리셋 > 최적화 결과 > 기본값)
+        if config and strategy_params:
+            logger.info(f"{log_prefix} CLI 프리셋 파라미터 사용 (--preset 우선): {strategy_params}")
+            strategy = strategy_class(**strategy_params)
+        elif state.optimized_params and state.optimized_strategy_class:
+            # 최적화에서 선택된 전략 클래스와 파라미터 사용
+            strategy_class = state.optimized_strategy_class
+            logger.info(f"{log_prefix} 최적화된 전략 사용: {strategy_class.__name__}, 파라미터: {state.optimized_params}")
+            strategy = strategy_class(**state.optimized_params)
+        elif state.optimized_params:
+            # optimized_strategy_class 없이 optimized_params만 있는 경우
+            import inspect
+            valid_params = set(inspect.signature(strategy_class.__init__).parameters.keys()) - {'self'}
+            opt_param_keys = set(state.optimized_params.keys())
+            if opt_param_keys <= valid_params:
+                logger.info(f"{log_prefix} 최적화된 파라미터 사용: {state.optimized_params}")
+                strategy = strategy_class(**state.optimized_params)
+            else:
+                mismatched = opt_param_keys - valid_params
+                logger.warning(f"{log_prefix} 최적화 파라미터가 {strategy_class.__name__}와 호환되지 않음 (불일치: {mismatched}) - 기본 파라미터 사용")
+                strategy = strategy_class()
+        else:
+            logger.info(f"{log_prefix} 기본 파라미터 사용 (프리셋/최적화 없음) - {strategy_name}")
+            strategy = strategy_class()
+
+        logger.info(f"{log_prefix} 전략: {strategy.name}")
+        logger.info(f"{log_prefix} 종목: {', '.join(symbols)}")
+
+        # display_name 생성
+        display_name = generate_display_name(
+            strategy_name=strategy.name,
+            symbols=symbols,
+            preset_name=label if config else None
+        )
+
+        # 페이퍼 트레이더 생성 (레짐 감지 + LLM 통합)
+        trader = PaperTrader(
+            strategy=strategy,
+            symbols=symbols,
+            broker=broker,
+            initial_capital=initial_capital,
+            position_size=position_size,
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
+            enable_stop_loss=enable_stop_loss,
+            enable_take_profit=enable_take_profit,
+            db=db,
+            display_name=display_name,
+            regime_detector=state.global_regime_detector,
+            llm_client=state.global_llm_client,
+        )
+
+        # Attach notifier to trader for stop loss/take profit notifications
+        trader.notifier = state.notifier
+
+        logger.info(f"{log_prefix} ✓ 페이퍼 트레이더 초기화 완료")
+        logger.info(f"{log_prefix}   초기 자본: ${trader.initial_capital:,.2f}")
+        logger.info(f"{log_prefix}   포지션 크기: {trader.position_size:.0%}")
+        logger.info(f"{log_prefix}   손절매: {trader.stop_loss_pct:.0%} ({'활성' if trader.enable_stop_loss else '비활성'})")
+        logger.info(f"{log_prefix}   익절매: {trader.take_profit_pct:.0%} ({'활성' if trader.enable_take_profit else '비활성'})")
+
+        # 세션 시작 알림 전송
+        state.notifier.notify_session_start({
+            'strategy_name': display_name,
+            'symbols': symbols,
+            'initial_capital': trader.initial_capital
+        })
+
+        # daemon thread로 실시간 트레이딩 시작
+        def run_trading():
+            _run_trader_thread(label, trader)
+
+        thread = threading.Thread(target=run_trading, name=f"trader-{label}", daemon=True)
+
+        # active_traders와 trader_threads를 단일 락 블록에서 등록
+        with state.traders_lock:
+            state.active_traders[label] = trader
+            state.trader_threads[label] = thread
+        thread.start()
+
+        logger.info(f"{log_prefix} 실시간 트레이딩 루프 시작 (60초 간격, 1시간봉)...")
+
+    except Exception as e:
+        logger.error(f"{log_prefix} ✗ 페이퍼 트레이딩 실패: {e}", exc_info=True)
+        state.notifier.notify_error(f"페이퍼 트레이딩 실패: {e}", context=f"세션: {label}")
+        with state.traders_lock:
+            state.active_traders.pop(label, None)
+            state.trader_threads.pop(label, None)
+
+
+def start_paper_trading():
+    """
+    장 시작 작업: 페이퍼 트레이딩 세션 시작
+    장 시작 시각 (23:30 KST) 실행
+
+    preset_configs에 등록된 프리셋 수만큼 세션을 동시 시작합니다.
+    프리셋이 없으면 기본 설정 1개 세션을 시작합니다.
+    """
+    logger.info("=" * 60)
+    logger.info("페이퍼 트레이딩 세션 시작...")
+    logger.info("=" * 60)
+
+    state.scheduler_health.update('trading')
+
+    if state.preset_configs:
+        logger.info(f"총 {len(state.preset_configs)}개 프리셋 세션 시작")
+        for cfg in state.preset_configs:
+            label = cfg.get('_preset_name', 'unknown')
+            _start_single_session(label, cfg)
+    else:
+        # 프리셋 없이 기본 설정 1개 세션
+        _start_single_session("기본", None)
+
+    with state.traders_lock:
+        logger.info(f"✓ 활성 세션 수: {len(state.active_traders)}")
+
+
+def _stop_single_session(label: str):
+    """
+    단일 트레이딩 세션 중지 및 리포트 생성 헬퍼
+
+    Args:
+        label: 세션 라벨
+    """
+    log_prefix = f"[{label}]"
+
+    with state.traders_lock:
+        trader = state.active_traders.pop(label, None)
+        thread = state.trader_threads.pop(label, None)
+
+    if trader is None:
+        logger.warning(f"{log_prefix} ⚠ 중지할 세션 없음")
+        return
+
+    try:
+        # 트레이딩 루프에 종료 시그널 전송
+        trader.is_running = False
+        trader._stop_event.set()
+
+        # 트레이딩 루프가 실제로 종료될 때까지 대기 (최대 120초)
+        logger.info(f"{log_prefix} 트레이딩 루프 종료 대기 중...")
+        if thread and thread.is_alive():
+            thread.join(timeout=120)
+            if thread.is_alive():
+                logger.warning(f"{log_prefix} ⚠ 트레이딩 스레드가 120초 내에 종료되지 않음 - 강제 종료 진행")
+            else:
+                logger.info(f"{log_prefix} ✓ 트레이딩 스레드 정상 종료")
+        else:
+            # thread가 없거나 이미 종료된 경우 _loop_exited 이벤트로 대기
+            exited = trader._loop_exited.wait(timeout=120)
+            if exited:
+                logger.info(f"{log_prefix} ✓ 트레이딩 루프 정상 종료")
+            else:
+                logger.warning(f"{log_prefix} ⚠ 트레이딩 루프가 120초 내에 종료되지 않음 - 강제 종료 진행")
+
+        # 세션 종료 및 DB 업데이트
+        trader.stop()
+
+        # 세션 요약 조회
+        if trader.session_id and trader.db:
+            summary = trader.db.get_session_summary(trader.session_id)
+
+            if summary:
+                logger.info(f"{log_prefix} ✓ 세션 중지 성공")
+                logger.info(f"{log_prefix}   세션 ID: {trader.session_id}")
+                logger.info(f"{log_prefix}   최종 자본: ${summary['final_capital']:,.2f}" if summary['final_capital'] is not None else f"{log_prefix}   최종 자본: N/A")
+                logger.info(f"{log_prefix}   총 수익률: {summary['total_return']:.2f}%" if summary['total_return'] is not None else f"{log_prefix}   총 수익률: N/A")
+                logger.info(f"{log_prefix}   샤프 비율: {summary['sharpe_ratio']:.2f}" if summary['sharpe_ratio'] is not None else f"{log_prefix}   샤프 비율: N/A (데이터 부족)")
+                logger.info(f"{log_prefix}   최대 낙폭: {summary['max_drawdown']:.2f}%" if summary['max_drawdown'] is not None else f"{log_prefix}   최대 낙폭: N/A (데이터 부족)")
+                logger.info(f"{log_prefix}   승률: {summary['win_rate']:.2f}%" if summary['win_rate'] is not None else f"{log_prefix}   승률: N/A (매도 거래 없음)")
+
+                # 거래 횟수 조회
+                trades = trader.db.get_session_trades(trader.session_id)
+                logger.info(f"{log_prefix}   총 거래: {len(trades)}회")
+
+                # 리포트 생성 및 Slack 업로드
+                try:
+                    report_gen = ReportGenerator(trader.db)
+                    report_files = report_gen.generate_session_report(
+                        trader.session_id,
+                        output_dir='reports/',
+                        formats=['csv', 'json']
+                    )
+
+                    logger.info(f"{log_prefix} ✓ 리포트 생성 완료:")
+                    for format_name, file_path in report_files.items():
+                        logger.info(f"{log_prefix}   {format_name.upper()}: {file_path}")
+
+                    # 리포트 파일을 Slack에 업로드
+                    file_paths = list(report_files.values())
+
+                    logger.info(f"{log_prefix} 📤 Slack으로 리포트 파일 업로드 중... ({len(file_paths)}개)")
+
+                    # 세션 요약과 함께 파일 업로드
+                    upload_success = state.notifier.notify_daily_report_with_files(
+                        session_summary={
+                            'strategy_name': summary.get('display_name') or f"{label} - {summary.get('strategy_name', 'Unknown')}",
+                            'total_return': summary['total_return'] if summary['total_return'] is not None else 0.0,
+                            'sharpe_ratio': summary['sharpe_ratio'] if summary['sharpe_ratio'] is not None else 0.0,
+                            'max_drawdown': summary['max_drawdown'] if summary['max_drawdown'] is not None else 0.0,
+                            'win_rate': summary['win_rate'] if summary['win_rate'] is not None else 0.0,
+                            'num_trades': len(trades)
+                        },
+                        report_files=file_paths
+                    )
+
+                    if upload_success:
+                        logger.info(f"{log_prefix} ✓ Slack 리포트 업로드 완료")
+                    else:
+                        logger.warning(f"{log_prefix} ⚠ Slack 리포트 업로드 실패 (Bot Token/Channel 확인 필요)")
+
+                except Exception as e:
+                    logger.error(f"{log_prefix} ✗ 리포트 생성 실패: {e}", exc_info=True)
+
+    except Exception as e:
+        logger.error(f"{log_prefix} ✗ 트레이딩 세션 중지 실패: {e}", exc_info=True)
+        state.notifier.notify_error(f"트레이딩 세션 중지 실패: {e}", context=f"장 마감: {label}")
+
+
+def stop_paper_trading():
+    """
+    장 마감 작업: 모든 페이퍼 트레이딩 세션 중지 및 리포트 생성
+    장 마감 시각 (06:00 KST) 실행
+    """
+    logger.info("=" * 60)
+    logger.info("모든 페이퍼 트레이딩 세션 중지 중...")
+    logger.info("=" * 60)
+
+    state.scheduler_health.update('stopping')
+
+    with state.traders_lock:
+        labels = list(state.active_traders.keys())
+
+    if not labels:
+        logger.warning("⚠ 중지할 활성 트레이딩 세션 없음")
+        return
+
+    logger.info(f"총 {len(labels)}개 세션 중지 시작")
+
+    for label in labels:
+        _stop_single_session(label)
+
+    logger.info(f"✓ 전체 {len(labels)}개 세션 중지 완료")
+
+
+def run_market_analysis():
+    """
+    장 마감 후 시장 분석: MarketAnalyzer로 데이터 수집 + JSON 저장
+    06:10 KST 실행. 노션 작성은 호스트의 scripts/notion_writer.py (cron)에서 처리.
+    """
+    logger.info("=" * 60)
+    logger.info("시장 분석 시작...")
+    logger.info("=" * 60)
+
+    if not state._has_market_analyzer:
+        logger.warning("MarketAnalyzer 모듈 미설치 - 시장 분석 건너뜀")
+        return
+
+    # 환경 변수에서 설정 읽기
+    enabled = os.getenv('MARKET_ANALYSIS_ENABLED', 'true').strip().lower()
+    if enabled not in ('true', '1', 'yes'):
+        logger.info("MARKET_ANALYSIS_ENABLED=false - 시장 분석 비활성화됨")
+        return
+
+    symbols_str = os.getenv(
+        'MARKET_ANALYSIS_SYMBOLS',
+        'AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AVGO,LLY,WMT'
+    )
+    symbols = [s.strip() for s in symbols_str.split(',') if s.strip()]
+
+    try:
+        # 브로커 초기화
+        broker = _create_kis_broker()
+        if not broker:
+            logger.error("KIS 브로커 초기화 실패 - 시장 분석 불가")
+            state.notifier.notify_error("KIS 브로커 초기화 실패", context="시장 분석")
+            return
+
+        # MarketAnalyzer로 데이터 수집
+        analyzer = state.MarketAnalyzer()
+        logger.info(f"분석 대상 종목: {', '.join(symbols)}")
+        result = analyzer.analyze(symbols, broker)
+
+        # JSON 저장
+        json_path = analyzer.save_json(result)
+        logger.info(f"분석 결과 저장: {json_path}")
+
+        # Pine Script 자동 생성
+        try:
+            from scripts.generate_pine_script import generate_pine_scripts
+            pine_files = generate_pine_scripts(Path(json_path), slack=bool(state.notifier.slack_bot_token))
+            if pine_files:
+                logger.info(f"Pine Script 생성 완료: {[str(f) for f in pine_files]}")
+        except Exception as e:
+            logger.warning(f"Pine Script 생성 실패 (무시): {e}")
+
+        # Slack 알림
+        state.notifier.send_slack(
+            f"*시장 분석 데이터 수집 완료*\n\n"
+            f"분석 종목: {', '.join(symbols)}\n"
+            f"결과 파일: {json_path}\n"
+            f"노션 작성은 호스트 cron에서 처리됩니다",
+            color='good'
+        )
+
+    except Exception as e:
+        logger.error(f"시장 분석 실패: {e}", exc_info=True)
+        state.notifier.notify_error(f"시장 분석 실패: {e}", context="시장 분석")

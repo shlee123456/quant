@@ -260,7 +260,7 @@ class TestMultiSessionManagement:
 
         assert isinstance(preset_configs, list)
 
-    @patch('scheduler._create_kis_broker')
+    @patch('trading_bot.scheduler.session_manager._create_kis_broker')
     def test_start_single_session_broker_failure(self, mock_get_kis):
         """브로커 초기화 실패 시 세션이 시작되지 않아야 함"""
         mock_get_kis.return_value = None
@@ -273,7 +273,7 @@ class TestMultiSessionManagement:
         # 활성 세션이 증가하지 않아야 함
         assert len(active_traders) == initial_count
 
-    @patch('scheduler._create_kis_broker')
+    @patch('trading_bot.scheduler.session_manager._create_kis_broker')
     def test_start_single_session_with_preset_config(self, mock_get_kis):
         """프리셋 설정이 올바르게 적용되는지 확인"""
         mock_broker = MockBroker()
@@ -333,7 +333,7 @@ class TestMultiSessionManagement:
         original_presets = list(preset_configs)
         preset_configs.clear()
 
-        with patch('scheduler._start_single_session') as mock_start:
+        with patch('trading_bot.scheduler.session_manager._start_single_session') as mock_start:
             start_paper_trading()
             mock_start.assert_called_once_with("기본", None)
 
@@ -354,7 +354,7 @@ class TestMultiSessionManagement:
         ]
         preset_configs.extend(test_presets)
 
-        with patch('scheduler._start_single_session') as mock_start:
+        with patch('trading_bot.scheduler.session_manager._start_single_session') as mock_start:
             start_paper_trading()
             assert mock_start.call_count == 2
             mock_start.assert_any_call('RSI 보수적', test_presets[0])

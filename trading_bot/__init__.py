@@ -11,7 +11,13 @@ from .strategy import MovingAverageCrossover
 from .strategies import BaseStrategy, RSIStrategy, MACDStrategy, BollingerBandsStrategy
 from .backtester import Backtester
 from .optimizer import StrategyOptimizer
-from .notifications import NotificationService
+from .notifications import (
+    NotificationService,
+    NotificationChannel,
+    SlackWebhookChannel,
+    SlackBotChannel,
+    EmailChannel,
+)
 from .strategy_presets import StrategyPresetManager
 from .custom_combo_strategy import CustomComboStrategy
 from .strategy_registry import StrategyRegistry
@@ -89,12 +95,16 @@ try:
     from .performance_calculator import PerformanceCalculator
     from .order_executor import OrderExecutor
     from .risk_manager import RiskManager
+    from .portfolio_manager import PortfolioManager
+    from .signal_pipeline import SignalPipeline
     _has_paper_trader = True
 except ImportError:
     PaperTrader = None
     PerformanceCalculator = None
     OrderExecutor = None
     RiskManager = None
+    PortfolioManager = None
+    SignalPipeline = None
     _has_paper_trader = False
 
 __all__ = [
@@ -108,6 +118,10 @@ __all__ = [
     'Backtester',
     'StrategyOptimizer',
     'NotificationService',
+    'NotificationChannel',
+    'SlackWebhookChannel',
+    'SlackBotChannel',
+    'EmailChannel',
     'StrategyPresetManager',
     'CustomComboStrategy',
     'StrategyRegistry',
@@ -120,7 +134,7 @@ if _has_vbt:
 if _has_ccxt:
     __all__.append('DataHandler')
 if _has_paper_trader:
-    __all__.extend(['PaperTrader', 'PerformanceCalculator', 'OrderExecutor', 'RiskManager'])
+    __all__.extend(['PaperTrader', 'PerformanceCalculator', 'OrderExecutor', 'RiskManager', 'PortfolioManager', 'SignalPipeline'])
 if _has_automation:
     __all__.extend(['TradingDatabase', 'ReportGenerator'])
 if _has_regime:

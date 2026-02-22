@@ -194,7 +194,7 @@ def test_retry_logic():
     for i in range(3):
         try:
             failing_function()
-        except:
+        except Exception:
             pass
 
     print(f"✓ Circuit Breaker 상태: {breaker.state}")
@@ -207,7 +207,7 @@ def test_retry_logic():
     # Should transition to HALF_OPEN
     try:
         failing_function()
-    except:
+    except Exception:
         pass
 
     print(f"✓ Circuit Breaker 상태: {breaker.state} (타임아웃 후)")

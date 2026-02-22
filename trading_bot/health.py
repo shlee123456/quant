@@ -59,8 +59,8 @@ class SchedulerHealth:
             with os.fdopen(fd, "w") as f:
                 json.dump(status, f, indent=2, ensure_ascii=False)
             os.rename(tmp_path, self.status_file)
-        except Exception:
-            # Clean up the temp file on failure
+        except OSError as e:
+            logger.error("상태 파일 쓰기 실패: %s", e)
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
             raise

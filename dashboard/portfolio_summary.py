@@ -3,9 +3,12 @@ Portfolio Summary Widget for Sidebar
 Displays real-time portfolio status when paper trading is active
 """
 
+import logging
 import streamlit as st
 from typing import Optional, Dict, Any
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 def render_portfolio_summary(lang: str = 'ko') -> None:
@@ -38,8 +41,10 @@ def render_portfolio_summary(lang: str = 'ko') -> None:
                     ticker = broker.fetch_ticker(symbol, overseas=True)
                     if ticker and 'last' in ticker:
                         current_prices[symbol] = ticker['last']
-                except Exception:
-                    pass
+                except (ConnectionError, TimeoutError, ValueError) as e:
+                    logger.warning("포트폴리오 시세 조회 실패 (%s): %s", symbol, e)
+                except Exception as e:
+                    logger.warning("포트폴리오 시세 조회 중 예상치 못한 오류 (%s): %s", symbol, e)
 
         # Get portfolio metrics
         total_value = trader.get_portfolio_value(current_prices)

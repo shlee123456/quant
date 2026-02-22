@@ -18,6 +18,7 @@ Usage:
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -58,14 +59,16 @@ class MarketAnalyzer:
         'BA', 'CAT', 'GE', 'UPS', 'FDX', 'MMM',
     }
 
-    def __init__(self, ohlcv_limit: int = 200, api_delay: float = 0.5):
+    def __init__(self, ohlcv_limit: int = 200, api_delay: float = 0.5, max_workers: int = 5):
         """
         Args:
             ohlcv_limit: OHLCV 조회 봉 수 (기본 200)
             api_delay: API 호출 간 대기 시간(초)
+            max_workers: 병렬 심볼 분석 스레드 수 (기본 5)
         """
         self.ohlcv_limit = ohlcv_limit
         self.api_delay = api_delay
+        self.max_workers = max_workers
         self.regime_detector = RegimeDetector()
 
     def analyze(self, symbols: List[str], broker: Any, collect_news: bool = True,
@@ -87,43 +90,19 @@ class MarketAnalyzer:
 
         stocks_results = {}
 
-        for symbol in symbols:
-            try:
-                df = self._fetch_data(symbol, broker)
-                if df is None or len(df) < 30:
-                    logger.warning(f"{symbol}: 데이터 부족 (조회 실패 또는 30봉 미만)")
-                    continue
-
-                indicators = self._calculate_indicators(df)
-                regime = self._detect_regime(df)
-                patterns = self._detect_patterns(df['close'].values)
-
-                # 가격 정보
-                last_close = float(df['close'].iloc[-1])
-                change_5d = self._pct_change(df['close'], 5)
-                change_20d = self._pct_change(df['close'], 20)
-
-                # 시그널 진단: 현재 RSI 기반 최적 범위 제안
-                rsi_val = indicators['rsi']['value']
-                signal_diagnosis = self._diagnose_signals(rsi_val, indicators)
-
-                stocks_results[symbol] = {
-                    'price': {
-                        'last': last_close,
-                        'change_5d': change_5d,
-                        'change_20d': change_20d,
-                    },
-                    'indicators': indicators,
-                    'regime': regime,
-                    'patterns': patterns,
-                    'signal_diagnosis': signal_diagnosis,
-                }
-
-                logger.info(f"  {symbol}: ${last_close:.2f}, RSI={rsi_val:.1f}, 레짐={regime['state']}")
-
-            except Exception as e:
-                logger.error(f"  {symbol} 분석 실패: {e}", exc_info=True)
-                continue
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(self._analyze_single_symbol, symbol, broker): symbol
+                for symbol in symbols
+            }
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    result = future.result()
+                    if result is not None:
+                        stocks_results[symbol] = result
+                except Exception as e:
+                    logger.error(f"  {symbol} 분석 실패: {e}", exc_info=True)
 
         if not stocks_results:
             logger.error("분석 가능한 종목이 없습니다")
@@ -171,6 +150,48 @@ class MarketAnalyzer:
             logger.info("FearGreedCollector 미설치 - F&G 지수 수집 건너뜀")
 
         return result
+
+    def _analyze_single_symbol(self, symbol: str, broker: Any) -> Optional[Dict]:
+        """단일 종목 데이터 수집 및 분석
+
+        Args:
+            symbol: 종목 심볼
+            broker: KoreaInvestmentBroker 인스턴스
+
+        Returns:
+            분석 결과 딕셔너리 또는 None (데이터 부족/실패 시)
+        """
+        df = self._fetch_data(symbol, broker)
+        if df is None or len(df) < 30:
+            logger.warning(f"{symbol}: 데이터 부족 (조회 실패 또는 30봉 미만)")
+            return None
+
+        indicators = self._calculate_indicators(df)
+        regime = self._detect_regime(df)
+        patterns = self._detect_patterns(df['close'].values)
+
+        # 가격 정보
+        last_close = float(df['close'].iloc[-1])
+        change_5d = self._pct_change(df['close'], 5)
+        change_20d = self._pct_change(df['close'], 20)
+
+        # 시그널 진단: 현재 RSI 기반 최적 범위 제안
+        rsi_val = indicators['rsi']['value']
+        signal_diagnosis = self._diagnose_signals(rsi_val, indicators)
+
+        logger.info(f"  {symbol}: ${last_close:.2f}, RSI={rsi_val:.1f}, 레짐={regime['state']}")
+
+        return {
+            'price': {
+                'last': last_close,
+                'change_5d': change_5d,
+                'change_20d': change_20d,
+            },
+            'indicators': indicators,
+            'regime': regime,
+            'patterns': patterns,
+            'signal_diagnosis': signal_diagnosis,
+        }
 
     def _fetch_data(self, symbol: str, broker: Any) -> Optional[pd.DataFrame]:
         """KIS 브로커로 OHLCV 일봉 조회 (거래소 폴백 포함)

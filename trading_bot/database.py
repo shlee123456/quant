@@ -4,11 +4,14 @@ SQLite database for paper trading sessions, trades, signals, and portfolio snaps
 
 import sqlite3
 import json
+import logging
 import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def generate_display_name(strategy_name: str, symbols: List[str], preset_name: Optional[str] = None) -> str:
@@ -34,17 +37,22 @@ class TradingDatabase:
     - strategy_signals: Signal generation history
     """
 
-    def __init__(self, db_path: str = "data/paper_trading.db"):
+    def __init__(self, db_path: str = None, busy_timeout: int = None):
         """
         Initialize database connection
 
         Args:
-            db_path: Path to SQLite database file
+            db_path: Path to SQLite database file (default from Config)
+            busy_timeout: SQLite busy timeout in ms (default from Config)
         """
-        self.db_path = db_path
+        from trading_bot.config import Config
+        _cfg = Config()
+
+        self.db_path = db_path if db_path is not None else _cfg.get('database.path', 'data/paper_trading.db')
+        self.busy_timeout = busy_timeout if busy_timeout is not None else _cfg.get('database.busy_timeout', 5000)
 
         # Create data directory if it doesn't exist
-        db_dir = os.path.dirname(db_path)
+        db_dir = os.path.dirname(self.db_path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir)
 
@@ -56,13 +64,13 @@ class TradingDatabase:
         """Context manager for connection reuse with WAL mode"""
         conn = sqlite3.connect(self.db_path)
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute(f"PRAGMA busy_timeout={self.busy_timeout}")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.row_factory = sqlite3.Row
         try:
             yield conn
             conn.commit()
-        except Exception:
+        except sqlite3.Error:
             conn.rollback()
             raise
         finally:
@@ -76,7 +84,7 @@ class TradingDatabase:
 
             # Enable WAL mode and busy timeout
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute(f"PRAGMA busy_timeout={self.busy_timeout}")
 
             # Paper trading sessions table
             cursor.execute("""
@@ -608,7 +616,8 @@ class TradingDatabase:
 
             return True
 
-        except Exception:
+        except sqlite3.Error as e:
+            logger.error("세션 삭제 실패 (session_id=%s): %s", session_id, e)
             return False
 
     def log_regime(self, session_id: str, regime_data: Dict[str, Any]):
@@ -871,6 +880,100 @@ class TradingDatabase:
             deleted['llm_decisions'] = cursor.rowcount
 
         return deleted
+
+    def downsample_completed_sessions(self, hours_interval: int = 1) -> Dict[str, int]:
+        """완료된 세션의 스냅샷을 시간 간격으로 다운샘플링하고, 미실행 시그널을 삭제
+
+        종료된 세션(completed/interrupted/terminated)의 1분 단위 스냅샷을
+        hours_interval 시간 간격으로 축소합니다. 각 시간대별 마지막 스냅샷만 유지합니다.
+        시그널은 executed=True(실제 실행된 것)만 유지하고 나머지를 삭제합니다.
+
+        Args:
+            hours_interval: 다운샘플링 간격 (시간 단위, 기본 1시간)
+
+        Returns:
+            {'snapshots_removed': N, 'signals_removed': N}
+        """
+        result = {'snapshots_removed': 0, 'signals_removed': 0}
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # 완료된 세션 ID 조회
+            cursor.execute("""
+                SELECT session_id FROM paper_trading_sessions
+                WHERE status IN ('completed', 'interrupted', 'terminated')
+            """)
+            completed_sessions = [row['session_id'] for row in cursor.fetchall()]
+
+            if not completed_sessions:
+                return result
+
+            for session_id in completed_sessions:
+                # 스냅샷 다운샘플링: 각 시간대별 마지막 스냅샷만 유지
+                # strftime으로 시간대 그룹을 만들고 각 그룹의 MAX(snapshot_id)만 유지
+                interval_seconds = hours_interval * 3600
+                cursor.execute(f"""
+                    DELETE FROM portfolio_snapshots
+                    WHERE session_id = ?
+                    AND snapshot_id NOT IN (
+                        SELECT MAX(snapshot_id)
+                        FROM portfolio_snapshots
+                        WHERE session_id = ?
+                        GROUP BY CAST(strftime('%s', timestamp) / {interval_seconds} AS INTEGER)
+                    )
+                """, (session_id, session_id))
+                result['snapshots_removed'] += cursor.rowcount
+
+                # 시그널: executed=False만 삭제
+                cursor.execute("""
+                    DELETE FROM strategy_signals
+                    WHERE session_id = ?
+                    AND executed = 0
+                """, (session_id,))
+                result['signals_removed'] += cursor.rowcount
+
+        return result
+
+    def get_db_stats(self) -> Dict[str, Any]:
+        """DB 통계 반환 (각 테이블 row 수, DB 파일 크기)
+
+        Returns:
+            {
+                'tables': {'paper_trading_sessions': N, 'trades': N, ...},
+                'file_size_bytes': N,
+                'file_size_mb': N.N
+            }
+        """
+        stats: Dict[str, Any] = {'tables': {}}
+
+        table_names = [
+            'paper_trading_sessions', 'trades', 'portfolio_snapshots',
+            'strategy_signals', 'regime_history', 'llm_decisions',
+            'scheduler_commands'
+        ]
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for table in table_names:
+                try:
+                    cursor.execute(f"SELECT COUNT(*) as cnt FROM {table}")
+                    row = cursor.fetchone()
+                    stats['tables'][table] = row['cnt']
+                except sqlite3.OperationalError as e:
+                    logger.warning("테이블 '%s' 통계 조회 실패: %s", table, e)
+                    stats['tables'][table] = 0
+
+        # DB 파일 크기
+        try:
+            file_size = os.path.getsize(self.db_path)
+            stats['file_size_bytes'] = file_size
+            stats['file_size_mb'] = round(file_size / (1024 * 1024), 2)
+        except OSError:
+            stats['file_size_bytes'] = 0
+            stats['file_size_mb'] = 0.0
+
+        return stats
 
     def vacuum(self):
         """VACUUM 실행으로 DB 파일 크기 최적화"""

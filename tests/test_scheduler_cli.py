@@ -56,7 +56,7 @@ class TestSchedulerCLIStop:
         """--stop이 DB에 명령을 삽입하는지 확인"""
         db = TradingDatabase(db_path=str(tmp_path / "test.db"))
 
-        with patch('scheduler.global_db', db):
+        with patch('trading_bot.scheduler.scheduler_state.global_db', db):
             from scheduler import _handle_stop
             _handle_stop("test-session")
 
@@ -76,7 +76,7 @@ class TestSchedulerCLICleanup:
         # 활성 세션 생성 (좀비)
         db.create_session("test_strategy", 10000.0)
 
-        with patch('scheduler.global_db', db):
+        with patch('trading_bot.scheduler.scheduler_state.global_db', db):
             from scheduler import _handle_cleanup
             _handle_cleanup()
 
@@ -99,7 +99,7 @@ class TestSchedulerCLIStopAll:
         db.create_session("strategy_1", 10000.0, display_name="Session 1")
         db.create_session("strategy_2", 10000.0, display_name="Session 2")
 
-        with patch('scheduler.global_db', db):
+        with patch('trading_bot.scheduler.scheduler_state.global_db', db):
             from scheduler import _handle_stop_all
             _handle_stop_all()
 
