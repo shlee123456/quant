@@ -72,20 +72,9 @@ services:
     # Restart policy
     restart: unless-stopped
 
-    # Override default command to run scheduler (0222 종목별 최적화 10세션)
-    command: >
-      python scheduler.py
-      --presets
-      "0222-AAPL-볼린저밴드"
-      "0222-NVDA-RSI+MACD콤보"
-      "0222-AMZN-RSI반등"
-      "0222-GOOGL-RSI역발상"
-      "0222-META-볼린저밴드"
-      "0222-TSLA-RSI+MACD콤보"
-      "0222-AVGO-RSI+MACD콤보"
-      "0222-LLY-스토캐스틱"
-      "0222-WMT-RSI역발상"
-      "0222-TSM-볼린저밴드"
+    # Override default command to run scheduler
+    # 프리셋 미지정 시 저장된 전체 프리셋 자동 로드
+    command: python scheduler.py
 
     # Volume mounts (same as dashboard for data sharing)
     volumes:

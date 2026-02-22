@@ -176,6 +176,12 @@ def main():
         preset_names = args.presets
     elif args.preset:
         preset_names = [args.preset]
+    else:
+        # 프리셋 미지정 시 저장된 전체 프리셋 자동 로드
+        all_presets = preset_manager.list_presets()
+        if all_presets:
+            preset_names = [p['name'] for p in all_presets]
+            logger.info(f"프리셋 미지정 → 저장된 전체 {len(preset_names)}개 프리셋 자동 로드")
 
     # 프리셋 로드 및 검증
     if preset_names:
