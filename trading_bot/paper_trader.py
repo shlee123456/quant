@@ -11,7 +11,10 @@ from .brokers.base_broker import BaseBroker
 from .database import TradingDatabase
 from .signal_validator import SignalValidator
 from .execution_verifier import OrderExecutionVerifier
-from .retry_utils import retry_with_backoff
+from .retry_utils import retry_with_backoff, CircuitBreaker
+from .performance_calculator import PerformanceCalculator
+from .order_executor import OrderExecutor
+from .risk_manager import RiskManager
 import time
 import json
 import threading
@@ -50,7 +53,8 @@ class PaperTrader:
         enable_verification: bool = False,
         display_name: Optional[str] = None,
         regime_detector=None,
-        llm_client=None
+        llm_client=None,
+        notifier=None
     ):
         """
         Initialize paper trader
@@ -89,7 +93,7 @@ class PaperTrader:
         self.log_file = log_file
         self.db = db
 
-        # Risk management
+        # Risk management parameters (kept for backward compat attribute access)
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct
         self.enable_stop_loss = enable_stop_loss
@@ -125,6 +129,36 @@ class PaperTrader:
         # Regime detection + LLM integration (optional)
         self.regime_detector = regime_detector
         self.llm_client = llm_client
+
+        # Notifier
+        self.notifier = notifier
+
+        # Threading lock for state mutations
+        self._lock = threading.RLock()
+
+        # Symbol-level circuit breaker for iteration errors
+        self._symbol_error_counts: Dict[str, int] = {}
+
+        # Circuit breakers for API calls
+        self._ticker_circuit_breaker = CircuitBreaker(failure_threshold=5, timeout=120.0)
+        self._ohlcv_circuit_breaker = CircuitBreaker(failure_threshold=5, timeout=120.0)
+
+        # Memory cap for equity history
+        self.EQUITY_HISTORY_MAX_SIZE = 5000
+
+        # --- Extracted helper classes ---
+        self._performance_calculator = PerformanceCalculator(timeframe='1h')
+        self._order_executor = OrderExecutor(
+            commission=commission,
+            position_size=position_size,
+            log_file=log_file,
+        )
+        self._risk_manager = RiskManager(
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
+            enable_stop_loss=enable_stop_loss,
+            enable_take_profit=enable_take_profit,
+        )
 
     def get_portfolio_value(self, current_prices: Optional[Dict[str, float]] = None) -> float:
         """
@@ -168,7 +202,7 @@ class PaperTrader:
                 initial_capital=self.initial_capital,
                 display_name=self.display_name
             )
-            print(f"Created session: {self.session_id}")
+            logger.info(f"Created session: {self.session_id}")
 
     def execute_buy(self, symbol: str, price: float, timestamp: datetime):
         """
@@ -179,27 +213,29 @@ class PaperTrader:
             price: Buy price
             timestamp: Trade timestamp
         """
-        if self.positions[symbol] > 0:
-            print(f"Already in position for {symbol}, skipping BUY signal")
-            return
+        with self._lock:
+            if self.positions[symbol] > 0:
+                logger.info(f"Already in position for {symbol}, skipping BUY signal")
+                return
 
-        prev_position = self.positions[symbol]
-        trade_capital = self.capital * self.position_size
-        self.positions[symbol] = trade_capital / price * (1 - self.commission)
-        self.entry_prices[symbol] = price
-        self.capital = self.capital - trade_capital
+            prev_position = self.positions[symbol]
+            trade_capital = self.capital * self.position_size
+            self.positions[symbol] = trade_capital / price * (1 - self.commission)
+            self.entry_prices[symbol] = price
+            self.capital = self.capital - trade_capital
 
-        trade = {
-            'symbol': symbol,
-            'timestamp': timestamp,
-            'type': 'BUY',
-            'price': price,
-            'size': self.positions[symbol],
-            'capital': self.capital,
-            'commission': trade_capital * self.commission
-        }
+            trade = {
+                'symbol': symbol,
+                'timestamp': timestamp,
+                'type': 'BUY',
+                'price': price,
+                'size': self.positions[symbol],
+                'capital': self.capital,
+                'commission': trade_capital * self.commission
+            }
 
-        self.trades.append(trade)
+            self.trades.append(trade)
+
         self._log_trade(trade)
 
         # Verify execution
@@ -214,10 +250,10 @@ class PaperTrader:
         if self.db and self.session_id:
             self.db.log_trade(self.session_id, trade)
 
-        print(f"\n[BUY] {symbol} {timestamp}")
-        print(f"Price: ${price:.2f}")
-        print(f"Size: {self.positions[symbol]:.6f}")
-        print(f"Capital remaining: ${self.capital:.2f}")
+        logger.info(f"[BUY] {symbol} {timestamp}")
+        logger.debug(f"Price: ${price:.2f}")
+        logger.debug(f"Size: {self.positions[symbol]:.6f}")
+        logger.debug(f"Capital remaining: ${self.capital:.2f}")
 
     def execute_sell(self, symbol: str, price: float, timestamp: datetime, reason: str = 'signal'):
         """
@@ -229,32 +265,50 @@ class PaperTrader:
             timestamp: Trade timestamp
             reason: Reason for sell ('signal', 'stop_loss', 'take_profit')
         """
-        if self.positions[symbol] == 0:
-            print(f"No position to sell for {symbol}, skipping SELL signal")
-            return
+        with self._lock:
+            if self.positions[symbol] == 0:
+                logger.info(f"No position to sell for {symbol}, skipping SELL signal")
+                return
 
-        prev_position = self.positions[symbol]
-        sale_proceeds = self.positions[symbol] * price * (1 - self.commission)
-        self.capital = self.capital + sale_proceeds
+            prev_position = self.positions[symbol]
+            sale_proceeds = self.positions[symbol] * price * (1 - self.commission)
+            self.capital = self.capital + sale_proceeds
 
-        # Calculate profit/loss
-        pnl = sale_proceeds - (self.positions[symbol] * self.entry_prices[symbol])
-        pnl_pct = (price - self.entry_prices[symbol]) / self.entry_prices[symbol] * 100
+            # Calculate profit/loss
+            pnl = sale_proceeds - (self.positions[symbol] * self.entry_prices[symbol])
+            pnl_pct = (price - self.entry_prices[symbol]) / self.entry_prices[symbol] * 100
 
-        trade = {
-            'symbol': symbol,
-            'timestamp': timestamp,
-            'type': 'SELL',
-            'price': price,
-            'size': self.positions[symbol],
-            'capital': self.capital,
-            'pnl': pnl,
-            'pnl_pct': pnl_pct,
-            'commission': self.positions[symbol] * price * self.commission,
-            'reason': reason
-        }
+            trade = {
+                'symbol': symbol,
+                'timestamp': timestamp,
+                'type': 'SELL',
+                'price': price,
+                'size': self.positions[symbol],
+                'capital': self.capital,
+                'pnl': pnl,
+                'pnl_pct': pnl_pct,
+                'commission': self.positions[symbol] * price * self.commission,
+                'reason': reason
+            }
 
-        self.trades.append(trade)
+            self.trades.append(trade)
+
+            reason_text = {
+                'signal': '전략 시그널',
+                'stop_loss': '손절매',
+                'take_profit': '익절매'
+            }
+            reason_kr = reason_text.get(reason, '매도')
+
+            logger.info(f"[매도 - {reason_kr}] {symbol} {timestamp}")
+            logger.debug(f"가격: ${price:.2f}")
+            logger.debug(f"수량: {self.positions[symbol]:.6f}")
+            logger.debug(f"손익: ${pnl:.2f} ({pnl_pct:+.2f}%)")
+            logger.debug(f"자본: ${self.capital:.2f}")
+
+            self.positions[symbol] = 0
+            self.entry_prices[symbol] = 0
+
         self._log_trade(trade)
 
         # Verify execution
@@ -268,30 +322,6 @@ class PaperTrader:
         # Log to database
         if self.db and self.session_id:
             self.db.log_trade(self.session_id, trade)
-
-        # Print with emoji based on reason
-        reason_emoji = {
-            'signal': '📊',
-            'stop_loss': '🛑',
-            'take_profit': '💰'
-        }
-        emoji = reason_emoji.get(reason, '📊')
-
-        reason_text = {
-            'signal': '전략 시그널',
-            'stop_loss': '손절매',
-            'take_profit': '익절매'
-        }
-        reason_kr = reason_text.get(reason, '매도')
-
-        print(f"\n{emoji} [매도 - {reason_kr}] {symbol} {timestamp}")
-        print(f"가격: ${price:.2f}")
-        print(f"수량: {self.positions[symbol]:.6f}")
-        print(f"손익: ${pnl:.2f} ({pnl_pct:+.2f}%)")
-        print(f"자본: ${self.capital:.2f}")
-
-        self.positions[symbol] = 0
-        self.entry_prices[symbol] = 0
 
     def update(self, symbol: str, timeframe: str):
         """
@@ -307,11 +337,11 @@ class PaperTrader:
         elif self.broker:
             df = self.broker.fetch_ohlcv(symbol, timeframe, limit=100)
         else:
-            print("No data handler or broker configured")
+            logger.error("No data handler or broker configured")
             return
 
         if df.empty:
-            print("No data received")
+            logger.error("No data received")
             return
 
         # Get current signal
@@ -335,12 +365,13 @@ class PaperTrader:
         # Track equity (single symbol version)
         current_prices = {symbol: current_price}
         portfolio_value = self.get_portfolio_value(current_prices)
-        self.equity_history.append({
-            'timestamp': timestamp,
-            'equity': portfolio_value,
-            'price': current_price,
-            'position': self.positions[symbol]
-        })
+        with self._lock:
+            self.equity_history.append({
+                'timestamp': timestamp,
+                'equity': portfolio_value,
+                'price': current_price,
+                'position': self.positions[symbol]
+            })
 
         # Take portfolio snapshot
         self._take_portfolio_snapshot(timestamp, portfolio_value, current_prices)
@@ -378,17 +409,11 @@ class PaperTrader:
         # Start session
         self.start()
 
-        print(f"\n{'='*60}")
-        print(f"REAL-TIME PAPER TRADING STARTED")
-        print(f"{'='*60}")
-        print(f"Symbols: {', '.join(self.symbols)}")
-        print(f"Timeframe: {timeframe}")
-        print(f"Strategy: {self.strategy.name}")
-        print(f"Initial Capital: ${self.initial_capital:,.2f}")
-        print(f"Update Interval: {interval_seconds}s")
+        logger.info(f"REAL-TIME PAPER TRADING STARTED | Symbols: {', '.join(self.symbols)} | "
+                    f"Timeframe: {timeframe} | Strategy: {self.strategy.name} | "
+                    f"Initial Capital: ${self.initial_capital:,.2f} | Interval: {interval_seconds}s")
         if self.session_id:
-            print(f"Session ID: {self.session_id}")
-        print(f"{'='*60}\n")
+            logger.info(f"Session ID: {self.session_id}")
 
         self.is_running = True
         self._stop_event.clear()
@@ -403,19 +428,18 @@ class PaperTrader:
                     break
 
         except KeyboardInterrupt:
-            print("\n\nPaper trading stopped by user")
+            logger.info("Paper trading stopped by user")
             self.stop()
         except Exception as e:
-            print(f"\n\nError during paper trading: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Error during paper trading: {e}")
             self.stop()
         finally:
             self._loop_exited.set()
 
     def _check_stop_loss_take_profit(self, symbol: str, current_price: float, timestamp: datetime) -> bool:
         """
-        Check and execute stop loss or take profit if triggered
+        Check and execute stop loss or take profit if triggered.
+        Delegates to RiskManager for the check logic.
 
         Args:
             symbol: Trading symbol
@@ -429,46 +453,32 @@ class PaperTrader:
         if self.positions[symbol] == 0:
             return False
 
-        entry_price = self.entry_prices[symbol]
-        pnl_pct = (current_price - entry_price) / entry_price
+        action = self._risk_manager.check_symbol(
+            symbol=symbol,
+            position=self.positions[symbol],
+            entry_price=self.entry_prices[symbol],
+            current_price=current_price,
+        )
 
-        # Check stop loss
-        if self.enable_stop_loss and pnl_pct <= -self.stop_loss_pct:
-            print(f"\n🛑 손절매 발동! {symbol}: {pnl_pct*100:.2f}% (기준: -{self.stop_loss_pct*100:.0f}%)")
-            self.execute_sell(symbol, current_price, timestamp, reason='stop_loss')
+        if action is None:
+            return False
 
-            # Send notification
-            if hasattr(self, 'notifier') and self.notifier:
-                self.notifier.notify_trade({
-                    'type': 'SELL',
-                    'symbol': symbol,
-                    'price': current_price,
-                    'size': self.positions.get(symbol, 0),
-                    'timestamp': timestamp,
-                    'reason': f'손절매 ({pnl_pct*100:.2f}%)'
-                })
+        # Execute the sell
+        self.execute_sell(symbol, current_price, timestamp, reason=action.action)
 
-            return True
+        # Send notification
+        if self.notifier:
+            reason_label = '손절매' if action.action == 'stop_loss' else '익절매'
+            self.notifier.notify_trade({
+                'type': 'SELL',
+                'symbol': symbol,
+                'price': current_price,
+                'size': self.positions.get(symbol, 0),
+                'timestamp': timestamp,
+                'reason': f'{reason_label} ({action.pnl_pct*100:.2f}%)'
+            })
 
-        # Check take profit
-        if self.enable_take_profit and pnl_pct >= self.take_profit_pct:
-            print(f"\n💰 익절매 발동! {symbol}: {pnl_pct*100:.2f}% (기준: +{self.take_profit_pct*100:.0f}%)")
-            self.execute_sell(symbol, current_price, timestamp, reason='take_profit')
-
-            # Send notification
-            if hasattr(self, 'notifier') and self.notifier:
-                self.notifier.notify_trade({
-                    'type': 'SELL',
-                    'symbol': symbol,
-                    'price': current_price,
-                    'size': self.positions.get(symbol, 0),
-                    'timestamp': timestamp,
-                    'reason': f'익절매 ({pnl_pct*100:.2f}%)'
-                })
-
-            return True
-
-        return False
+        return True
 
     def _fetch_ticker_with_retry(self, symbol: str, overseas: bool = False):
         """
@@ -481,6 +491,7 @@ class PaperTrader:
         Returns:
             Ticker dict with 'last' price
         """
+        @self._ticker_circuit_breaker
         @retry_with_backoff(max_retries=3, backoff_factor=2.0, initial_delay=2.0)
         def _fetch():
             if overseas:
@@ -502,6 +513,7 @@ class PaperTrader:
         Returns:
             DataFrame with OHLCV data
         """
+        @self._ohlcv_circuit_breaker
         @retry_with_backoff(max_retries=3, backoff_factor=2.0, initial_delay=2.0)
         def _fetch():
             # Check if broker supports overseas parameter (KIS broker)
@@ -529,6 +541,10 @@ class PaperTrader:
 
             # Process each symbol
             for symbol in self.symbols:
+                # Skip symbols that have hit the error threshold
+                if self._symbol_error_counts.get(symbol, 0) >= 3:
+                    continue
+
                 try:
                     # Fetch current ticker (with retry)
                     # Check if broker supports overseas parameter (KoreaInvestmentBroker)
@@ -543,17 +559,17 @@ class PaperTrader:
 
                     timestamp = datetime.now()
 
-                    # ⭐ 손절매/익절매 먼저 체크 (우선순위 높음)
+                    # 손절매/익절매 먼저 체크 (우선순위 높음)
                     if self._check_stop_loss_take_profit(symbol, current_price, timestamp):
                         # 손절/익절 발생 시 전략 시그널 무시하고 다음 종목으로
-                        print(f"[{timestamp}] {symbol}: 손절/익절 실행됨, 전략 시그널 무시")
+                        logger.info(f"[{timestamp}] {symbol}: 손절/익절 실행됨, 전략 시그널 무시")
                         continue
 
                     # Fetch historical OHLCV data for strategy indicator calculation (with retry)
                     df = self._fetch_ohlcv_with_retry(symbol, timeframe, limit=100)
 
                     if df.empty:
-                        print(f"[WARNING] No OHLCV data for {symbol}, skipping")
+                        logger.warning(f"No OHLCV data for {symbol}, skipping")
                         continue
 
                     # Get current signal from strategy
@@ -646,34 +662,42 @@ class PaperTrader:
                     # Update last signal
                     self.last_signals[symbol] = signal
 
-                    # Print status for this symbol
-                    status_emoji = '📊' if signal == 0 else ('🟢' if signal == 1 else '🔴')
-                    print(f"[{timestamp}] {status_emoji} {symbol}: 가격=${current_price:.2f}, 시그널={signal}")
+                    # Log status for this symbol
+                    logger.info(f"[{timestamp}] {symbol}: 가격=${current_price:.2f}, 시그널={signal}")
+
+                    # Reset error count on success
+                    self._symbol_error_counts[symbol] = 0
 
                 except Exception as e:
-                    print(f"[ERROR] Failed to process {symbol}: {e}")
+                    self._symbol_error_counts[symbol] = self._symbol_error_counts.get(symbol, 0) + 1
+                    if self._symbol_error_counts[symbol] >= 3:
+                        logger.error(f"Symbol {symbol} reached error threshold ({self._symbol_error_counts[symbol]}), skipping in future iterations: {e}")
+                    else:
+                        logger.error(f"Failed to process {symbol} (error count: {self._symbol_error_counts[symbol]}): {e}")
                     continue
 
             # Take portfolio snapshot after all symbols processed
             portfolio_value = self.get_portfolio_value(current_prices)
             timestamp = datetime.now()
 
-            self.equity_history.append({
-                'timestamp': timestamp,
-                'equity': portfolio_value,
-                'prices': current_prices.copy(),
-                'positions': self.positions.copy()
-            })
+            with self._lock:
+                self.equity_history.append({
+                    'timestamp': timestamp,
+                    'equity': portfolio_value,
+                    'prices': current_prices.copy(),
+                    'positions': self.positions.copy()
+                })
+
+                if len(self.equity_history) > self.EQUITY_HISTORY_MAX_SIZE:
+                    self.equity_history = self.equity_history[-self.EQUITY_HISTORY_MAX_SIZE:]
 
             self._take_portfolio_snapshot(timestamp, portfolio_value, current_prices)
 
-            # Print portfolio summary
-            print(f"\n--- Portfolio Value: ${portfolio_value:.2f} | Return: {((portfolio_value - self.initial_capital) / self.initial_capital * 100):+.2f}% ---\n")
+            # Log portfolio summary
+            logger.info(f"Portfolio Value: ${portfolio_value:.2f} | Return: {((portfolio_value - self.initial_capital) / self.initial_capital * 100):+.2f}%")
 
         except Exception as e:
-            print(f"[ERROR] Iteration failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Iteration failed: {e}")
 
     def run(self, symbol: str, timeframe: str, update_interval: int = 60):
         """
@@ -687,17 +711,11 @@ class PaperTrader:
         # Start session
         self.start()
 
-        print(f"\n{'='*60}")
-        print(f"PAPER TRADING STARTED")
-        print(f"{'='*60}")
-        print(f"Symbol: {symbol}")
-        print(f"Timeframe: {timeframe}")
-        print(f"Strategy: {self.strategy}")
-        print(f"Initial Capital: ${self.initial_capital:,.2f}")
-        print(f"Update Interval: {update_interval}s")
+        logger.info(f"PAPER TRADING STARTED | Symbol: {symbol} | Timeframe: {timeframe} | "
+                    f"Strategy: {self.strategy} | Initial Capital: ${self.initial_capital:,.2f} | "
+                    f"Interval: {update_interval}s")
         if self.session_id:
-            print(f"Session ID: {self.session_id}")
-        print(f"{'='*60}\n")
+            logger.info(f"Session ID: {self.session_id}")
 
         self.is_running = True
 
@@ -707,7 +725,7 @@ class PaperTrader:
                 time.sleep(update_interval)
 
         except KeyboardInterrupt:
-            print("\n\nPaper trading stopped by user")
+            logger.info("Paper trading stopped by user")
             self.stop()
 
     def stop(self):
@@ -744,7 +762,7 @@ class PaperTrader:
                 f"(통과={report['passed']}, 경고={report['warnings']}, 오류={report['errors']})"
             )
 
-        # Update database session with final metrics
+        # Update database session with final metrics (delegates to PerformanceCalculator)
         if self.db and self.session_id:
             final_value = self.get_portfolio_value()
             if self.equity_history:
@@ -752,7 +770,7 @@ class PaperTrader:
 
             total_return = ((final_value - self.initial_capital) / self.initial_capital) * 100
 
-            # Calculate performance metrics
+            # Calculate performance metrics via PerformanceCalculator
             sharpe_ratio = self._calculate_sharpe_ratio()
             max_drawdown = self._calculate_max_drawdown()
             win_rate = self._calculate_win_rate()
@@ -767,7 +785,7 @@ class PaperTrader:
                 'status': 'completed'
             })
 
-            print(f"Session {self.session_id} finalized")
+            logger.info(f"Session {self.session_id} finalized")
 
     def _take_portfolio_snapshot(self, timestamp: datetime, total_value: float, current_prices: Optional[Dict[str, float]] = None):
         """
@@ -792,74 +810,41 @@ class PaperTrader:
 
     def _calculate_sharpe_ratio(self) -> Optional[float]:
         """
-        Calculate Sharpe ratio from equity history
-
-        Returns:
-            Sharpe ratio or None if insufficient data
+        Calculate Sharpe ratio from equity history.
+        Delegates to PerformanceCalculator.
         """
-        if len(self.equity_history) < 2:
-            return None
-
-        equity_values = [eq['equity'] for eq in self.equity_history]
-        returns = pd.Series(equity_values).pct_change().dropna()
-
-        if len(returns) < 2:
-            return None
-
-        mean_return = returns.mean()
-        std_return = returns.std()
-
-        if std_return == 0:
-            return None
-
-        # Annualized Sharpe ratio (assuming daily data, 252 trading days)
-        sharpe = (mean_return / std_return) * np.sqrt(252)
-        return float(sharpe)
+        return self._performance_calculator.calculate_sharpe_ratio(self.equity_history)
 
     def _calculate_max_drawdown(self) -> Optional[float]:
         """
-        Calculate maximum drawdown from equity history
-
-        Returns:
-            Max drawdown percentage or None if insufficient data
+        Calculate maximum drawdown from equity history.
+        Delegates to PerformanceCalculator.
         """
-        if not self.equity_history:
-            return None
-
-        equity_values = [eq['equity'] for eq in self.equity_history]
-        peak = equity_values[0]
-        max_dd = 0.0
-
-        for value in equity_values:
-            if value > peak:
-                peak = value
-            dd = (peak - value) / peak * 100
-            if dd > max_dd:
-                max_dd = dd
-
-        return float(max_dd)
+        return self._performance_calculator.calculate_max_drawdown(self.equity_history)
 
     def _calculate_win_rate(self) -> Optional[float]:
         """
-        Calculate win rate from completed trades
+        Calculate win rate from completed trades.
+        Delegates to PerformanceCalculator.
+        """
+        return self._performance_calculator.calculate_win_rate(self.trades)
+
+    def get_performance_summary(self) -> Dict[str, Any]:
+        """
+        Get a complete performance summary.
+        Delegates to PerformanceCalculator.
 
         Returns:
-            Win rate percentage or None if no trades
+            Dict with all performance metrics.
         """
-        sell_trades = [t for t in self.trades if t['type'] == 'SELL']
-
-        if not sell_trades:
-            return None
-
-        winning = [t for t in sell_trades if t.get('pnl', 0) > 0]
-        win_rate = len(winning) / len(sell_trades) * 100
-
-        return float(win_rate)
+        return self._performance_calculator.get_performance_summary(
+            trades=self.trades,
+            equity_history=self.equity_history,
+            initial_capital=self.initial_capital,
+        )
 
     def _print_status(self, info: Dict, portfolio_value: float):
-        """Print current status"""
-        print(f"\n[{info['timestamp']}]")
-
+        """Log current status"""
         # Build indicator info string dynamically based on available fields
         indicator_parts = [f"Price: ${info['close']:.2f}"]
 
@@ -873,17 +858,15 @@ class PaperTrader:
             indicator_parts.append(f"MACD: {info['macd_line']:.2f}")
             indicator_parts.append(f"Signal: {info['signal_line']:.2f}")
 
-        print(" | ".join(indicator_parts))
-
-        # Show total positions
         total_position = sum(self.positions.values())
-        print(f"Position: {total_position:.6f} | Portfolio Value: ${portfolio_value:.2f}")
-        print(f"Return: {((portfolio_value - self.initial_capital) / self.initial_capital * 100):+.2f}%")
+        logger.info(f"[{info['timestamp']}] {' | '.join(indicator_parts)} | "
+                     f"Position: {total_position:.6f} | Portfolio: ${portfolio_value:.2f} | "
+                     f"Return: {((portfolio_value - self.initial_capital) / self.initial_capital * 100):+.2f}%")
 
     def _print_summary(self):
-        """Print trading summary"""
+        """Log trading summary"""
         if not self.equity_history:
-            print("No trading history")
+            logger.info("No trading history")
             return
 
         final_value = self.equity_history[-1]['equity']
@@ -891,20 +874,20 @@ class PaperTrader:
 
         sell_trades = [t for t in self.trades if t['type'] == 'SELL']
 
-        print(f"\n{'='*60}")
-        print("PAPER TRADING SUMMARY")
-        print(f"{'='*60}")
-        print(f"Initial Capital: ${self.initial_capital:,.2f}")
-        print(f"Final Value: ${final_value:,.2f}")
-        print(f"Total Return: {total_return:+.2f}%")
-        print(f"Total Trades: {len(sell_trades)}")
+        summary_parts = [
+            "PAPER TRADING SUMMARY",
+            f"Initial Capital: ${self.initial_capital:,.2f}",
+            f"Final Value: ${final_value:,.2f}",
+            f"Total Return: {total_return:+.2f}%",
+            f"Total Trades: {len(sell_trades)}"
+        ]
 
         if sell_trades:
             winning = [t for t in sell_trades if t['pnl'] > 0]
-            print(f"Winning Trades: {len(winning)}")
-            print(f"Win Rate: {len(winning)/len(sell_trades)*100:.2f}%")
+            summary_parts.append(f"Winning Trades: {len(winning)}")
+            summary_parts.append(f"Win Rate: {len(winning)/len(sell_trades)*100:.2f}%")
 
-        print(f"{'='*60}\n")
+        logger.info(" | ".join(summary_parts))
 
     def _log_trade(self, trade: Dict):
         """Log trade to file"""
@@ -918,7 +901,7 @@ class PaperTrader:
                 trade_copy['timestamp'] = str(trade_copy['timestamp'])
                 f.write(json.dumps(trade_copy) + '\n')
         except Exception as e:
-            print(f"Error logging trade: {e}")
+            logger.error(f"Error logging trade: {e}")
 
     def get_trades_df(self) -> pd.DataFrame:
         """Get trades as DataFrame"""

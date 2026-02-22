@@ -116,7 +116,7 @@ def _render_session_list(db: TradingDatabase, lang: str) -> None:
 
     # Action buttons for non-completed sessions
     if selected_session['status'] in ('active', 'interrupted'):
-        col1, col2 = st.columns([1, 3])
+        col1, col2, col3 = st.columns([1, 1, 2])
         with col1:
             if st.button(
                 "🛑 세션 종료 처리" if lang == 'ko' else "🛑 Terminate",
@@ -129,6 +129,21 @@ def _render_session_list(db: TradingDatabase, lang: str) -> None:
                     else f"Session `{selected_session['session_id'][:12]}...` terminated"
                 )
                 st.rerun()
+        with col2:
+            if selected_session['status'] == 'active':
+                label = selected_session.get('display_name') or selected_session['session_id']
+                if st.button(
+                    "📤 중지 명령 전송" if lang == 'ko' else "📤 Send Stop",
+                    key="send_stop_cmd_btn",
+                    help="DB 명령 큐를 통해 스케줄러에 중지 명령을 전송합니다 (최대 60초 내 처리)"
+                ):
+                    cmd_id = db.insert_command('stop_session', label)
+                    st.success(
+                        f"중지 명령 전송 완료 (ID: {cmd_id})"
+                        if lang == 'ko'
+                        else f"Stop command sent (ID: {cmd_id})"
+                    )
+                    st.rerun()
 
     # Session detail view
     _render_session_detail(db, selected_session, lang)

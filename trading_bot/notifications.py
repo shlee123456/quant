@@ -102,6 +102,13 @@ class NotificationService:
         else:
             logger.info("⚪ Email notifications disabled (no email config)")
 
+        # Error tracking
+        self._error_count = 0
+
+    def reset_error_count(self):
+        """에러 카운터 리셋 (정상 동작 복귀 시 호출)"""
+        self._error_count = 0
+
     def _load_email_config(self) -> Optional[Dict]:
         """Load email configuration from environment variables"""
         smtp_server = os.getenv('SMTP_SERVER')
@@ -138,33 +145,45 @@ class NotificationService:
             logger.debug("Slack webhook not configured, skipping notification")
             return False
 
-        try:
-            # Format as Slack attachment for better visibility
-            payload = {
-                'attachments': [{
-                    'color': color,
-                    'text': message,
-                    'footer': 'Trading Bot',
-                    'ts': int(datetime.now().timestamp())
-                }]
-            }
+        payload = {
+            'attachments': [{
+                'color': color,
+                'text': message,
+                'footer': 'Trading Bot',
+                'ts': int(datetime.now().timestamp())
+            }]
+        }
 
-            response = requests.post(
-                self.slack_webhook_url,
-                json=payload,
-                timeout=10
-            )
+        delays = [5, 10, 20]
+        last_error = None
 
-            if response.status_code == 200:
-                logger.debug("✓ Slack notification sent")
-                return True
-            else:
-                logger.error(f"✗ Slack notification failed: {response.status_code} {response.text}")
-                return False
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    self.slack_webhook_url,
+                    json=payload,
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    logger.debug("✓ Slack notification sent")
+                    self._error_count = 0
+                    return True
+                elif response.status_code in (400, 401, 403, 404):
+                    logger.error(f"✗ Slack 인증/요청 오류 (재시도 불가): {response.status_code} {response.text}")
+                    return False
+                else:
+                    last_error = f"{response.status_code} {response.text}"
+                    logger.warning(f"⚠ Slack 전송 실패 (시도 {attempt + 1}/3): {last_error}")
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"⚠ Slack 전송 오류 (시도 {attempt + 1}/3): {e}")
 
-        except Exception as e:
-            logger.error(f"✗ Slack notification error: {e}")
-            return False
+            if attempt < 2:
+                import time
+                time.sleep(delays[attempt])
+
+        logger.error(f"✗ Slack notification failed after 3 attempts: {last_error}")
+        return False
 
     def send_email(self, subject: str, body: str, html: bool = False) -> bool:
         """
@@ -362,8 +381,13 @@ class NotificationService:
         Returns:
             True if at least one notification sent successfully
         """
+        self._error_count += 1
+
+        # 3회 연속 에러 시 CRITICAL 에스컬레이션
+        prefix = "[CRITICAL] " if self._error_count >= 3 else ""
+
         slack_msg = f"""
-⚠️ *트레이딩 봇 오류*
+⚠️ *{prefix}트레이딩 봇 오류*
 
 {error_msg}
         """.strip()
@@ -371,15 +395,19 @@ class NotificationService:
         if context:
             slack_msg += f"\n\n상황: {context}"
 
+        if self._error_count >= 3:
+            slack_msg += f"\n\n⚠️ 연속 에러 {self._error_count}회 발생"
+
         slack_msg += f"\n\n시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
-        email_subject = "트레이딩 봇 오류 알림"
+        email_subject = f"{prefix}트레이딩 봇 오류 알림"
         email_body = f"""
-오류 알림
+{prefix}오류 알림
 
 {error_msg}
 
 상황: {context or '없음'}
+연속 에러: {self._error_count}회
 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ---

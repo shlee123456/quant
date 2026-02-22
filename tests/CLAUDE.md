@@ -20,16 +20,52 @@
 tests/
 ├── __init__.py
 ├── conftest.py                        # 공통 pytest fixtures
+│
+│  # 전략 테스트
 ├── test_strategy.py                   # MA 전략 테스트
 ├── test_rsi_strategy.py               # RSI 전략 테스트
 ├── test_macd_strategy.py              # MACD 전략 테스트
 ├── test_bollinger_bands_strategy.py   # Bollinger Bands 테스트
 ├── test_stochastic_strategy.py        # Stochastic 테스트
+├── test_base_strategy.py              # BaseStrategy 추상 클래스 테스트
+├── test_strategy_registry.py          # 전략 레지스트리 테스트
+│
+│  # 백테스팅/최적화 테스트
 ├── test_backtester.py                 # 백테스터 테스트
 ├── test_optimizer.py                  # 최적화 테스트
 ├── test_simulation_data.py            # 데이터 생성 테스트
-├── test_kis_api.py                    # 한국투자증권 API 테스트
-└── test_dashboard_integration.py      # 대시보드 통합 테스트
+├── test_vbt_backtester.py             # vectorbt 백테스터 테스트
+├── test_vbt_entries_exits.py          # VBT 진입/청산 테스트
+├── test_vbt_optimizer.py              # VBT 최적화 테스트
+│
+│  # 페이퍼 트레이딩 테스트
+├── test_paper_trading_e2e.py          # 페이퍼 트레이딩 E2E 테스트
+├── test_paper_trading_integration.py  # 페이퍼 트레이딩 통합 테스트
+├── test_paper_trader_db.py            # 페이퍼 트레이더 DB 테스트
+├── test_trading_database.py           # TradingDatabase 테스트
+│
+│  # 브로커 테스트
+├── test_brokers.py                    # 브로커 통합 테스트
+├── test_korea_investment_broker.py    # KIS 브로커 테스트
+├── test_kis_api.py                    # KIS API 직접 테스트
+│
+│  # 시장 인텔리전스 테스트
+├── test_market_analyzer.py            # MarketAnalyzer 테스트
+├── test_news_collector.py             # NewsCollector 테스트
+├── test_fear_greed_collector.py       # FearGreedCollector 테스트
+├── test_regime_detector.py            # RegimeDetector 테스트
+├── test_llm_client.py                 # LLMClient 테스트
+│
+│  # 검증/유효성 테스트
+├── test_signal_validator.py           # 시그널 검증 테스트
+├── test_execution_verifier.py         # 실행 검증 테스트
+│
+│  # 스케줄러/대시보드 테스트
+├── test_multi_session_scheduler.py    # 멀티 세션 스케줄러 테스트
+├── test_live_monitoring.py            # 실시간 모니터링 테스트
+├── test_dashboard_integration.py      # 대시보드 통합 테스트
+├── test_dashboard_paper_trading.py    # 대시보드 페이퍼 트레이딩 테스트
+└── test_dashboard_ui.py               # 대시보드 UI 테스트
 ```
 
 ---

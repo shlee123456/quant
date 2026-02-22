@@ -343,6 +343,12 @@ def scheduler_tab():
                         manager.stop_single_session(sid)
                         st.success(f"세션 '{sid[:12]}' 중지 완료")
                         st.rerun()
+                else:
+                    label = session_info.get('display_name') or sid
+                    if st.button("🛑", key=f"stop_ext_{sid}", help=f"외부 세션 {sid[:8]} 중지 명령 전송"):
+                        cmd_id = manager.send_stop_command(label)
+                        st.success(f"중지 명령 전송 완료 (ID: {cmd_id}, 최대 60초 내 처리)")
+                        st.rerun()
 
         # 전체 중지 / 세션 추가 버튼
         col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
@@ -399,5 +405,121 @@ def scheduler_tab():
 
     st.markdown("---")
 
+    # 외부 스케줄러 제어 (DB 명령 큐)
+    _render_external_scheduler_control(manager, lang)
+
+    st.markdown("---")
+
     # 세션 관리 섹션
     render_session_manager(lang)
+
+
+def _render_external_scheduler_control(manager, lang: str):
+    """Docker 스케줄러 제어 패널 (DB 명령 큐 연동)"""
+    st.subheader("외부 스케줄러 제어" if lang == 'ko' else "External Scheduler Control")
+    st.caption(
+        "Docker 컨테이너에서 실행 중인 스케줄러를 DB 명령 큐를 통해 제어합니다. 명령은 최대 60초 내에 처리됩니다."
+        if lang == 'ko' else
+        "Control the scheduler running in a Docker container via DB command queue. Commands are processed within 60 seconds."
+    )
+
+    # 스케줄러 상태
+    health = manager.get_scheduler_health()
+
+    if health:
+        state = health.get('state', 'unknown')
+        timestamp = health.get('timestamp', '')[:19]
+        details = health.get('details', {})
+        active_sessions = details.get('active_sessions', [])
+
+        state_emoji = {
+            'idle': '💤', 'trading': '📈', 'optimizing': '🔧',
+            'starting': '🚀', 'stopping': '🛑', 'error': '❌'
+        }.get(state, '❓')
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "스케줄러 상태" if lang == 'ko' else "Scheduler State",
+                f"{state_emoji} {state}"
+            )
+        with col2:
+            st.metric(
+                "마지막 업데이트" if lang == 'ko' else "Last Update",
+                timestamp if timestamp else "N/A"
+            )
+        with col3:
+            session_count = len(active_sessions) if isinstance(active_sessions, list) else 0
+            st.metric(
+                "외부 활성 세션" if lang == 'ko' else "External Sessions",
+                session_count
+            )
+    else:
+        st.warning(
+            "외부 스케줄러 상태 파일을 찾을 수 없습니다. 스케줄러가 실행 중인지 확인하세요."
+            if lang == 'ko' else
+            "Scheduler status file not found. Check if the scheduler is running."
+        )
+
+    # 제어 버튼
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button(
+            "🧹 좀비 세션 정리" if lang == 'ko' else "🧹 Cleanup Zombies",
+            use_container_width=True,
+            help="외부 스케줄러에 좀비 세션 정리 명령을 전송합니다"
+        ):
+            cmd_id = manager.send_cleanup_command()
+            st.success(
+                f"좀비 정리 명령 전송 완료 (ID: {cmd_id})"
+                if lang == 'ko' else
+                f"Cleanup command sent (ID: {cmd_id})"
+            )
+            st.rerun()
+
+    with col2:
+        if st.button(
+            "⏹️ 외부 세션 전체 중지" if lang == 'ko' else "⏹️ Stop All External",
+            use_container_width=True,
+            help="외부 스케줄러의 모든 활성 세션에 중지 명령을 전송합니다"
+        ):
+            cmd_ids = manager.send_stop_all_command()
+            if cmd_ids:
+                st.success(
+                    f"전체 중지 명령 전송: {len(cmd_ids)}개 세션"
+                    if lang == 'ko' else
+                    f"Stop commands sent for {len(cmd_ids)} sessions"
+                )
+            else:
+                st.info(
+                    "활성 세션이 없습니다."
+                    if lang == 'ko' else
+                    "No active sessions found."
+                )
+            st.rerun()
+
+    with col3:
+        if st.button(
+            "🔄 새로고침" if lang == 'ko' else "🔄 Refresh",
+            use_container_width=True,
+        ):
+            st.rerun()
+
+    # 대기 중 명령 표시
+    pending = manager.get_pending_commands()
+    if pending:
+        with st.expander(
+            f"대기 중 명령 ({len(pending)}개)" if lang == 'ko'
+            else f"Pending Commands ({len(pending)})",
+            expanded=False
+        ):
+            cmd_data = []
+            for cmd in pending:
+                cmd_data.append({
+                    'ID': cmd['id'],
+                    '명령' if lang == 'ko' else 'Command': cmd['command'],
+                    '대상' if lang == 'ko' else 'Target': cmd.get('target_label') or '-',
+                    '생성 시간' if lang == 'ko' else 'Created': cmd['created_at'][:19],
+                })
+            st.dataframe(cmd_data, use_container_width=True, hide_index=True)

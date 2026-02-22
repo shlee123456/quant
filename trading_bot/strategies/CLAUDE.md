@@ -117,6 +117,28 @@ Lower Band = Middle Band - (2 * std)
 
 ---
 
+### 5. RSI+MACD Combo Strategy (`rsi_macd_combo_strategy.py`)
+
+**원리**: RSI와 MACD 시그널을 결합한 복합 전략. 두 지표가 동시에 같은 방향을 가리킬 때만 시그널 발생.
+
+**시그널**:
+- RSI < oversold **AND** MACD 골든 크로스 → **BUY**
+- RSI > overbought **AND** MACD 데드 크로스 → **SELL**
+
+**파라미터**:
+- `rsi_period`: RSI 계산 기간 (기본 14)
+- `rsi_overbought`: RSI 과매수 임계값 (기본 70)
+- `rsi_oversold`: RSI 과매도 임계값 (기본 30)
+- `macd_fast`: MACD 빠른 EMA (기본 12)
+- `macd_slow`: MACD 느린 EMA (기본 26)
+- `macd_signal`: MACD 시그널 라인 EMA (기본 9)
+
+**마켓 적용**:
+- **해외주식**: 노이즈 필터링에 효과적 (단일 지표 대비 위신호 감소)
+- **횡보장**: RSI+MACD 동시 확인으로 횡보 시 불필요한 매매 억제
+
+---
+
 ## 전략 구현 템플릿
 
 새로운 전략은 반드시 `BaseStrategy`를 상속해야 합니다:
@@ -223,6 +245,7 @@ class MyStrategy(BaseStrategy):
 - **MACD**: fast_period, slow_period, signal_period
 - **Bollinger Bands**: period, std_dev
 - **Stochastic**: k_period, d_period, overbought, oversold
+- **RSI+MACD Combo**: rsi_period, rsi_overbought, rsi_oversold, macd_fast, macd_slow, macd_signal
 
 ### 최적화 범위 설정
 

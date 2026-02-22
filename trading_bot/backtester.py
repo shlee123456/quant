@@ -20,6 +20,7 @@ class Backtester:
 
     def __init__(self, strategy: BaseStrategy, initial_capital: float = 10000.0,
                  position_size: float = 0.95, commission: float = 0.001,
+                 slippage_pct: float = 0.0,
                  enable_verification: bool = False):
         """
         Initialize backtester
@@ -29,12 +30,14 @@ class Backtester:
             initial_capital: Starting capital in USD
             position_size: Fraction of capital to use per trade (0-1)
             commission: Trading commission/fee (0.001 = 0.1%)
+            slippage_pct: Slippage as a fraction (0.001 = 0.1%). BUY executes higher, SELL executes lower.
             enable_verification: Enable signal/execution verification (default: False)
         """
         self.strategy = strategy
         self.initial_capital = initial_capital
         self.position_size = position_size
         self.commission = commission
+        self.slippage_pct = slippage_pct
         self.enable_verification = enable_verification
 
         # Verification
@@ -96,18 +99,21 @@ class Backtester:
                 # Execute trades based on signals
                 if signal == 1 and position == 0:  # BUY signal
                     # Enter long position
+                    actual_price = price * (1 + self.slippage_pct)
                     trade_capital = capital * self.position_size
-                    position = trade_capital / price * (1 - self.commission)
-                    entry_price = price
+                    position = trade_capital / actual_price * (1 - self.commission)
+                    entry_price = actual_price
                     capital = capital - trade_capital
+                    slippage_cost = abs(actual_price - price) * position
 
                     trade = {
                         'timestamp': idx,
                         'type': 'BUY',
-                        'price': price,
+                        'price': actual_price,
                         'size': position,
                         'capital': capital,
-                        'commission': trade_capital * self.commission
+                        'commission': trade_capital * self.commission,
+                        'slippage_cost': slippage_cost
                     }
                     trades.append(trade)
 
@@ -121,22 +127,25 @@ class Backtester:
 
                 elif signal == -1 and position > 0:  # SELL signal
                     # Exit long position
-                    sale_proceeds = position * price * (1 - self.commission)
+                    actual_price = price * (1 - self.slippage_pct)
+                    sale_proceeds = position * actual_price * (1 - self.commission)
                     capital = capital + sale_proceeds
 
                     # Calculate profit/loss
                     pnl = sale_proceeds - (position * entry_price)
-                    pnl_pct = (price - entry_price) / entry_price * 100
+                    pnl_pct = (actual_price - entry_price) / entry_price * 100
+                    slippage_cost = abs(price - actual_price) * position
 
                     trade = {
                         'timestamp': idx,
                         'type': 'SELL',
-                        'price': price,
+                        'price': actual_price,
                         'size': position,
                         'capital': capital,
                         'pnl': pnl,
                         'pnl_pct': pnl_pct,
-                        'commission': position * price * self.commission
+                        'commission': position * actual_price * self.commission,
+                        'slippage_cost': slippage_cost
                     }
                     trades.append(trade)
 
@@ -154,21 +163,24 @@ class Backtester:
             # Close any open position at the end
             if position > 0:
                 final_price = data.iloc[-1]['close']
-                sale_proceeds = position * final_price * (1 - self.commission)
+                actual_price = final_price * (1 - self.slippage_pct)
+                sale_proceeds = position * actual_price * (1 - self.commission)
                 capital = capital + sale_proceeds
 
                 pnl = sale_proceeds - (position * entry_price)
-                pnl_pct = (final_price - entry_price) / entry_price * 100
+                pnl_pct = (actual_price - entry_price) / entry_price * 100
+                slippage_cost = abs(final_price - actual_price) * position
 
                 trades.append({
                     'timestamp': data.index[-1],
                     'type': 'SELL (CLOSE)',
-                    'price': final_price,
+                    'price': actual_price,
                     'size': position,
                     'capital': capital,
                     'pnl': pnl,
                     'pnl_pct': pnl_pct,
-                    'commission': position * final_price * self.commission
+                    'commission': position * actual_price * self.commission,
+                    'slippage_cost': slippage_cost
                 })
 
             # Store results
@@ -237,6 +249,9 @@ class Backtester:
         else:
             sharpe_ratio = 0
 
+        # Total slippage cost
+        total_slippage_cost = sum(t.get('slippage_cost', 0.0) for t in self.trades)
+
         results = {
             'initial_capital': self.initial_capital,
             'final_capital': final_capital,
@@ -249,6 +264,7 @@ class Backtester:
             'avg_loss': avg_loss,
             'max_drawdown': max_drawdown,
             'sharpe_ratio': sharpe_ratio,
+            'total_slippage_cost': total_slippage_cost,
             'start_date': data.index[0],
             'end_date': data.index[-1],
         }

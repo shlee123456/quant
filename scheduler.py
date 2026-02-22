@@ -19,10 +19,11 @@ Requirements:
 import sys
 import signal
 import logging
+from logging.handlers import RotatingFileHandler
 import argparse
 import threading
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 
 import pandas as pd
@@ -32,11 +33,12 @@ sys.path.append(str(Path(__file__).parent))
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.executors.pool import ThreadPoolExecutor
 from dotenv import load_dotenv
 
 from trading_bot.paper_trader import PaperTrader
-from trading_bot.strategies import RSIStrategy, MACDStrategy, BollingerBandsStrategy, RSIMACDComboStrategy
+from trading_bot.strategies import RSIStrategy, MACDStrategy, BollingerBandsStrategy, RSIMACDComboStrategy, StochasticStrategy
 from trading_bot.database import TradingDatabase, generate_display_name
 from trading_bot.optimizer import StrategyOptimizer
 from trading_bot.simulation_data import SimulationDataGenerator
@@ -44,6 +46,9 @@ from trading_bot.notifications import NotificationService
 from trading_bot.strategy_presets import StrategyPresetManager
 from trading_bot.reports import ReportGenerator
 from trading_bot.brokers import KoreaInvestmentBroker
+from trading_bot.health import SchedulerHealth
+from trading_bot.anomaly_detector import AnomalyDetector
+from trading_bot.us_holidays import is_us_market_holiday
 
 # Regime detection + LLM (optional)
 try:
@@ -63,27 +68,33 @@ except ImportError:
 # Market analysis (optional)
 try:
     from trading_bot.market_analyzer import MarketAnalyzer
-    from trading_bot.market_analysis_prompt import build_analysis_prompt
     _has_market_analyzer = True
 except ImportError:
     MarketAnalyzer = None
-    build_analysis_prompt = None
     _has_market_analyzer = False
 
-import subprocess
 import os
+import pytz
 
 # Load environment variables
 load_dotenv()
 
 # Setup logging
+Path('logs').mkdir(exist_ok=True)
+_log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+_file_handler = RotatingFileHandler(
+    'logs/scheduler.log',
+    maxBytes=10 * 1024 * 1024,  # 10MB
+    backupCount=5,
+    encoding='utf-8'
+)
+_file_handler.setFormatter(_log_formatter)
+_stream_handler = logging.StreamHandler()
+_stream_handler.setFormatter(_log_formatter)
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('logs/scheduler.log'),
-        logging.StreamHandler()
-    ]
+    handlers=[_file_handler, _stream_handler]
 )
 logger = logging.getLogger(__name__)
 
@@ -92,6 +103,7 @@ STRATEGY_CLASS_MAP = {
     'RSI Strategy': RSIStrategy,
     'MACD Strategy': MACDStrategy,
     'Bollinger Bands': BollingerBandsStrategy,
+    'Stochastic': StochasticStrategy,
     'RSI+MACD Combo': RSIMACDComboStrategy,
     'RSI+MACD Combo Strategy': RSIMACDComboStrategy,
 }
@@ -111,6 +123,16 @@ preset_manager = StrategyPresetManager()
 optimized_params = None
 # 최적화에서 선택된 전략 클래스 (기본: RSIMACDComboStrategy)
 optimized_strategy_class = None
+
+# Global health + anomaly detector
+scheduler_health = SchedulerHealth()
+anomaly_detector = AnomalyDetector()
+
+# Global DB (for command polling, zombie recovery)
+global_db = TradingDatabase()
+
+# Maximum concurrent sessions (0 = unlimited)
+max_sessions = 0
 
 # Global regime detector + LLM client (optional)
 global_regime_detector = RegimeDetector() if _has_regime else None
@@ -259,11 +281,14 @@ def optimize_strategy():
     logger.info("전략 최적화 시작...")
     logger.info("=" * 60)
 
+    scheduler_health.update('optimizing')
+
     try:
         # 1. 실제 시장 데이터로 최적화 시도
         df = None
         data_source = "시뮬레이션"
-        optimization_symbols = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'AVGO', 'LLY', 'WMT']
+        optimization_symbols_str = os.getenv('OPTIMIZATION_SYMBOLS', 'AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AVGO,LLY,WMT')
+        optimization_symbols = [s.strip() for s in optimization_symbols_str.split(',')]
 
         broker = _create_kis_broker()
         if broker:
@@ -459,6 +484,8 @@ def optimize_strategy():
 
     except Exception as e:
         logger.error(f"✗ 최적화 실패: {e}", exc_info=True)
+        optimized_params = None
+        optimized_strategy_class = None
         notifier.notify_error(f"전략 최적화 실패: {e}", context="장전 작업")
 
 
@@ -471,6 +498,14 @@ def _start_single_session(label: str, config: Optional[Dict]):
         config: 프리셋 설정 dict 또는 None (기본 설정 사용)
     """
     log_prefix = f"[{label}]"
+
+    # 최대 세션 수 제한 검사
+    if max_sessions > 0:
+        with traders_lock:
+            current_count = len(active_traders)
+        if current_count >= max_sessions:
+            logger.warning(f"{log_prefix} ⚠ 최대 세션 수 초과 ({current_count}/{max_sessions}) - 세션 시작 거부")
+            return
 
     try:
         # 브로커 초기화
@@ -520,8 +555,18 @@ def _start_single_session(label: str, config: Optional[Dict]):
             logger.info(f"{log_prefix} 최적화된 전략 사용: {strategy_class.__name__}, 파라미터: {optimized_params}")
             strategy = strategy_class(**optimized_params)
         elif optimized_params:
-            logger.info(f"{log_prefix} 최적화된 파라미터 사용: {optimized_params}")
-            strategy = strategy_class(**optimized_params)
+            # optimized_strategy_class 없이 optimized_params만 있는 경우
+            # 프리셋의 전략 클래스와 파라미터 호환성 검증
+            import inspect
+            valid_params = set(inspect.signature(strategy_class.__init__).parameters.keys()) - {'self'}
+            opt_param_keys = set(optimized_params.keys())
+            if opt_param_keys <= valid_params:
+                logger.info(f"{log_prefix} 최적화된 파라미터 사용: {optimized_params}")
+                strategy = strategy_class(**optimized_params)
+            else:
+                mismatched = opt_param_keys - valid_params
+                logger.warning(f"{log_prefix} 최적화 파라미터가 {strategy_class.__name__}와 호환되지 않음 (불일치: {mismatched}) - 기본 파라미터 사용")
+                strategy = strategy_class()
         else:
             logger.info(f"{log_prefix} 기본 파라미터 사용 (프리셋/최적화 없음) - {strategy_name}")
             strategy = strategy_class()
@@ -569,16 +614,15 @@ def _start_single_session(label: str, config: Optional[Dict]):
             'initial_capital': trader.initial_capital
         })
 
-        # active_traders에 등록
-        with traders_lock:
-            active_traders[label] = trader
-
         # daemon thread로 실시간 트레이딩 시작
         def run_trading():
             _run_trader_thread(label, trader)
 
         thread = threading.Thread(target=run_trading, name=f"trader-{label}", daemon=True)
+
+        # active_traders와 trader_threads를 단일 락 블록에서 등록
         with traders_lock:
+            active_traders[label] = trader
             trader_threads[label] = thread
         thread.start()
 
@@ -609,6 +653,31 @@ def _run_trader_thread(label: str, trader: PaperTrader):
         logger.info(f"{log_prefix} 트레이딩 루프 종료됨")
 
 
+def _is_trading_day() -> bool:
+    """
+    오늘이 미국 주식시장 거래일인지 확인합니다.
+    KST 23:30에 호출되므로, 미국 동부시간(EST/EDT) 기준 날짜를 사용합니다.
+
+    Returns:
+        거래일이면 True, 공휴일/주말이면 False
+    """
+    us_eastern = pytz.timezone('US/Eastern')
+    us_now = datetime.now(us_eastern)
+    us_date = us_now.date()
+
+    # 주말 체크
+    if us_date.weekday() >= 5:  # 5=Saturday, 6=Sunday
+        logger.info(f"주말입니다 (미국 동부: {us_date}, {us_date.strftime('%A')}) - 트레이딩 건너뜀")
+        return False
+
+    # 공휴일 체크
+    if is_us_market_holiday(us_date):
+        logger.info(f"미국 시장 공휴일입니다 (미국 동부: {us_date}) - 트레이딩 건너뜀")
+        return False
+
+    return True
+
+
 def start_paper_trading():
     """
     장 시작 작업: 페이퍼 트레이딩 세션 시작
@@ -620,6 +689,8 @@ def start_paper_trading():
     logger.info("=" * 60)
     logger.info("페이퍼 트레이딩 세션 시작...")
     logger.info("=" * 60)
+
+    scheduler_health.update('trading')
 
     if preset_configs:
         logger.info(f"총 {len(preset_configs)}개 프리셋 세션 시작")
@@ -745,6 +816,8 @@ def stop_paper_trading():
     logger.info("모든 페이퍼 트레이딩 세션 중지 중...")
     logger.info("=" * 60)
 
+    scheduler_health.update('stopping')
+
     with traders_lock:
         labels = list(active_traders.keys())
 
@@ -762,8 +835,8 @@ def stop_paper_trading():
 
 def run_market_analysis():
     """
-    장 마감 후 시장 분석: MarketAnalyzer로 데이터 수집 + Claude로 노션 작성
-    06:10 KST 실행
+    장 마감 후 시장 분석: MarketAnalyzer로 데이터 수집 + JSON 저장
+    06:10 KST 실행. 노션 작성은 호스트의 scripts/notion_writer.py (cron)에서 처리.
     """
     logger.info("=" * 60)
     logger.info("시장 분석 시작...")
@@ -802,47 +875,170 @@ def run_market_analysis():
         json_path = analyzer.save_json(result)
         logger.info(f"분석 결과 저장: {json_path}")
 
-        # Claude로 노션 작성
-        prompt = build_analysis_prompt(json_path)
-        logger.info("Claude에게 노션 작성 요청 중...")
+        # Pine Script 자동 생성
+        try:
+            from scripts.generate_pine_script import generate_pine_scripts
+            pine_files = generate_pine_scripts(Path(json_path), slack=bool(notifier.slack_bot_token))
+            if pine_files:
+                logger.info(f"Pine Script 생성 완료: {[str(f) for f in pine_files]}")
+        except Exception as e:
+            logger.warning(f"Pine Script 생성 실패 (무시): {e}")
 
-        # CLAUDECODE 환경 변수 제거 (중첩 세션 방지), stdin으로 프롬프트 전달
-        env = {k: v for k, v in os.environ.items() if k != 'CLAUDECODE'}
-        proc = subprocess.run(
-            ["claude", "-p", "--model", "claude-sonnet-4-6", "--allowedTools", "mcp__claude_ai_Notion__*,Read,WebSearch"],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            env=env,
+        # Slack 알림 (노션 작성은 호스트 cron에서 처리)
+        notifier.send_slack(
+            f"*시장 분석 데이터 수집 완료*\n\n"
+            f"분석 종목: {', '.join(symbols)}\n"
+            f"결과 파일: {json_path}\n"
+            f"노션 작성은 호스트 cron에서 처리됩니다",
+            color='good'
         )
 
-        if proc.returncode == 0:
-            logger.info("노션 작성 완료")
-            notifier.send_slack(
-                f"*시장 분석 완료*\n\n"
-                f"분석 종목: {', '.join(symbols)}\n"
-                f"결과 파일: {json_path}\n"
-                f"노션 페이지 작성 완료",
-                color='good'
-            )
-        else:
-            logger.warning(f"Claude 노션 작성 실패 (returncode={proc.returncode})")
-            logger.warning(f"stderr: {proc.stderr[:500] if proc.stderr else 'N/A'}")
-            notifier.send_slack(
-                f"*시장 분석 완료 (노션 작성 실패)*\n\n"
-                f"분석 종목: {', '.join(symbols)}\n"
-                f"결과 파일: {json_path}\n"
-                f"노션 작성 오류: {proc.stderr[:200] if proc.stderr else 'unknown'}",
-                color='warning'
-            )
-
-    except subprocess.TimeoutExpired:
-        logger.error("Claude 노션 작성 타임아웃 (300초 초과)")
-        notifier.notify_error("Claude 노션 작성 타임아웃", context="시장 분석")
     except Exception as e:
         logger.error(f"시장 분석 실패: {e}", exc_info=True)
         notifier.notify_error(f"시장 분석 실패: {e}", context="시장 분석")
+
+
+def _heartbeat():
+    """
+    하트비트 잡 (60초 간격)
+    - 상태 파일 갱신
+    - 제어 명령 폴링 및 처리
+    """
+    try:
+        # 현재 활성 세션 정보 수집
+        with traders_lock:
+            session_info = []
+            for label, trader in active_traders.items():
+                thread = trader_threads.get(label)
+                session_info.append({
+                    'label': label,
+                    'alive': thread.is_alive() if thread else False,
+                    'started_at': trader.session_id or 'unknown',
+                })
+
+            state = 'trading' if active_traders else 'idle'
+
+        scheduler_health.update(state, {
+            'active_sessions': session_info,
+            'preset_count': len(preset_configs),
+        })
+
+        # 에러 카운트 리셋 (활성 세션이 정상일 때)
+        if state == 'trading':
+            notifier.reset_error_count()
+
+        # 제어 명령 폴링
+        try:
+            commands = global_db.get_pending_commands()
+            for cmd in commands:
+                cmd_type = cmd['command']
+                target = cmd.get('target_label')
+                logger.info(f"제어 명령 수신: {cmd_type} (대상: {target or 'N/A'})")
+
+                if cmd_type == 'stop_session' and target:
+                    _stop_single_session(target)
+                elif cmd_type == 'cleanup_zombies':
+                    recovered = global_db.recover_zombie_sessions()
+                    logger.info(f"좀비 세션 정리 완료: {recovered}개")
+                elif cmd_type == 'status_dump':
+                    with traders_lock:
+                        labels = list(active_traders.keys())
+                    logger.info(f"활성 세션 목록: {labels}")
+
+                global_db.mark_command_processed(cmd['id'])
+        except Exception as e:
+            logger.error(f"제어 명령 처리 실패: {e}")
+
+    except Exception as e:
+        logger.error(f"하트비트 실패: {e}")
+
+
+def _watchdog():
+    """
+    워치독 잡 (2분 간격)
+    - 죽은 스레드 감지 및 정리
+    - 이상 감지 (AnomalyDetector)
+    """
+    try:
+        dead_labels = []
+
+        with traders_lock:
+            for label, thread in list(trader_threads.items()):
+                if not thread.is_alive():
+                    dead_labels.append(label)
+
+        # 죽은 스레드 정리
+        for label in dead_labels:
+            logger.error(f"워치독: 죽은 스레드 감지 [{label}]")
+            with traders_lock:
+                trader = active_traders.pop(label, None)
+                trader_threads.pop(label, None)
+
+            # DB 세션 상태 업데이트
+            if trader and trader.session_id and trader.db:
+                try:
+                    trader.db.update_session(trader.session_id, {
+                        'status': 'interrupted',
+                        'end_time': datetime.now().isoformat(),
+                    })
+                except Exception as e:
+                    logger.error(f"세션 상태 업데이트 실패 [{label}]: {e}")
+
+            notifier.notify_error(
+                f"트레이딩 스레드 비정상 종료: {label}",
+                context="워치독 감지"
+            )
+
+        # 상태 파일 갱신
+        if dead_labels:
+            scheduler_health.update('trading' if active_traders else 'idle')
+
+        # 이상 감지
+        with traders_lock:
+            traders_snapshot = dict(active_traders)
+
+        alerts = anomaly_detector.check_all(traders_snapshot, global_db.db_path)
+        for alert in alerts:
+            logger.warning(f"이상 감지: {alert}")
+            notifier.send_slack(f"*운영 이상 감지*\n\n{alert}", color='warning')
+
+    except Exception as e:
+        logger.error(f"워치독 실패: {e}")
+
+
+def _db_maintenance():
+    """
+    주간 DB 유지보수 잡 (일요일 12:00 KST)
+    - 백업 → 정리 → VACUUM
+    """
+    logger.info("=" * 60)
+    logger.info("주간 DB 유지보수 시작...")
+    logger.info("=" * 60)
+
+    try:
+        # 1. 백업
+        backup_path = global_db.backup()
+        logger.info(f"✓ DB 백업 완료: {backup_path}")
+
+        # 2. 오래된 데이터 정리
+        deleted = global_db.prune_old_data(days_to_keep=30)
+        logger.info(f"✓ 데이터 정리 완료: {deleted}")
+
+        # 3. VACUUM
+        global_db.vacuum()
+        logger.info("✓ VACUUM 완료")
+
+        notifier.send_slack(
+            f"*주간 DB 유지보수 완료*\n\n"
+            f"백업: {backup_path}\n"
+            f"정리: 스냅샷 {deleted.get('snapshots', 0)}개, "
+            f"시그널 {deleted.get('signals', 0)}개 삭제",
+            color='good'
+        )
+
+    except Exception as e:
+        logger.error(f"DB 유지보수 실패: {e}", exc_info=True)
+        notifier.notify_error(f"DB 유지보수 실패: {e}", context="주간 유지보수")
 
 
 def signal_handler(signum, frame):
@@ -856,15 +1052,103 @@ def signal_handler(signum, frame):
             stop_paper_trading()
         except Exception as e:
             logger.error(f"✗ 세션 중지 중 에러 (무시): {e}", exc_info=True)
+    scheduler_health.update('stopping')
     logger.info("스케줄러 중지됨")
     sys.exit(0)
+
+
+def _handle_status():
+    """--status: 상태 파일 + DB 세션 조회 → 테이블 출력"""
+    # 상태 파일 읽기
+    status = scheduler_health.read()
+    print("\n=== 스케줄러 상태 ===")
+    if status:
+        print(f"  상태: {status.get('state', 'unknown')}")
+        print(f"  마지막 업데이트: {status.get('timestamp', 'N/A')}")
+        print(f"  PID: {status.get('pid', 'N/A')}")
+        details = status.get('details', {})
+        sessions = details.get('active_sessions', [])
+        if sessions:
+            print(f"\n  활성 세션 ({len(sessions)}개):")
+            for s in sessions:
+                alive = '✓' if s.get('alive') else '✗'
+                print(f"    [{alive}] {s.get('label', 'unknown')}")
+    else:
+        print("  상태 파일 없음 (스케줄러 미실행)")
+
+    # DB 활성 세션 조회
+    db_sessions = global_db.get_all_sessions(status_filter='active')
+    print(f"\n=== DB 활성 세션 ({len(db_sessions)}개) ===")
+    for s in db_sessions:
+        print(f"  {s['session_id']}: {s.get('display_name') or s['strategy_name']} (시작: {s['start_time']})")
+
+    # 세션 상태 카운트
+    counts = global_db.get_session_status_counts()
+    print(f"\n=== 세션 상태 요약 ===")
+    for status_name, count in counts.items():
+        print(f"  {status_name}: {count}개")
+    print()
+
+
+def _handle_stop(target_label: str):
+    """--stop: DB에 stop_session 명령 삽입"""
+    cmd_id = global_db.insert_command('stop_session', target_label)
+    print(f"✓ 세션 중지 명령 전송 완료 (ID: {cmd_id})")
+    print(f"  대상: {target_label}")
+    print(f"  스케줄러가 다음 하트비트(최대 60초)에서 처리합니다")
+
+
+def _handle_stop_all():
+    """--stop-all: 모든 활성 세션에 stop 명령 삽입"""
+    db_sessions = global_db.get_all_sessions(status_filter='active')
+    if not db_sessions:
+        print("⚠ 활성 세션 없음")
+        return
+
+    for s in db_sessions:
+        label = s.get('display_name') or s['session_id']
+        cmd_id = global_db.insert_command('stop_session', label)
+        print(f"✓ 중지 명령 전송: {label} (ID: {cmd_id})")
+
+    print(f"\n총 {len(db_sessions)}개 세션 중지 명령 전송 완료")
+    print("스케줄러가 다음 하트비트(최대 60초)에서 처리합니다")
+
+
+def _handle_cleanup():
+    """--cleanup: 좀비 세션 즉시 정리"""
+    recovered = global_db.recover_zombie_sessions()
+    print(f"✓ 좀비 세션 정리 완료: {recovered}개")
+
+
+def _validate_environment():
+    """
+    스케줄러 시작 전 환경 변수 검증.
+    필수 변수 누락 시 에러 로그 출력 후 프로세스 종료.
+    선택 변수 누락 시 경고 로그만 출력.
+    """
+    # 필수 환경 변수 (KIS 브로커)
+    required_vars = ['KIS_APPKEY', 'KIS_APPSECRET', 'KIS_ACCOUNT']
+    missing_required = [v for v in required_vars if not os.getenv(v, '').strip()]
+
+    if missing_required:
+        for var in missing_required:
+            logger.error(f"필수 환경 변수 미설정: {var}")
+        logger.error(f"필수 환경 변수가 누락되었습니다: {', '.join(missing_required)}")
+        logger.error(".env 파일을 확인하세요")
+        sys.exit(1)
+
+    # 선택 환경 변수 (알림 서비스)
+    optional_vars = ['SLACK_WEBHOOK_URL', 'SLACK_BOT_TOKEN', 'SMTP_SERVER']
+    for var in optional_vars:
+        if not os.getenv(var, '').strip():
+            logger.warning(f"선택 환경 변수 미설정: {var} (해당 알림 기능 비활성화)")
 
 
 def main():
     """
     메인 스케줄러 진입점
     """
-    global preset_configs
+    global preset_configs, max_sessions
 
     # CLI 인자 파싱
     parser = argparse.ArgumentParser(description='자동매매 트레이딩 스케줄러')
@@ -874,7 +1158,35 @@ def main():
                         help='동시 실행할 프리셋 이름 목록 (예: "RSI 보수적" "MACD 추세")')
     parser.add_argument('--list-presets', action='store_true',
                         help='저장된 프리셋 목록 표시')
+    # 관리 CLI 옵션
+    parser.add_argument('--status', action='store_true',
+                        help='스케줄러 상태 및 활성 세션 조회')
+    parser.add_argument('--stop', type=str, default=None,
+                        help='특정 세션 중지 명령 전송 (라벨)')
+    parser.add_argument('--stop-all', action='store_true',
+                        help='전체 세션 중지 명령 전송')
+    parser.add_argument('--cleanup', action='store_true',
+                        help='좀비 세션 즉시 정리')
+    parser.add_argument('--max-sessions', type=int, default=0,
+                        help='최대 동시 세션 수 (0=무제한)')
     args = parser.parse_args()
+
+    # === 관리 CLI 모드 (즉시 실행 후 종료) ===
+    if args.status:
+        _handle_status()
+        return
+
+    if args.stop:
+        _handle_stop(args.stop)
+        return
+
+    if args.stop_all:
+        _handle_stop_all()
+        return
+
+    if args.cleanup:
+        _handle_cleanup()
+        return
 
     # 프리셋 목록 표시
     if args.list_presets:
@@ -891,6 +1203,9 @@ def main():
     if args.preset and args.presets:
         logger.error("✗ --preset과 --presets는 동시에 사용할 수 없습니다")
         return
+
+    # 최대 세션 수 설정
+    max_sessions = args.max_sessions
 
     # 프리셋 이름 목록 통합 (--preset → 1개짜리 리스트로 변환)
     preset_names: List[str] = []
@@ -926,6 +1241,20 @@ def main():
     # logs 디렉토리가 없으면 생성
     Path('logs').mkdir(exist_ok=True)
 
+    # === 환경 변수 검증 ===
+    _validate_environment()
+
+    # === Phase 1: 시작 시 좀비 세션 복구 ===
+    scheduler_health.update('starting')
+    recovered_count = global_db.recover_zombie_sessions()
+    if recovered_count > 0:
+        logger.info(f"✓ 좀비 세션 {recovered_count}개 복구 완료")
+        notifier.send_slack(
+            f"*스케줄러 시작 - 좀비 세션 복구*\n\n"
+            f"복구된 세션: {recovered_count}개",
+            color='warning'
+        )
+
     # 우아한 종료를 위한 시그널 핸들러 등록
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -945,28 +1274,43 @@ def main():
             logger.info(f"  - {cfg['_preset_name']} ({cfg['strategy']})")
     else:
         logger.info("프리셋: 없음 (기본 설정 1개 세션)")
+    if max_sessions > 0:
+        logger.info(f"최대 세션 수: {max_sessions}")
     logger.info("시간대: Asia/Seoul")
     logger.info("스케줄:")
     logger.info("  23:00 KST - 전략 최적화")
     logger.info("  23:30 KST - 페이퍼 트레이딩 시작")
     logger.info("  06:00 KST - 트레이딩 중지 및 리포트")
     logger.info("  06:10 KST - 시장 분석 + 노션 작성")
+    logger.info("  매 60초 - 하트비트 + 제어 명령 폴링")
+    logger.info("  매 2분 - 워치독 (스레드 감시)")
+    logger.info("  일요일 12:00 - DB 유지보수")
     logger.info("=" * 60)
 
     # 스케줄 작업 추가
 
-    # 장전: 전략 최적화 (23:00 KST)
+    # 장전: 전략 최적화 (23:00 KST) - 공휴일/주말 건너뜀
+    def _scheduled_optimize():
+        if not _is_trading_day():
+            return
+        optimize_strategy()
+
     scheduler.add_job(
-        optimize_strategy,
+        _scheduled_optimize,
         CronTrigger(hour=23, minute=0),
         id='optimize_strategy',
         name='전략 최적화',
         misfire_grace_time=300  # 5분 유예 기간
     )
 
-    # 장 시작: 트레이딩 시작 (23:30 KST)
+    # 장 시작: 트레이딩 시작 (23:30 KST) - 공휴일/주말 건너뜀
+    def _scheduled_start():
+        if not _is_trading_day():
+            return
+        start_paper_trading()
+
     scheduler.add_job(
-        start_paper_trading,
+        _scheduled_start,
         CronTrigger(hour=23, minute=30),
         id='start_trading',
         name='페이퍼 트레이딩 시작',
@@ -991,7 +1335,50 @@ def main():
         misfire_grace_time=600
     )
 
-    # 스케줄러 시작 (블로킹)
+    # 하트비트 (60초 간격)
+    scheduler.add_job(
+        _heartbeat,
+        IntervalTrigger(seconds=60),
+        id='heartbeat',
+        name='하트비트',
+        misfire_grace_time=30,
+        coalesce=True
+    )
+
+    # 워치독 (2분 간격)
+    scheduler.add_job(
+        _watchdog,
+        IntervalTrigger(seconds=120),
+        id='watchdog',
+        name='워치독',
+        misfire_grace_time=60,
+        coalesce=True
+    )
+
+    # 주간 DB 유지보수 (일요일 12:00 KST)
+    scheduler.add_job(
+        _db_maintenance,
+        CronTrigger(day_of_week='sun', hour=12, minute=0),
+        id='db_maintenance',
+        name='DB 유지보수',
+        misfire_grace_time=3600
+    )
+
+    # 시작 완료 → idle 상태 + Slack 알림
+    scheduler_health.update('idle', {
+        'preset_count': len(preset_configs),
+        'recovered_sessions': recovered_count,
+    })
+
+    notifier.send_slack(
+        f"*스케줄러 시작 완료*\n\n"
+        f"PID: {os.getpid()}\n"
+        f"프리셋: {len(preset_configs)}개\n"
+        f"복구 세션: {recovered_count}개\n"
+        f"최대 세션: {'무제한' if max_sessions == 0 else max_sessions}",
+        color='good'
+    )
+
     logger.info("\n✓ 스케줄러 시작 성공")
     logger.info("중지하려면 Ctrl+C를 누르세요\n")
 

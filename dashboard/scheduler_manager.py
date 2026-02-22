@@ -709,3 +709,65 @@ class SchedulerManager:
         self._add_log(f"  종목: {', '.join(symbols)}")
         self._add_log(f"  초기 자본: ${initial_capital:,.2f}")
         self._add_log(f"  포지션 크기: {position_size:.0%}")
+
+    # ── DB 명령 큐 연동 (외부 스케줄러 제어) ──
+
+    def send_stop_command(self, target_label: str) -> int:
+        """외부 스케줄러에 세션 중지 명령 전송 (DB 명령 큐)
+
+        Args:
+            target_label: 중지할 세션 라벨 (display_name 또는 session_id)
+
+        Returns:
+            삽입된 명령 ID
+        """
+        db = TradingDatabase()
+        cmd_id = db.insert_command('stop_session', target_label)
+        self._add_log(f"✓ 외부 세션 중지 명령 전송: {target_label} (명령 ID: {cmd_id})")
+        return cmd_id
+
+    def send_stop_all_command(self) -> List[int]:
+        """외부 스케줄러의 모든 활성 세션에 중지 명령 전송
+
+        Returns:
+            삽입된 명령 ID 리스트
+        """
+        db = TradingDatabase()
+        sessions = db.get_all_sessions(status_filter='active')
+        cmd_ids = []
+        for s in sessions:
+            label = s.get('display_name') or s['session_id']
+            cmd_id = db.insert_command('stop_session', label)
+            cmd_ids.append(cmd_id)
+        self._add_log(f"✓ 외부 세션 전체 중지 명령 전송: {len(cmd_ids)}개")
+        return cmd_ids
+
+    def send_cleanup_command(self) -> int:
+        """외부 스케줄러에 좀비 세션 정리 명령 전송
+
+        Returns:
+            삽입된 명령 ID
+        """
+        db = TradingDatabase()
+        cmd_id = db.insert_command('cleanup_zombies')
+        self._add_log(f"✓ 좀비 정리 명령 전송 (명령 ID: {cmd_id})")
+        return cmd_id
+
+    def get_pending_commands(self) -> List[Dict]:
+        """미처리 명령 조회
+
+        Returns:
+            미처리 명령 리스트
+        """
+        db = TradingDatabase()
+        return db.get_pending_commands()
+
+    def get_scheduler_health(self) -> Optional[Dict]:
+        """외부 스케줄러 상태 파일 조회
+
+        Returns:
+            상태 딕셔너리 또는 None
+        """
+        from trading_bot.health import SchedulerHealth
+        health = SchedulerHealth()
+        return health.read()

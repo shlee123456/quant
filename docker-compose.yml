@@ -72,13 +72,20 @@ services:
     # Restart policy
     restart: unless-stopped
 
-    # Override default command to run scheduler (0220 노션 분석 기반 3세션, $2000)
+    # Override default command to run scheduler (0221 종목별 최적화 10세션, $2000/종목)
     command: >
       python scheduler.py
       --presets
-      "0220 RSI 역발상 - 과매도 반등"
-      "0220 MACD 추세추종 - AI 강세"
-      "0220 볼린저 관망 - VOLATILE 대응"
+      "0221 AAPL - RSI Strategy"
+      "0221 NVDA - Stochastic"
+      "0221 AMZN - Stochastic"
+      "0221 GOOGL - Bollinger Bands"
+      "0221 META - RSI Strategy"
+      "0221 TSLA - RSI Strategy"
+      "0221 AVGO - Stochastic"
+      "0221 LLY - Stochastic"
+      "0221 WMT - Stochastic"
+      "0221 TSM - RSI Strategy"
 
     # Volume mounts (same as dashboard for data sharing)
     volumes:
@@ -92,6 +99,10 @@ services:
       - ./config:/app/config:ro
       # Environment variables (read-only for security)
       - ./.env:/app/.env:ro
+      # Claude CLI binary (Pine Script LLM 코멘터리용)
+      - ${HOME}/.local/share/claude/versions/2.1.50:/usr/local/bin/claude:ro
+      # Claude CLI config & credentials
+      - ${HOME}/.claude:/home/trader/.claude
 
     # Environment variables from .env file
     env_file:
@@ -102,13 +113,13 @@ services:
       - PYTHONUNBUFFERED=1
       - TZ=Asia/Seoul  # Set timezone for scheduler
 
-    # Disable Dockerfile's Streamlit healthcheck (not applicable for scheduler)
+    # 상태 파일 기반 헬스체크 (SchedulerHealth)
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'scheduler.py' || exit 1"]
+      test: ["CMD", "python", "scripts/healthcheck.py"]
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
     # Resource limits (optional, uncomment if needed)
     # deploy:

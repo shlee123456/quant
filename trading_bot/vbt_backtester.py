@@ -17,18 +17,21 @@ class VBTBacktester:
     """
 
     def __init__(self, strategy, initial_capital: float = 10000.0,
-                 position_size: float = 0.95, commission: float = 0.001):
+                 position_size: float = 0.95, commission: float = 0.001,
+                 slippage_pct: float = 0.0):
         """
         Args:
             strategy: get_entries_exits(df)를 구현한 전략 객체
             initial_capital: 초기 자본금 (USD)
             position_size: 거래당 자본 비율 (0-1)
             commission: 수수료 비율 (0.001 = 0.1%)
+            slippage_pct: 슬리피지 비율 (0.001 = 0.1%)
         """
         self.strategy = strategy
         self.initial_capital = initial_capital
         self.position_size = position_size
         self.commission = commission
+        self.slippage_pct = slippage_pct
         self.trades = []
         self.equity_curve = []
 
@@ -61,6 +64,7 @@ class VBTBacktester:
             size=self.position_size,
             size_type='percent',
             fees=self.commission,
+            slippage=self.slippage_pct,
             freq='1D',
         )
 
@@ -115,6 +119,7 @@ class VBTBacktester:
             'avg_loss': avg_loss,
             'max_drawdown': max_drawdown,
             'sharpe_ratio': sharpe,
+            'total_slippage_cost': 0.0,
             'start_date': df.index[0],
             'end_date': df.index[-1],
         }
@@ -134,6 +139,7 @@ class VBTBacktester:
             'avg_loss': 0.0,
             'max_drawdown': 0.0,
             'sharpe_ratio': 0.0,
+            'total_slippage_cost': 0.0,
             'start_date': df.index[0] if len(df) > 0 else None,
             'end_date': df.index[-1] if len(df) > 0 else None,
         }
@@ -153,6 +159,7 @@ class VBTBacktester:
             'avg_loss': 0.0,
             'max_drawdown': 0.0,
             'sharpe_ratio': 0.0,
+            'total_slippage_cost': 0.0,
             'start_date': None,
             'end_date': None,
         }

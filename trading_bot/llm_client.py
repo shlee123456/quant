@@ -37,7 +37,7 @@ class LLMConfig:
     regime_model_name: str = "Qwen/Qwen2.5-14B-Instruct-AWQ"
     signal_timeout: float = 5.0
     regime_timeout: float = 15.0
-    timeout: float = 10.0  # 하위 호환 (레거시)
+    timeout: float = 10.0  # deprecated: signal_timeout/regime_timeout 사용 권장
     temperature: float = 0.1
     max_tokens: int = 500
     enabled: bool = True
@@ -182,7 +182,8 @@ class LLMClient:
         return self._call_llm(
             self.config.signal_filter_url,
             messages,
-            self.config.signal_model_name
+            self.config.signal_model_name,
+            timeout=self.config.signal_timeout
         )
 
     def judge_regime(self, regime_context: Dict) -> Optional[LLMRegimeJudgment]:
@@ -246,7 +247,8 @@ class LLMClient:
         return self._call_llm(
             self.config.regime_judge_url,
             messages,
-            self.config.regime_model_name
+            self.config.regime_model_name,
+            timeout=self.config.regime_timeout
         )
 
     def _call_gateway(self, url: str, payload: Dict, timeout: float) -> Optional[Dict]:
@@ -285,12 +287,15 @@ class LLMClient:
             logger.warning(f"Gateway request failed: {e}")
             return None
 
-    def _call_llm(self, url: str, messages: list, model_name: str) -> Optional[Dict]:
+    def _call_llm(self, url: str, messages: list, model_name: str, timeout: Optional[float] = None) -> Optional[Dict]:
         """
         Call vLLM OpenAI-compatible chat completions API (하위 호환)
 
         Returns parsed JSON dict or None on error
         """
+        if timeout is None:
+            timeout = self.config.timeout  # deprecated, 호출자가 명시적으로 전달 권장
+
         payload = {
             "model": model_name,
             "messages": messages,
@@ -303,7 +308,7 @@ class LLMClient:
             resp = requests.post(
                 url,
                 json=payload,
-                timeout=self.config.timeout
+                timeout=timeout
             )
             latency_ms = (time.time() - start_time) * 1000
 
@@ -320,7 +325,7 @@ class LLMClient:
             return parsed
 
         except requests.exceptions.Timeout:
-            logger.warning(f"LLM request timed out ({self.config.timeout}s): {url}")
+            logger.warning(f"LLM request timed out ({timeout}s): {url}")
             return None
         except requests.exceptions.ConnectionError:
             logger.warning(f"LLM server unreachable: {url}")

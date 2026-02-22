@@ -20,10 +20,31 @@
 ```
 dashboard/
 ├── __init__.py
-├── app.py              # Streamlit 메인 앱
-├── charts.py           # Plotly 차트 생성
-├── translations.py     # 다국어 지원
-└── README.md           # 대시보드 사용 설명서
+├── app.py                  # Streamlit 메인 앱
+├── charts.py               # Plotly 차트 생성
+├── translations.py         # 다국어 지원
+├── kis_broker.py            # KIS 브로커 초기화 헬퍼
+├── error_handler.py         # 에러 처리
+├── favorites.py             # 즐겨찾기 관리
+├── market_hours.py          # 시장 운영 시간
+├── market_timer.py          # 시장 타이머
+├── portfolio_summary.py     # 포트폴리오 요약
+├── scheduler_control.py     # 스케줄러 제어 UI
+├── scheduler_manager.py     # 스케줄러 매니저
+├── session_manager.py       # 세션 관리
+├── stock_symbols.py         # 종목 코드 DB
+├── yfinance_helper.py       # yfinance 데이터 헬퍼
+├── components/
+│   └── strategy_selector.py # 전략 선택 컴포넌트
+├── tabs/
+│   ├── __init__.py
+│   ├── backtest.py          # 백테스팅 탭
+│   ├── live_monitor.py      # 실시간 모니터링 탭
+│   ├── paper_trading.py     # 페이퍼 트레이딩 탭
+│   ├── realtime_quotes.py   # 실시간 시세 탭
+│   ├── scheduler.py         # 스케줄러 탭
+│   └── strategy_comparison.py # 전략 비교 탭
+└── README.md                # 대시보드 사용 설명서
 ```
 
 ---

@@ -86,9 +86,15 @@ except ImportError:
 
 try:
     from .paper_trader import PaperTrader
+    from .performance_calculator import PerformanceCalculator
+    from .order_executor import OrderExecutor
+    from .risk_manager import RiskManager
     _has_paper_trader = True
 except ImportError:
     PaperTrader = None
+    PerformanceCalculator = None
+    OrderExecutor = None
+    RiskManager = None
     _has_paper_trader = False
 
 __all__ = [
@@ -114,7 +120,7 @@ if _has_vbt:
 if _has_ccxt:
     __all__.append('DataHandler')
 if _has_paper_trader:
-    __all__.append('PaperTrader')
+    __all__.extend(['PaperTrader', 'PerformanceCalculator', 'OrderExecutor', 'RiskManager'])
 if _has_automation:
     __all__.extend(['TradingDatabase', 'ReportGenerator'])
 if _has_regime:

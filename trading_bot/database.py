@@ -6,7 +6,7 @@ import sqlite3
 import json
 import os
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 
@@ -57,6 +57,7 @@ class TradingDatabase:
         conn = sqlite3.connect(self.db_path)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA foreign_keys=ON")
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -70,136 +71,150 @@ class TradingDatabase:
     def _init_db(self):
         """Create database tables if they don't exist"""
         conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        # Enable WAL mode and busy timeout
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=5000")
-
-        # Paper trading sessions table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS paper_trading_sessions (
-                session_id TEXT PRIMARY KEY,
-                strategy_name TEXT NOT NULL,
-                display_name TEXT,
-                start_time TEXT NOT NULL,
-                end_time TEXT,
-                initial_capital REAL NOT NULL,
-                final_capital REAL,
-                total_return REAL,
-                sharpe_ratio REAL,
-                max_drawdown REAL,
-                win_rate REAL,
-                status TEXT NOT NULL DEFAULT 'active'
-            )
-        """)
-
-        # Trades table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS trades (
-                trade_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                type TEXT NOT NULL,
-                price REAL NOT NULL,
-                size REAL NOT NULL,
-                commission REAL NOT NULL,
-                pnl REAL,
-                pnl_pct REAL,
-                FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
-            )
-        """)
-
-        # Portfolio snapshots table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS portfolio_snapshots (
-                snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                total_value REAL NOT NULL,
-                cash REAL NOT NULL,
-                positions TEXT NOT NULL,
-                FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
-            )
-        """)
-
-        # Strategy signals table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS strategy_signals (
-                signal_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                signal INTEGER NOT NULL,
-                indicator_values TEXT NOT NULL,
-                market_price REAL NOT NULL,
-                executed INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
-            )
-        """)
-
-        # Indexes for query performance
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_session_id ON trades(session_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(session_id, timestamp)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_session_id ON portfolio_snapshots(session_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp ON portfolio_snapshots(session_id, timestamp)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_signals_session_id ON strategy_signals(session_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON strategy_signals(session_id, timestamp)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON paper_trading_sessions(status)")
-
-        # Regime history table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS regime_history (
-                regime_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                regime TEXT NOT NULL,
-                confidence REAL NOT NULL,
-                adx REAL,
-                trend_direction REAL,
-                volatility_percentile REAL,
-                recommended_strategies TEXT,
-                details TEXT,
-                FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
-            )
-        """)
-
-        # LLM decisions table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS llm_decisions (
-                decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                decision_type TEXT NOT NULL,
-                request_context TEXT,
-                response TEXT,
-                latency_ms REAL,
-                model_name TEXT,
-                FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
-            )
-        """)
-
-        # Indexes for regime_history
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_session_id ON regime_history(session_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_session_ts ON regime_history(session_id, timestamp)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_symbol_ts ON regime_history(symbol, timestamp)")
-
-        # Indexes for llm_decisions
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_llm_session_id ON llm_decisions(session_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_llm_session_ts ON llm_decisions(session_id, timestamp)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_llm_type ON llm_decisions(decision_type)")
-
-        # Migrate existing DB: add display_name column if missing
         try:
-            cursor.execute("SELECT display_name FROM paper_trading_sessions LIMIT 1")
-        except sqlite3.OperationalError:
-            cursor.execute("ALTER TABLE paper_trading_sessions ADD COLUMN display_name TEXT")
+            cursor = conn.cursor()
 
-        conn.commit()
-        conn.close()
+            # Enable WAL mode and busy timeout
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+
+            # Paper trading sessions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS paper_trading_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    strategy_name TEXT NOT NULL,
+                    display_name TEXT,
+                    start_time TEXT NOT NULL,
+                    end_time TEXT,
+                    initial_capital REAL NOT NULL,
+                    final_capital REAL,
+                    total_return REAL,
+                    sharpe_ratio REAL,
+                    max_drawdown REAL,
+                    win_rate REAL,
+                    status TEXT NOT NULL DEFAULT 'active'
+                )
+            """)
+
+            # Trades table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS trades (
+                    trade_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    size REAL NOT NULL,
+                    commission REAL NOT NULL,
+                    pnl REAL,
+                    pnl_pct REAL,
+                    FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
+                )
+            """)
+
+            # Portfolio snapshots table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+                    snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    total_value REAL NOT NULL,
+                    cash REAL NOT NULL,
+                    positions TEXT NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
+                )
+            """)
+
+            # Strategy signals table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS strategy_signals (
+                    signal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    signal INTEGER NOT NULL,
+                    indicator_values TEXT NOT NULL,
+                    market_price REAL NOT NULL,
+                    executed INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
+                )
+            """)
+
+            # Indexes for query performance
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_session_id ON trades(session_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(session_id, timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_session_id ON portfolio_snapshots(session_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp ON portfolio_snapshots(session_id, timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_signals_session_id ON strategy_signals(session_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON strategy_signals(session_id, timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON paper_trading_sessions(status)")
+
+            # Regime history table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS regime_history (
+                    regime_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    regime TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    adx REAL,
+                    trend_direction REAL,
+                    volatility_percentile REAL,
+                    recommended_strategies TEXT,
+                    details TEXT,
+                    FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
+                )
+            """)
+
+            # LLM decisions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS llm_decisions (
+                    decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    decision_type TEXT NOT NULL,
+                    request_context TEXT,
+                    response TEXT,
+                    latency_ms REAL,
+                    model_name TEXT,
+                    FOREIGN KEY (session_id) REFERENCES paper_trading_sessions (session_id)
+                )
+            """)
+
+            # Indexes for regime_history
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_session_id ON regime_history(session_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_session_ts ON regime_history(session_id, timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_regime_symbol_ts ON regime_history(symbol, timestamp)")
+
+            # Indexes for llm_decisions
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_llm_session_id ON llm_decisions(session_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_llm_session_ts ON llm_decisions(session_id, timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_llm_type ON llm_decisions(decision_type)")
+
+            # Scheduler commands table (Phase 1)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS scheduler_commands (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    command TEXT NOT NULL,
+                    target_label TEXT,
+                    created_at TEXT NOT NULL,
+                    processed_at TEXT
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_commands_processed ON scheduler_commands(processed_at)")
+
+            # Migrate existing DB: add display_name column if missing
+            try:
+                cursor.execute("SELECT display_name FROM paper_trading_sessions LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute("ALTER TABLE paper_trading_sessions ADD COLUMN display_name TEXT")
+
+            conn.commit()
+        finally:
+            conn.close()
 
     def create_session(self, strategy_name: str, initial_capital: float, display_name: Optional[str] = None) -> str:
         """
@@ -762,3 +777,128 @@ class TradingDatabase:
             List of active session dictionaries
         """
         return self.get_all_sessions(status_filter='active')
+
+    def insert_command(self, command: str, target_label: Optional[str] = None) -> int:
+        """스케줄러 제어 명령 삽입
+
+        Args:
+            command: 명령 종류 (stop_session, cleanup_zombies, status_dump)
+            target_label: 대상 세션 라벨 (stop_session 시 필수)
+
+        Returns:
+            삽입된 명령 ID
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO scheduler_commands (command, target_label, created_at)
+                VALUES (?, ?, ?)
+            """, (command, target_label, datetime.now().isoformat()))
+            return cursor.lastrowid
+
+    def get_pending_commands(self) -> List[Dict[str, Any]]:
+        """미처리 명령 조회
+
+        Returns:
+            미처리 명령 리스트
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, command, target_label, created_at
+                FROM scheduler_commands
+                WHERE processed_at IS NULL
+                ORDER BY created_at
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def mark_command_processed(self, command_id: int):
+        """명령 처리 완료 마킹
+
+        Args:
+            command_id: 처리된 명령 ID
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE scheduler_commands
+                SET processed_at = ?
+                WHERE id = ?
+            """, (datetime.now().isoformat(), command_id))
+
+    def prune_old_data(self, days_to_keep: int = 30) -> Dict[str, int]:
+        """오래된 세션 데이터 정리 (스냅샷, 시그널 삭제, 세션/거래 유지)
+
+        Args:
+            days_to_keep: 유지할 일수
+
+        Returns:
+            삭제된 레코드 수 딕셔너리
+        """
+        cutoff = (datetime.now() - timedelta(days=days_to_keep)).isoformat()
+        deleted = {}
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # 완료/중단된 세션 중 cutoff 이전 세션 ID 조회
+            cursor.execute("""
+                SELECT session_id FROM paper_trading_sessions
+                WHERE status IN ('completed', 'interrupted', 'terminated')
+                AND end_time < ?
+            """, (cutoff,))
+            old_session_ids = [row['session_id'] for row in cursor.fetchall()]
+
+            if not old_session_ids:
+                return {'snapshots': 0, 'signals': 0, 'regimes': 0, 'llm_decisions': 0}
+
+            placeholders = ','.join('?' * len(old_session_ids))
+
+            # 스냅샷 삭제
+            cursor.execute(f"DELETE FROM portfolio_snapshots WHERE session_id IN ({placeholders})", old_session_ids)
+            deleted['snapshots'] = cursor.rowcount
+
+            # 시그널 삭제
+            cursor.execute(f"DELETE FROM strategy_signals WHERE session_id IN ({placeholders})", old_session_ids)
+            deleted['signals'] = cursor.rowcount
+
+            # 레짐 이력 삭제
+            cursor.execute(f"DELETE FROM regime_history WHERE session_id IN ({placeholders})", old_session_ids)
+            deleted['regimes'] = cursor.rowcount
+
+            # LLM 결정 삭제
+            cursor.execute(f"DELETE FROM llm_decisions WHERE session_id IN ({placeholders})", old_session_ids)
+            deleted['llm_decisions'] = cursor.rowcount
+
+        return deleted
+
+    def vacuum(self):
+        """VACUUM 실행으로 DB 파일 크기 최적화"""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("VACUUM")
+        conn.close()
+
+    def backup(self, backup_dir: str = 'data/backups') -> str:
+        """DB 백업 (WAL 체크포인트 후 파일 복사)
+
+        Args:
+            backup_dir: 백업 디렉토리
+
+        Returns:
+            백업 파일 경로
+        """
+        import shutil
+
+        os.makedirs(backup_dir, exist_ok=True)
+
+        # WAL 체크포인트
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.close()
+
+        # 파일 복사
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_path = os.path.join(backup_dir, f"paper_trading_{timestamp}.db")
+        shutil.copy2(self.db_path, backup_path)
+
+        return backup_path

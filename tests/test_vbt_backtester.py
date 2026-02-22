@@ -24,7 +24,7 @@ EXPECTED_KEYS = {
     'initial_capital', 'final_capital', 'total_return',
     'total_trades', 'winning_trades', 'losing_trades',
     'win_rate', 'avg_win', 'avg_loss',
-    'max_drawdown', 'sharpe_ratio',
+    'max_drawdown', 'sharpe_ratio', 'total_slippage_cost',
     'start_date', 'end_date',
 }
 
