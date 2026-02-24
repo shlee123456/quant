@@ -44,15 +44,15 @@ WORKER_MODELS = {
     'Notion-Writer': 'claude-haiku-4-5-20251001',  # Simple page creation
 }
 
-# 페이지 하단 푸터 템플릿
-FOOTER_TEMPLATE = """::: callout {{{{icon="📝" color="gray_bg"}}}}
+# 페이지 하단 푸터 템플릿 (.format() 사용 — {{ → { 로 이스케이프)
+FOOTER_TEMPLATE = """::: callout {{icon="📝" color="gray_bg"}}
 \t**분석 생성**: {date}  \\|  **데이터 수집**: {date} KST  \\|  **병렬 생성**: Worker A + B + C
 \t**주의사항**: 본 분석은 자동 수집된 데이터와 기술적 지표를 기반으로 생성된 참고 자료입니다. 실제 투자 결정은 개인의 판단과 책임 하에 이루어져야 합니다.
 :::"""
 
 # Notion Enhanced Markdown 포맷 규칙 (각 워커에 포함)
 _FORMAT_RULES = r"""--- FORMAT RULES (MANDATORY) ---
-1. ALL section headers (# 1., # 2., ...) MUST have {{color="blue"}}
+1. ALL section headers (# 1., # 2., ...) MUST have {color="blue"}
 2. ALL tables MUST have fit-page-width="true" header-row="true"
 3. Header rows in tables MUST have color="blue_bg"
 4. Notable/warning rows MUST have color="orange_bg"
@@ -299,11 +299,11 @@ def build_worker_a_prompt(market_data: Dict, today: str) -> str:
 {_FORMAT_RULES}
 
 --- EXACT OUTPUT STRUCTURE (이 구조만 출력하세요) ---
-
-# 1. 시장 전체 요약 {{{{color="blue"}}}}
-::: callout {{{{icon="📅" color="gray_bg"}}}}
-\t**분석 일자**: {today}  \\|  **대상 종목**: {len(symbols)}개 ({symbols_str})
-:::
+""" + r"""
+# 1. 시장 전체 요약 {color="blue"}
+::: callout {icon="📅" color="gray_bg"}
+""" + f"""\t**분석 일자**: {today}  \\|  **대상 종목**: {len(symbols)}개 ({symbols_str})
+:::""" + r"""
 ## 오늘의 시장 상황
 [2-3 paragraphs analyzing today's market based on the provided data + WebSearch news]
 
@@ -316,42 +316,42 @@ def build_worker_a_prompt(market_data: Dict, today: str) -> str:
 </tr>
 <tr>
 <td>평균 RSI</td>
-<td>**{{{{value}}}}**</td>
+<td>**{value}**</td>
 <td>[interpretation]</td>
 </tr>
 <tr>
 <td>강세 종목 수</td>
-<td>**{{{{value}}}}**</td>
+<td>**{value}**</td>
 <td>[interpretation]</td>
 </tr>
 <tr>
 <td>약세 종목 수</td>
-<td>**{{{{value}}}}**</td>
+<td>**{value}**</td>
 <td>[interpretation]</td>
 </tr>
 <tr>
 <td>횡보 종목 수</td>
-<td>**{{{{value}}}}**</td>
+<td>**{value}**</td>
 <td>[interpretation]</td>
 </tr>
 <tr>
 <td>공포탐욕 지수</td>
-<td>**{{{{value}}}}**</td>
+<td>**{value}**</td>
 <td>[interpretation]</td>
 </tr>
 </table>
 
 ## 전반적인 시장 분위기
-::: callout {{{{icon="⚠️" color="red_bg"}}}}
+::: callout {icon="⚠️" color="red_bg"}
 (Use red_bg for bearish, green_bg for bullish, yellow_bg for neutral. Choose appropriate emoji.)
-\t**[강세/약세/중립] ([Bullish/Bearish/Neutral])** — [explanation with data]
+	**[강세/약세/중립] ([Bullish/Bearish/Neutral])** — [explanation with data]
 :::
 ---
-# 2. 종목별 분석 {{{{color="blue"}}}}
+# 2. 종목별 분석 {color="blue"}
 <table fit-page-width="true" header-row="true" header-column="true">
 <tr color="blue_bg">
 <td>**종목**</td>
-<td>**현재가 (\\$)**</td>
+<td>**현재가 (\$)**</td>
 <td>**5일 변화**</td>
 <td>**20일 변화**</td>
 <td>**RSI**</td>
@@ -360,21 +360,21 @@ def build_worker_a_prompt(market_data: Dict, today: str) -> str:
 <td>**주요 시그널**</td>
 </tr>
 <tr> or <tr color="orange_bg"> for notable stocks (oversold/overbought/extreme moves)
-<td>**{{{{SYMBOL}}}}**</td>
-<td>{{{{price}}}}</td>
-<td><span color="red">{{{{negative%}}}}</span> or <span color="green">{{{{positive%}}}}</span></td>
-<td><span color="red">{{{{negative%}}}}</span> or <span color="green">{{{{positive%}}}}</span></td>
-<td>{{{{rsi}}}} ({{{{label}}}})</td>
+<td>**{SYMBOL}**</td>
+<td>{price}</td>
+<td><span color="red">{negative%}</span> or <span color="green">{positive%}</span></td>
+<td><span color="red">{negative%}</span> or <span color="green">{positive%}</span></td>
+<td>{rsi} ({label})</td>
 <td><span color="red">Bearish</span> or <span color="green">Bullish</span></td>
-<td>{{{{REGIME}}}} ({{{{confidence}}}}%)</td>
-<td>{{{{signal_notes}}}}</td>
+<td>{REGIME} ({confidence}%)</td>
+<td>{signal_notes}</td>
 </tr>
 [... repeat for all stocks]
 </table>
 ---
 
 --- END EXACT OUTPUT STRUCTURE ---
-
+""" + f"""
 JSON 데이터:
 ```json
 {json_str}
@@ -467,15 +467,15 @@ def build_worker_b_prompt(
 {_FORMAT_RULES}
 
 --- EXACT OUTPUT STRUCTURE (이 구조만 출력하세요) ---
-
-# 3. 주목할 종목 Top 3 {{{{color="blue"}}}}
-## 🥇 1위: {{{{SYMBOL}}}} ({{{{Company}}}}) — {{{{action recommendation}}}}
-::: callout {{{{icon="📌" color="yellow_bg"}}}}
-\t**현재가**: \\${{{{price}}}}  \\|  **20일 변화**: {{{{change}}}}  \\|  **RSI**: {{{{rsi}}}}  \\|  **레짐**: {{{{regime}}}}
+""" + r"""
+# 3. 주목할 종목 Top 3 {color="blue"}
+## 🥇 1위: {SYMBOL} ({Company}) — {action recommendation}
+::: callout {icon="📌" color="yellow_bg"}
+	**현재가**: \${price}  \|  **20일 변화**: {change}  \|  **RSI**: {rsi}  \|  **레짐**: {regime}
 :::
 **선정 이유 및 기술적 근거**:
 - [bullet points with technical analysis]
-- **지지선**: \\${{{{support1}}}} / \\${{{{support2}}}}
+- **지지선**: \${support1} / \${support2}
 
 **뉴스 근거**: [news-based analysis with sources]
 
@@ -483,12 +483,12 @@ def build_worker_b_prompt(
 ---
 (Repeat same structure for 🥈 2위 and 🥉 3위)
 ---
-# 4. 공포/탐욕 지수 분석 {{{{color="blue"}}}}
+# 4. 공포/탐욕 지수 분석 {color="blue"}
 ## 현재 Fear & Greed Index
-::: callout {{{{icon="😰" color="red_bg"}}}}
+::: callout {icon="😰" color="red_bg"}
 (Choose emoji and color based on value: 😰/red_bg for fear, 😊/green_bg for greed, 😐/yellow_bg for neutral)
-\t**현재값: {{{{value}}}} ({{{{classification}}}})** — [interpretation]
-\t측정 시각: {{{{timestamp}}}}
+	**현재값: {value} ({classification})** — [interpretation]
+	측정 시각: {timestamp}
 :::
 ## 차트 시각적 분석 (30일 히스토리)
 [analysis of the Fear & Greed chart if chart image was provided]
@@ -500,10 +500,10 @@ def build_worker_b_prompt(
 <td>**특이사항**</td>
 </tr>
 <tr color="green_bg"> or <tr color="red_bg"> or <tr color="yellow_bg"> based on sentiment period
-<td>{{{{period}}}}</td>
-<td>{{{{range}}}}</td>
-<td>{{{{classification}}}}</td>
-<td>{{{{notes}}}}</td>
+<td>{period}</td>
+<td>{range}</td>
+<td>{classification}</td>
+<td>{notes}</td>
 </tr>
 [... periods]
 </table>
@@ -511,20 +511,20 @@ def build_worker_b_prompt(
 [numbered analysis points]
 ## 기술적 지표와의 상관관계
 [bullet points correlating F&G with RSI and other indicators]
-::: callout {{{{icon="💡" color="blue_bg"}}}}
-\t**역발상 투자 관점**: [contrarian analysis]
+::: callout {icon="💡" color="blue_bg"}
+	**역발상 투자 관점**: [contrarian analysis]
 :::
 ---
-# 5. 뉴스 & 이벤트 분석 {{{{color="blue"}}}}
+# 5. 뉴스 & 이벤트 분석 {color="blue"}
 ## 시장 전체 주요 뉴스
 <details>
 <summary>📰 거시경제 & 시장 이벤트</summary>
-\t[numbered news items with sources]
+	[numbered news items with sources]
 </details>
 ## 종목별 핵심 뉴스 분석
 ### [Theme/Category] ([affected symbols])
-::: callout {{{{icon="🤖" color="orange_bg"}}}}
-\t**핵심 이슈**: [key issue description with source links]
+::: callout {icon="🤖" color="orange_bg"}
+	**핵심 이슈**: [key issue description with source links]
 :::
 [bullet points per symbol]
 [... more themes as needed]
@@ -537,9 +537,9 @@ def build_worker_b_prompt(
 <td>**일치 여부**</td>
 </tr>
 <tr>
-<td>{{{{symbol}}}}</td>
-<td>{{{{technical}}}}</td>
-<td>{{{{news}}}}</td>
+<td>{symbol}</td>
+<td>{technical}</td>
+<td>{news}</td>
 <td>✅ 일치 or ⚠️ 혼재 or ❌ 불일치</td>
 </tr>
 [... all symbols]
@@ -547,7 +547,7 @@ def build_worker_b_prompt(
 ---
 
 --- END EXACT OUTPUT STRUCTURE ---
-
+""" + f"""
 종목 데이터:
 ```json
 {stocks_json}
