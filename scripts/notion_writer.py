@@ -359,18 +359,24 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
 
     logger.info(f"워커 결과: {success_count}/3 성공")
 
-    # 7. 전체 실패 → 레거시 폴백
+    # 7. 핵심 워커 실패 → 레거시 폴백
+    # Worker A (시장요약), B (Top3/F&G/뉴스)가 없으면 리포트 가치 없음
     if success_count == 0:
         logger.error("모든 워커 실패")
         return _run_legacy_fallback(json_path, session_reports_dir)
 
-    # 8. 부분 실패 시 플레이스홀더 삽입
-    for key in ["Worker-A", "Worker-B", "Worker-C"]:
-        if key not in worker_outputs:
-            worker_outputs[key] = (
-                '::: callout {icon="⚠️" color="red_bg"}\n'
-                "\t이 섹션은 생성에 실패했습니다.\n:::"
-            )
+    if "Worker-A" not in worker_outputs or "Worker-B" not in worker_outputs:
+        failed = [k for k in ["Worker-A", "Worker-B"] if k not in worker_outputs]
+        logger.warning(f"핵심 워커 실패 {failed} → 레거시 폴백")
+        return _run_legacy_fallback(json_path, session_reports_dir)
+
+    # 8. Worker-C만 실패 시 플레이스홀더 삽입 (전략/리스크는 보조 섹션)
+    if "Worker-C" not in worker_outputs:
+        logger.warning("[Worker-C] 실패 - 플레이스홀더 삽입")
+        worker_outputs["Worker-C"] = (
+            '::: callout {icon="⚠️" color="red_bg"}\n'
+            "\t전략 분석 섹션은 생성에 실패했습니다.\n:::"
+        )
 
     # 9. 섹션 조합
     assembled = assemble_sections(
