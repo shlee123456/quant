@@ -307,8 +307,8 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
 
     # 4. 워커 설정 (이름은 WORKER_MODELS 키와 일치)
     worker_configs = {
-        "Worker-A": {"prompt": prompt_a, "tools": "WebSearch", "timeout": 600, "max_budget": 0.50},
-        "Worker-B": {"prompt": prompt_b, "tools": "WebSearch,Read", "timeout": 600, "max_budget": 0.50},
+        "Worker-A": {"prompt": prompt_a, "tools": "WebSearch", "timeout": 600, "max_budget": 0.60},
+        "Worker-B": {"prompt": prompt_b, "tools": "WebSearch,Read", "timeout": 600, "max_budget": 0.80},
         "Worker-C": {"prompt": prompt_c, "tools": "", "timeout": 300, "max_budget": 0.30},
     }
 
