@@ -17,8 +17,8 @@ Usage:
 
 import json
 import logging
+import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -42,6 +42,13 @@ except ImportError:
     FearGreedCollector = None
     _has_fear_greed = False
 
+try:
+    import yfinance as yf
+    _has_yfinance = True
+except ImportError:
+    yf = None
+    _has_yfinance = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,32 +62,50 @@ class MarketAnalyzer:
         'XOM', 'CVX', 'COP', 'SLB', 'EOG',
         'PG', 'KO', 'PM', 'MO',
         'DIS', 'HD', 'LOW', 'MCD', 'NKE', 'TGT',
-        'CRM', 'ORCL',
+        'CRM', 'ORCL', 'TSM',
         'BA', 'CAT', 'GE', 'UPS', 'FDX', 'MMM',
     }
 
-    def __init__(self, ohlcv_limit: int = 200, api_delay: float = 0.5, max_workers: int = 5):
+    # 매크로 분석 심볼
+    MACRO_INDICES = ['SPY', 'QQQ', 'DIA', 'IWM']
+    MACRO_SECTORS = {
+        'XLK': '기술', 'XLF': '금융', 'XLE': '에너지', 'XLV': '헬스케어',
+        'XLI': '산업재', 'XLP': '필수소비재', 'XLU': '유틸리티',
+        'XLY': '임의소비재', 'XLC': '통신서비스', 'XLB': '소재', 'XLRE': '부동산',
+    }
+    MACRO_RISK = ['TLT', 'GLD', 'HYG']
+
+    # 섹터 분류 (로테이션 분석용)
+    OFFENSIVE_SECTORS = ['XLK', 'XLY', 'XLF', 'XLI', 'XLC']
+    DEFENSIVE_SECTORS = ['XLU', 'XLP', 'XLV', 'XLRE', 'XLB']
+
+    def __init__(self, ohlcv_limit: int = 200, api_delay: float = 0.5):
         """
         Args:
             ohlcv_limit: OHLCV 조회 봉 수 (기본 200)
             api_delay: API 호출 간 대기 시간(초)
-            max_workers: 병렬 심볼 분석 스레드 수 (기본 5)
         """
         self.ohlcv_limit = ohlcv_limit
         self.api_delay = api_delay
-        self.max_workers = max_workers
         self.regime_detector = RegimeDetector()
 
+    # 실패 종목 재시도 설정
+    RETRY_MAX_ROUNDS = 2       # 최대 재시도 라운드 수
+    RETRY_DELAY_SECONDS = 30   # 라운드 간 대기 시간 (초)
+
     def analyze(self, symbols: List[str], broker: Any, collect_news: bool = True,
-                collect_fear_greed: bool = True) -> Dict:
+                collect_fear_greed: bool = True, collect_events: bool = True,
+                collect_fundamentals: bool = True) -> Dict:
         """
-        전체 분석 실행: 데이터 수집 + 지표 계산 + 레짐 감지 + 뉴스 수집 + F&G 지수
+        전체 분석 실행: 데이터 수집 + 지표 계산 + 레짐 감지 + 뉴스 수집 + F&G 지수 + 이벤트 캘린더 + 펀더멘탈
 
         Args:
             symbols: 분석 대상 종목 리스트
             broker: KoreaInvestmentBroker 인스턴스
             collect_news: 뉴스 수집 여부 (기본 True)
             collect_fear_greed: 공포/탐욕 지수 수집 여부 (기본 True)
+            collect_events: 이벤트 캘린더 수집 여부 (기본 True)
+            collect_fundamentals: 펀더멘탈 데이터 수집 여부 (기본 True)
 
         Returns:
             구조화된 분석 결과 딕셔너리
@@ -90,19 +115,46 @@ class MarketAnalyzer:
 
         stocks_results = {}
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {
-                executor.submit(self._analyze_single_symbol, symbol, broker): symbol
-                for symbol in symbols
-            }
-            for future in as_completed(futures):
-                symbol = futures[future]
+        # 1차 시도
+        for symbol in symbols:
+            try:
+                result = self._analyze_single_symbol(symbol, broker)
+                if result is not None:
+                    stocks_results[symbol] = result
+            except Exception as e:
+                logger.error(f"  {symbol} 분석 실패: {e}", exc_info=True)
+
+        # 실패 종목 재시도
+        failed_symbols = [s for s in symbols if s not in stocks_results]
+        for retry_round in range(1, self.RETRY_MAX_ROUNDS + 1):
+            if not failed_symbols:
+                break
+
+            logger.info(
+                f"실패 종목 재시도 ({retry_round}/{self.RETRY_MAX_ROUNDS}): "
+                f"{', '.join(failed_symbols)} — {self.RETRY_DELAY_SECONDS}초 대기"
+            )
+            time.sleep(self.RETRY_DELAY_SECONDS)
+
+            still_failed = []
+            for symbol in failed_symbols:
                 try:
-                    result = future.result()
+                    result = self._analyze_single_symbol(symbol, broker)
                     if result is not None:
                         stocks_results[symbol] = result
+                        logger.info(f"  {symbol}: 재시도 {retry_round}회차 성공")
+                    else:
+                        still_failed.append(symbol)
                 except Exception as e:
-                    logger.error(f"  {symbol} 분석 실패: {e}", exc_info=True)
+                    logger.error(f"  {symbol} 재시도 실패: {e}")
+                    still_failed.append(symbol)
+
+            failed_symbols = still_failed
+
+        if failed_symbols:
+            logger.warning(
+                f"최종 실패 종목 ({len(failed_symbols)}개): {', '.join(failed_symbols)}"
+            )
 
         if not stocks_results:
             logger.error("분석 가능한 종목이 없습니다")
@@ -148,6 +200,30 @@ class MarketAnalyzer:
                 logger.warning(f"Fear & Greed Index 수집 실패 (기술적 분석은 정상 진행): {e}")
         elif collect_fear_greed and not _has_fear_greed:
             logger.info("FearGreedCollector 미설치 - F&G 지수 수집 건너뜀")
+
+        # 이벤트 캘린더 수집 (옵션)
+        if collect_events and os.getenv('EVENT_CALENDAR_ENABLED', 'true').lower() == 'true':
+            try:
+                from trading_bot.event_calendar import EventCalendarCollector
+                collector = EventCalendarCollector(api_delay=self.api_delay)
+                events = collector.collect(symbols)
+                if events:
+                    result['events'] = events
+                    logger.info(f"이벤트 캘린더: 실적 {len(events.get('earnings', {}))}건, FOMC 다음={events.get('fomc', {}).get('next_date')}")
+            except Exception as e:
+                logger.warning(f"이벤트 캘린더 수집 실패: {e}")
+
+        # 펀더멘탈 데이터 수집 (옵션)
+        if collect_fundamentals and os.getenv('FUNDAMENTALS_ENABLED', 'true').lower() == 'true':
+            try:
+                from trading_bot.fundamental_collector import FundamentalCollector
+                collector = FundamentalCollector(api_delay=self.api_delay)
+                fundamentals = collector.collect(symbols)
+                if fundamentals:
+                    result['fundamentals'] = fundamentals
+                    logger.info(f"펀더멘탈 데이터: {len(fundamentals.get('fundamentals', {}))}건")
+            except Exception as e:
+                logger.warning(f"펀더멘탈 데이터 수집 실패: {e}")
 
         return result
 
@@ -547,3 +623,421 @@ class MarketAnalyzer:
             return 'moderate_trend'
         else:
             return 'strong_trend'
+
+    # ─── 매크로 시장 분석 ───
+
+    def analyze_macro(self) -> Optional[Dict]:
+        """
+        yfinance를 사용하여 매크로 시장 환경 분석
+        (지수 ETF, 섹터 ETF, 리스크 자산)
+
+        Returns:
+            매크로 분석 결과 딕셔너리 또는 None (yfinance 미설치/실패 시)
+        """
+        if not _has_yfinance:
+            logger.info("yfinance 미설치 - 매크로 분석 건너뜀 (pip install yfinance)")
+            return None
+
+        logger.info("매크로 시장 분석 시작")
+
+        # 1. 데이터 다운로드
+        macro_data = self._fetch_macro_data()
+        if not macro_data:
+            logger.warning("매크로 데이터 다운로드 실패")
+            return None
+
+        # 2. 지수 ETF 분석
+        indices = {}
+        for symbol in self.MACRO_INDICES:
+            if symbol in macro_data:
+                analysis = self._analyze_macro_symbol(macro_data[symbol])
+                if analysis is not None:
+                    indices[symbol] = analysis
+
+        # 3. 섹터 ETF 분석 + 순위
+        sectors = self._calc_sector_rankings(macro_data)
+
+        # 4. 로테이션 감지
+        rotation = self._detect_rotation(sectors)
+
+        # 5. 시장 폭(breadth) 분석
+        breadth = self._calc_breadth(indices, sectors)
+
+        # 6. 리스크 환경 평가
+        risk_env = self._assess_risk_env(macro_data)
+
+        # 7. 종합 요약
+        overall = self._generate_macro_summary(indices, sectors, rotation, breadth, risk_env)
+
+        result = {
+            'collected_at': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+            'indices': indices,
+            'sectors': sectors,
+            'rotation': rotation,
+            'breadth': breadth,
+            'risk_environment': risk_env,
+            'overall': overall,
+        }
+
+        logger.info(f"매크로 분석 완료: {overall[:80]}...")
+        return result
+
+    def _fetch_macro_data(self) -> Dict[str, pd.DataFrame]:
+        """
+        yf.download()로 모든 매크로 심볼 데이터를 한 번에 다운로드
+
+        Returns:
+            심볼별 OHLCV DataFrame 딕셔너리 (실패 시 빈 dict)
+        """
+        all_symbols = (
+            self.MACRO_INDICES
+            + list(self.MACRO_SECTORS.keys())
+            + self.MACRO_RISK
+        )
+
+        try:
+            raw = yf.download(
+                all_symbols,
+                period='6mo',
+                interval='1d',
+                progress=False,
+                group_by='ticker',
+            )
+        except Exception as e:
+            logger.warning(f"yfinance 다운로드 실패: {e}")
+            return {}
+
+        if raw is None or raw.empty:
+            logger.warning("yfinance 다운로드 결과가 비어 있습니다")
+            return {}
+
+        result: Dict[str, pd.DataFrame] = {}
+
+        for symbol in all_symbols:
+            try:
+                # group_by='ticker'일 때 멀티인덱스 컬럼: (ticker, OHLCV)
+                if isinstance(raw.columns, pd.MultiIndex):
+                    if symbol not in raw.columns.get_level_values(0):
+                        logger.debug(f"{symbol}: 다운로드 데이터 없음")
+                        continue
+                    df = raw[symbol].copy()
+                else:
+                    # 심볼이 1개만 다운로드된 경우 멀티인덱스가 아닐 수 있음
+                    df = raw.copy()
+
+                # NaN 행 제거
+                df = df.dropna(subset=['Close'])
+                if df.empty or len(df) < 30:
+                    logger.debug(f"{symbol}: 데이터 부족 ({len(df)}봉)")
+                    continue
+
+                result[symbol] = df
+            except Exception as e:
+                logger.debug(f"{symbol} 데이터 처리 실패: {e}")
+                continue
+
+        logger.info(f"매크로 데이터 다운로드 완료: {len(result)}/{len(all_symbols)}개 심볼")
+        return result
+
+    def _analyze_macro_symbol(self, df: pd.DataFrame) -> Optional[Dict]:
+        """
+        개별 매크로 심볼에 대한 기술적 분석
+
+        Args:
+            df: yfinance에서 다운로드한 OHLCV DataFrame (컬럼: Open, High, Low, Close, Volume)
+
+        Returns:
+            분석 결과 딕셔너리 또는 None (데이터 부족 시)
+        """
+        if df is None or len(df) < 30:
+            return None
+
+        try:
+            close = df['Close'].astype(float)
+            volume = df['Volume'].astype(float)
+
+            # 현재가 (마지막 종가)
+            last = float(close.iloc[-1])
+
+            # 수익률 계산
+            chg_1d = self._pct_change(close, 1)
+            chg_5d = self._pct_change(close, 5)
+            chg_20d = self._pct_change(close, 20)
+
+            # RSI(14) 계산
+            rsi = self._calc_rsi(close, period=14)
+            rsi_val = float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
+
+            # 거래량 변화 (5일 평균 vs 20일 평균)
+            vol_5d_avg = float(volume.iloc[-5:].mean()) if len(volume) >= 5 else float(volume.mean())
+            vol_20d_avg = float(volume.iloc[-20:].mean()) if len(volume) >= 20 else float(volume.mean())
+            vol_ratio = round(vol_5d_avg / vol_20d_avg, 2) if vol_20d_avg > 0 else 1.0
+
+            return {
+                'last': round(last, 2),
+                'chg_1d': chg_1d,
+                'chg_5d': chg_5d,
+                'chg_20d': chg_20d,
+                'rsi': round(rsi_val, 1),
+                'vol_ratio': vol_ratio,
+            }
+        except Exception as e:
+            logger.debug(f"매크로 심볼 분석 실패: {e}")
+            return None
+
+    def _calc_sector_rankings(self, macro_data: Dict[str, pd.DataFrame]) -> Dict[str, Dict]:
+        """
+        11개 섹터 ETF의 5일/20일 수익률 기준으로 순위 매기기
+
+        Args:
+            macro_data: 심볼별 OHLCV DataFrame 딕셔너리
+
+        Returns:
+            섹터별 분석 결과 + rank_5d, rank_20d 포함
+        """
+        sectors: Dict[str, Dict] = {}
+
+        for symbol, name in self.MACRO_SECTORS.items():
+            if symbol not in macro_data:
+                continue
+            analysis = self._analyze_macro_symbol(macro_data[symbol])
+            if analysis is None:
+                continue
+            analysis['name'] = name
+            sectors[symbol] = analysis
+
+        if not sectors:
+            return {}
+
+        # 5일 수익률 기준 순위 (높은 순 = 1위)
+        sorted_by_5d = sorted(
+            sectors.keys(),
+            key=lambda s: sectors[s].get('chg_5d') or 0.0,
+            reverse=True,
+        )
+        for rank, symbol in enumerate(sorted_by_5d, 1):
+            sectors[symbol]['rank_5d'] = rank
+
+        # 20일 수익률 기준 순위
+        sorted_by_20d = sorted(
+            sectors.keys(),
+            key=lambda s: sectors[s].get('chg_20d') or 0.0,
+            reverse=True,
+        )
+        for rank, symbol in enumerate(sorted_by_20d, 1):
+            sectors[symbol]['rank_20d'] = rank
+
+        return sectors
+
+    def _detect_rotation(self, sectors: Dict[str, Dict]) -> Dict:
+        """
+        공격적 섹터 vs 방어적 섹터의 평균 5일 수익률 비교로 로테이션 감지
+
+        Args:
+            sectors: _calc_sector_rankings()의 반환값
+
+        Returns:
+            로테이션 분석 결과 딕셔너리
+        """
+        offensive_returns = []
+        for s in self.OFFENSIVE_SECTORS:
+            if s in sectors and sectors[s].get('chg_5d') is not None:
+                offensive_returns.append(sectors[s]['chg_5d'])
+
+        defensive_returns = []
+        for s in self.DEFENSIVE_SECTORS:
+            if s in sectors and sectors[s].get('chg_5d') is not None:
+                defensive_returns.append(sectors[s]['chg_5d'])
+
+        offensive_avg = round(float(np.mean(offensive_returns)), 2) if offensive_returns else 0.0
+        defensive_avg = round(float(np.mean(defensive_returns)), 2) if defensive_returns else 0.0
+        diff = round(offensive_avg - defensive_avg, 2)
+
+        if diff > 1.0:
+            signal = "공격적 로테이션 (리스크온)"
+        elif diff < -1.0:
+            signal = "방어적 로테이션 (리스크오프)"
+        else:
+            signal = "뚜렷한 로테이션 없음 (중립)"
+
+        return {
+            'offensive_avg_5d': offensive_avg,
+            'defensive_avg_5d': defensive_avg,
+            'diff': diff,
+            'signal': signal,
+        }
+
+    def _calc_breadth(self, indices: Dict[str, Dict], sectors: Dict[str, Dict]) -> Dict:
+        """
+        시장 폭(breadth) 분석: SPY vs IWM, SPY vs QQQ, 섹터 긍정/부정 비율
+
+        Args:
+            indices: 지수 ETF 분석 결과
+            sectors: 섹터 ETF 분석 결과
+
+        Returns:
+            시장 폭 분석 결과 딕셔너리
+        """
+        spy_5d = indices.get('SPY', {}).get('chg_5d') or 0.0
+        iwm_5d = indices.get('IWM', {}).get('chg_5d') or 0.0
+        qqq_5d = indices.get('QQQ', {}).get('chg_5d') or 0.0
+
+        spy_vs_iwm_5d = round(spy_5d - iwm_5d, 1)
+        spy_vs_qqq_5d = round(spy_5d - qqq_5d, 1)
+
+        positive_count = sum(
+            1 for s in sectors.values()
+            if s.get('chg_5d') is not None and s['chg_5d'] > 0
+        )
+        negative_count = sum(
+            1 for s in sectors.values()
+            if s.get('chg_5d') is not None and s['chg_5d'] <= 0
+        )
+
+        # 해석
+        parts = []
+        if iwm_5d > spy_5d + 0.5:
+            parts.append("소형주(IWM) 상대 강세로 시장 폭 양호")
+        elif spy_5d > iwm_5d + 0.5:
+            parts.append("대형주(SPY) 쏠림으로 시장 폭 협소")
+        else:
+            parts.append("대형주/소형주 균형")
+
+        if positive_count >= 8:
+            parts.append("대다수 섹터 상승으로 광범위한 강세")
+        elif negative_count >= 8:
+            parts.append("대다수 섹터 하락으로 광범위한 약세")
+        else:
+            parts.append(f"섹터 혼조 (상승 {positive_count}개, 하락 {negative_count}개)")
+
+        interpretation = ". ".join(parts)
+
+        return {
+            'spy_vs_iwm_5d': spy_vs_iwm_5d,
+            'spy_vs_qqq_5d': spy_vs_qqq_5d,
+            'sectors_positive_5d': positive_count,
+            'sectors_negative_5d': negative_count,
+            'interpretation': interpretation,
+        }
+
+    def _assess_risk_env(self, macro_data: Dict[str, pd.DataFrame]) -> Dict:
+        """
+        TLT(국채), GLD(금), HYG(하이일드) 5일 수익률로 리스크 환경 판단
+
+        Args:
+            macro_data: 심볼별 OHLCV DataFrame 딕셔너리
+
+        Returns:
+            리스크 환경 평가 결과 딕셔너리
+        """
+        risk_symbols = {'TLT': None, 'GLD': None, 'HYG': None}
+
+        for symbol in risk_symbols:
+            if symbol in macro_data:
+                analysis = self._analyze_macro_symbol(macro_data[symbol])
+                if analysis is not None:
+                    risk_symbols[symbol] = analysis.get('chg_5d')
+
+        tlt_chg = risk_symbols['TLT'] if risk_symbols['TLT'] is not None else 0.0
+        gld_chg = risk_symbols['GLD'] if risk_symbols['GLD'] is not None else 0.0
+        hyg_chg = risk_symbols['HYG'] if risk_symbols['HYG'] is not None else 0.0
+
+        # 판단 기준: > 0.5% → 상승, < -0.5% → 하락, 그 사이 → 중립
+        tlt_dir = 'up' if tlt_chg > 0.5 else ('down' if tlt_chg < -0.5 else 'neutral')
+        gld_dir = 'up' if gld_chg > 0.5 else ('down' if gld_chg < -0.5 else 'neutral')
+        hyg_dir = 'up' if hyg_chg > 0.5 else ('down' if hyg_chg < -0.5 else 'neutral')
+
+        # TLT↑ + GLD↑ + HYG↓ → 리스크오프
+        # TLT↓ + GLD↓ + HYG↑ → 리스크온
+        if tlt_dir == 'up' and gld_dir == 'up' and hyg_dir == 'down':
+            assessment = "리스크오프 (안전자산 선호)"
+        elif tlt_dir == 'down' and gld_dir == 'down' and hyg_dir == 'up':
+            assessment = "리스크온 (위험자산 선호)"
+        else:
+            assessment = "혼조 (방향성 불확실)"
+
+        return {
+            'tlt_chg_5d': tlt_chg,
+            'gld_chg_5d': gld_chg,
+            'hyg_chg_5d': hyg_chg,
+            'assessment': assessment,
+        }
+
+    def _generate_macro_summary(
+        self,
+        indices: Dict[str, Dict],
+        sectors: Dict[str, Dict],
+        rotation: Dict,
+        breadth: Dict,
+        risk_env: Dict,
+    ) -> str:
+        """
+        매크로 분석 결과를 종합하여 한줄 요약 문자열 생성
+
+        Args:
+            indices: 지수 ETF 분석 결과
+            sectors: 섹터 ETF 분석 결과
+            rotation: 로테이션 분석 결과
+            breadth: 시장 폭 분석 결과
+            risk_env: 리스크 환경 분석 결과
+
+        Returns:
+            종합 요약 문자열
+        """
+        parts = []
+
+        # 최강/최약 섹터 (5일 수익률 기준)
+        if sectors:
+            sorted_sectors = sorted(
+                sectors.items(),
+                key=lambda x: x[1].get('chg_5d') or 0.0,
+                reverse=True,
+            )
+            best = sorted_sectors[0]
+            worst = sorted_sectors[-1]
+            best_name = best[1].get('name', best[0])
+            worst_name = worst[1].get('name', worst[0])
+            best_chg = best[1].get('chg_5d') or 0.0
+            worst_chg = worst[1].get('chg_5d') or 0.0
+
+            if worst_chg < -1.0:
+                parts.append(f"{worst_name} 약세({worst_chg:+.1f}%) 속 {best_name}({best_chg:+.1f}%) 강세")
+            elif best_chg > 1.0:
+                # 2위까지 포함
+                if len(sorted_sectors) >= 2:
+                    second = sorted_sectors[1]
+                    second_name = second[1].get('name', second[0])
+                    second_chg = second[1].get('chg_5d') or 0.0
+                    parts.append(
+                        f"{best_name}({best_chg:+.1f}%)/{second_name}({second_chg:+.1f}%) 강세"
+                    )
+                else:
+                    parts.append(f"{best_name}({best_chg:+.1f}%) 강세")
+            else:
+                parts.append(f"섹터 전반 보합권 ({best_name} {best_chg:+.1f}% ~ {worst_name} {worst_chg:+.1f}%)")
+
+        # 로테이션 방향
+        rotation_signal = rotation.get('signal', '')
+        if '공격적' in rotation_signal:
+            parts.append("공격적 로테이션 진행 중")
+        elif '방어적' in rotation_signal:
+            parts.append("방어적 로테이션 진행 중")
+
+        # SPY vs IWM 관계
+        spy_data = indices.get('SPY', {})
+        iwm_data = indices.get('IWM', {})
+        spy_5d = spy_data.get('chg_5d') or 0.0
+        iwm_5d = iwm_data.get('chg_5d') or 0.0
+        if iwm_5d > spy_5d + 0.5:
+            parts.append("소형주(IWM) 상대 강세로 시장 폭은 양호")
+        elif spy_5d > iwm_5d + 0.5:
+            parts.append("대형주 쏠림으로 시장 폭 협소")
+
+        # 리스크 환경
+        assessment = risk_env.get('assessment', '')
+        if '리스크오프' in assessment:
+            parts.append("안전자산 선호 흐름")
+        elif '리스크온' in assessment:
+            parts.append("위험자산 선호 흐름")
+
+        return ". ".join(parts) + "." if parts else "매크로 데이터 부족으로 요약 불가."

@@ -89,7 +89,8 @@ services:
       # Environment variables (read-only for security)
       - ./.env:/app/.env:ro
       # Claude CLI binary (Pine Script LLM 코멘터리용)
-      - ${HOME}/.local/share/claude/versions/2.1.50:/usr/local/bin/claude:ro
+      # 심볼릭 링크가 아닌 실제 바이너리를 마운트 (버전 업데이트 시 재시작 필요)
+      - ${HOME}/.local/bin/claude:/usr/local/bin/claude:ro
       # Claude CLI config & credentials
       - ${HOME}/.claude:/home/trader/.claude
 

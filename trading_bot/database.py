@@ -214,6 +214,83 @@ class TradingDatabase:
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_commands_processed ON scheduler_commands(processed_at)")
 
+            # Pending orders table (limit orders)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pending_orders (
+                    order_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    limit_price REAL NOT NULL,
+                    amount REAL NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL,
+                    filled_at TEXT,
+                    fill_price REAL,
+                    expires_at TEXT,
+                    trigger_order TEXT,
+                    broker_order_id TEXT,
+                    source TEXT DEFAULT 'manual',
+                    FOREIGN KEY (session_id) REFERENCES paper_trading_sessions(session_id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pending_session_status ON pending_orders(session_id, status)")
+
+            # -- 시그널 성과 추적 테이블 (Market Intelligence v2) --
+
+            # 일별 시장 시그널 (종목 × 날짜 1행)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS daily_market_signals (
+                    signal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    overall_score REAL,
+                    overall_signal TEXT,
+                    layer_scores TEXT,
+                    indicators TEXT,
+                    market_price REAL NOT NULL,
+                    fear_greed_value REAL,
+                    news_sentiment_score REAL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(date, symbol)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_dms_date ON daily_market_signals(date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_dms_symbol ON daily_market_signals(symbol)")
+
+            # 시그널 이후 실제 수익률 (1d/5d/20d 후 비동기 측정)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS signal_outcomes (
+                    outcome_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    signal_id INTEGER NOT NULL UNIQUE,
+                    return_1d REAL,
+                    return_5d REAL,
+                    return_20d REAL,
+                    max_drawdown_5d REAL,
+                    outcome_correct INTEGER,
+                    measured_at TEXT,
+                    FOREIGN KEY (signal_id) REFERENCES daily_market_signals(signal_id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_so_signal_id ON signal_outcomes(signal_id)")
+
+            # 레이어별 정확도 통계 (일별 스냅샷)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS signal_accuracy_stats (
+                    stat_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    layer_name TEXT NOT NULL,
+                    lookback_days INTEGER NOT NULL DEFAULT 30,
+                    total_signals INTEGER,
+                    correct_count INTEGER,
+                    accuracy_pct REAL,
+                    avg_return_when_bullish REAL,
+                    avg_return_when_bearish REAL,
+                    calculated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(date, layer_name, lookback_days)
+                )
+            """)
+
             # Migrate existing DB: add display_name column if missing
             try:
                 cursor.execute("SELECT display_name FROM paper_trading_sessions LIMIT 1")
@@ -607,6 +684,7 @@ class TradingDatabase:
                     return False
 
                 # 관련 데이터 삭제 (자식 테이블 먼저)
+                cursor.execute("DELETE FROM pending_orders WHERE session_id = ?", (session_id,))
                 cursor.execute("DELETE FROM regime_history WHERE session_id = ?", (session_id,))
                 cursor.execute("DELETE FROM llm_decisions WHERE session_id = ?", (session_id,))
                 cursor.execute("DELETE FROM trades WHERE session_id = ?", (session_id,))
@@ -787,6 +865,146 @@ class TradingDatabase:
         """
         return self.get_all_sessions(status_filter='active')
 
+    # ── Pending Orders (Limit Orders) CRUD ──────────────────────────
+
+    def create_pending_order(self, order: Dict[str, Any]):
+        """지정가 주문 생성
+
+        Args:
+            order: 주문 딕셔너리 (order_id, session_id, symbol, side,
+                   limit_price, amount, status, created_at 필수,
+                   filled_at, fill_price, expires_at, trigger_order,
+                   broker_order_id, source 선택)
+        """
+        created_at = order['created_at']
+        if isinstance(created_at, datetime):
+            created_at = created_at.isoformat()
+
+        expires_at = order.get('expires_at')
+        if isinstance(expires_at, datetime):
+            expires_at = expires_at.isoformat()
+
+        trigger_order = order.get('trigger_order')
+        if trigger_order is not None and not isinstance(trigger_order, str):
+            trigger_order = json.dumps(trigger_order)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO pending_orders
+                (order_id, session_id, symbol, side, limit_price, amount,
+                 status, created_at, filled_at, fill_price, expires_at,
+                 trigger_order, broker_order_id, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                order['order_id'],
+                order['session_id'],
+                order['symbol'],
+                order['side'],
+                order['limit_price'],
+                order['amount'],
+                order.get('status', 'pending'),
+                created_at,
+                order.get('filled_at'),
+                order.get('fill_price'),
+                expires_at,
+                trigger_order,
+                order.get('broker_order_id'),
+                order.get('source', 'manual'),
+            ))
+
+    def update_pending_order(self, order_id: str, updates: Dict[str, Any]):
+        """지정가 주문 상태 업데이트
+
+        Args:
+            order_id: 주문 ID
+            updates: 업데이트할 필드 딕셔너리
+                     (status, filled_at, fill_price, broker_order_id 등)
+        """
+        if not updates:
+            return
+
+        # datetime → ISO 변환
+        for key in ('filled_at', 'expires_at', 'created_at'):
+            if key in updates and isinstance(updates[key], datetime):
+                updates[key] = updates[key].isoformat()
+
+        # trigger_order dict → JSON
+        if 'trigger_order' in updates:
+            val = updates['trigger_order']
+            if val is not None and not isinstance(val, str):
+                updates['trigger_order'] = json.dumps(val)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            set_clause = ", ".join([f"{key} = ?" for key in updates.keys()])
+            values = list(updates.values()) + [order_id]
+            cursor.execute(f"""
+                UPDATE pending_orders
+                SET {set_clause}
+                WHERE order_id = ?
+            """, values)
+
+    def get_pending_orders(self, session_id: str, symbol: Optional[str] = None,
+                           status: str = 'pending') -> List[Dict[str, Any]]:
+        """세션의 대기 중 주문 조회
+
+        Args:
+            session_id: 세션 ID
+            symbol: 심볼 필터 (None이면 전체)
+            status: 상태 필터 (기본 'pending')
+
+        Returns:
+            주문 딕셔너리 리스트 (trigger_order JSON 디시리얼라이즈 포함)
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if symbol:
+                cursor.execute("""
+                    SELECT * FROM pending_orders
+                    WHERE session_id = ? AND status = ? AND symbol = ?
+                    ORDER BY created_at
+                """, (session_id, status, symbol))
+            else:
+                cursor.execute("""
+                    SELECT * FROM pending_orders
+                    WHERE session_id = ? AND status = ?
+                    ORDER BY created_at
+                """, (session_id, status))
+            rows = cursor.fetchall()
+
+        return [self._deserialize_order(row) for row in rows]
+
+    def get_all_orders(self, session_id: str) -> List[Dict[str, Any]]:
+        """세션의 모든 주문 조회 (상태 무관)
+
+        Args:
+            session_id: 세션 ID
+
+        Returns:
+            주문 딕셔너리 리스트
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM pending_orders
+                WHERE session_id = ?
+                ORDER BY created_at
+            """, (session_id,))
+            rows = cursor.fetchall()
+
+        return [self._deserialize_order(row) for row in rows]
+
+    def _deserialize_order(self, row: sqlite3.Row) -> Dict[str, Any]:
+        """주문 Row를 딕셔너리로 변환 (trigger_order JSON 파싱)"""
+        order = dict(row)
+        if order.get('trigger_order'):
+            try:
+                order['trigger_order'] = json.loads(order['trigger_order'])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return order
+
     def insert_command(self, command: str, target_label: Optional[str] = None) -> int:
         """스케줄러 제어 명령 삽입
 
@@ -859,7 +1077,7 @@ class TradingDatabase:
             old_session_ids = [row['session_id'] for row in cursor.fetchall()]
 
             if not old_session_ids:
-                return {'snapshots': 0, 'signals': 0, 'regimes': 0, 'llm_decisions': 0}
+                return {'snapshots': 0, 'signals': 0, 'regimes': 0, 'llm_decisions': 0, 'pending_orders': 0}
 
             placeholders = ','.join('?' * len(old_session_ids))
 
@@ -878,6 +1096,10 @@ class TradingDatabase:
             # LLM 결정 삭제
             cursor.execute(f"DELETE FROM llm_decisions WHERE session_id IN ({placeholders})", old_session_ids)
             deleted['llm_decisions'] = cursor.rowcount
+
+            # 지정가 주문 삭제
+            cursor.execute(f"DELETE FROM pending_orders WHERE session_id IN ({placeholders})", old_session_ids)
+            deleted['pending_orders'] = cursor.rowcount
 
         return deleted
 
@@ -950,7 +1172,7 @@ class TradingDatabase:
         table_names = [
             'paper_trading_sessions', 'trades', 'portfolio_snapshots',
             'strategy_signals', 'regime_history', 'llm_decisions',
-            'scheduler_commands'
+            'scheduler_commands', 'pending_orders'
         ]
 
         with self._get_connection() as conn:

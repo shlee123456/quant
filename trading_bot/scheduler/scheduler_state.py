@@ -66,10 +66,6 @@ notifier = NotificationService()
 # Global preset manager
 preset_manager = StrategyPresetManager()
 
-# Optimized parameters (loaded from optimization)
-optimized_params = None
-optimized_strategy_class = None
-
 # Global health + anomaly detector
 scheduler_health = SchedulerHealth()
 anomaly_detector = AnomalyDetector()

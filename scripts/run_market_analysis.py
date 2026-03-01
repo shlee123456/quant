@@ -15,6 +15,7 @@ import os
 import argparse
 import logging
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 # 프로젝트 루트를 path에 추가
@@ -88,6 +89,58 @@ def main():
     if not results['stocks']:
         logger.error("분석 가능한 종목이 없습니다. 종료합니다.")
         sys.exit(1)
+
+    # Step 2.5: 매크로 시장 환경 분석 (yfinance 기반)
+    try:
+        macro_result = analyzer.analyze_macro()
+        if macro_result:
+            results['macro'] = macro_result
+            logger.info(
+                f"매크로 분석 완료: "
+                f"지수 {len(macro_result.get('indices', {}))}개, "
+                f"섹터 {len(macro_result.get('sectors', {}))}개"
+            )
+        else:
+            logger.info("매크로 분석 건너뜀 (yfinance 미설치 또는 데이터 없음)")
+    except Exception as e:
+        logger.warning(f"매크로 분석 실패 (개별 종목 분석은 정상): {e}")
+
+    # Step 2.7: 5-Layer Market Intelligence
+    try:
+        from trading_bot.market_intelligence import MarketIntelligence
+        mi = MarketIntelligence()
+        intel_report = mi.analyze(
+            stock_symbols=symbols,
+            stocks_data=results.get('stocks', {}),
+            news_data=results.get('news'),
+            fear_greed_data=results.get('fear_greed_index'),
+        )
+        results['intelligence'] = intel_report
+        logger.info(
+            f"5-Layer Intelligence: "
+            f"score={intel_report['overall']['score']}, "
+            f"signal={intel_report['overall']['signal']}"
+        )
+    except ImportError:
+        logger.info("MarketIntelligence not available - skipping")
+    except Exception as e:
+        logger.warning(f"Market Intelligence failed (analysis continues): {e}")
+
+    # Step 2.8: 시그널 성과 추적
+    if os.getenv('SIGNAL_TRACKING_ENABLED', 'true').lower() == 'true':
+        try:
+            from trading_bot.signal_tracker import SignalTracker
+            today = datetime.now().strftime('%Y-%m-%d') if 'today' not in dir() else today
+            tracker = SignalTracker()
+            count = tracker.log_daily_signals(results)
+            logger.info(f"시그널 기록: {count}건")
+            updated = tracker.update_pending_outcomes()
+            logger.info(f"과거 시그널 성과 측정: {updated}건 업데이트")
+            tracker.calculate_accuracy_stats(
+                results.get('date', datetime.now().strftime('%Y-%m-%d'))
+            )
+        except Exception as e:
+            logger.warning(f"시그널 추적 실패 (분석 계속): {e}")
 
     # Step 3: JSON 저장
     json_path = analyzer.save_json(results, output_dir=args.output_dir)

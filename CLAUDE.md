@@ -619,7 +619,6 @@ APScheduler를 사용하여 Paper Trading을 자동으로 실행합니다.
 
 **주요 기능**:
 - 미국 시장 시간에 자동 실행 (23:30-06:00 KST)
-- 장 시작 전 전략 최적화 (23:00 KST)
 - 장 마감 후 자동 종료 및 리포트 생성 (06:00 KST)
 - 장 마감 후 시장 분석 및 Notion 자동 작성 (06:10 KST)
 - 멀티 프리셋 동시 세션 지원 (--presets)
@@ -639,7 +638,6 @@ python scheduler.py --list-presets
 - Email SMTP 설정 (선택)
 
 **스케줄**:
-- `23:00 KST`: 전략 최적화
 - `23:30 KST`: Paper Trading 시작 (미국 시장 개장)
 - `06:00 KST`: Paper Trading 종료 (미국 시장 마감)
 - `06:10 KST`: 시장 분석 + Notion 작성 (MarketAnalyzer + Claude CLI)

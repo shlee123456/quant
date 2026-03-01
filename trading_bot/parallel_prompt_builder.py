@@ -29,6 +29,8 @@ from typing import Any, Dict, List, Optional
 
 from trading_bot.market_analysis_prompt import (
     NOTION_FORMAT_TEMPLATE,
+    _build_events_data_block,
+    _build_fundamentals_data_block,
     _load_session_reports,
     get_notion_page_id,
 )
@@ -66,6 +68,162 @@ _FORMAT_RULES = r"""--- FORMAT RULES (MANDATORY) ---
 12. Fear & Greed history rows: green_bg for greed periods, red_bg for fear periods, yellow_bg for neutral
 13. Tables with stock symbols should have header-column="true"
 --- END FORMAT RULES ---"""
+
+
+def _build_intelligence_block(intelligence_data: Optional[Dict]) -> str:
+    """5-Layer 인텔리전스 분석 결과를 프롬프트 블록으로 구성합니다.
+
+    Args:
+        intelligence_data: MarketIntelligence.analyze() 반환값
+
+    Returns:
+        프롬프트에 삽입할 인텔리전스 블록 문자열 (데이터 없으면 빈 문자열)
+    """
+    if not intelligence_data:
+        return ""
+
+    lines = ["\n## 5-Layer Market Intelligence 분석 결과"]
+    overall = intelligence_data.get('overall', {})
+    score = overall.get('score', 0)
+    signal = overall.get('signal', 'N/A')
+    interpretation = overall.get('interpretation', 'N/A')
+
+    lines.append(f"**종합 점수**: {score:+.1f} ({signal})")
+    lines.append(f"**종합 판단**: {interpretation}")
+    lines.append("")
+    lines.append("### Layer별 상세 분석")
+
+    layer_names_kr = {
+        'macro_regime': 'Layer 1: 매크로 레짐',
+        'market_structure': 'Layer 2: 시장 구조',
+        'sector_rotation': 'Layer 3: 섹터/팩터 로테이션',
+        'enhanced_technicals': 'Layer 4: 기술적 분석',
+        'sentiment': 'Layer 5: 센티먼트',
+    }
+
+    for layer_key, layer_data in intelligence_data.get('layers', {}).items():
+        kr_name = layer_names_kr.get(layer_key, layer_key)
+        layer_score = layer_data.get('score', 0)
+        layer_signal = layer_data.get('signal', 'N/A')
+        interp = layer_data.get('interpretation', '')
+        confidence = layer_data.get('confidence', 0)
+
+        lines.append(f"#### {kr_name}")
+        lines.append(
+            f"- **점수**: {layer_score:+.1f} ({layer_signal}), "
+            f"신뢰도: {confidence:.0%}"
+        )
+        lines.append(f"- **판단**: {interp}")
+
+        # 핵심 메트릭 표시
+        metrics = layer_data.get('metrics', {})
+        if isinstance(metrics, dict):
+            for mk, mv in metrics.items():
+                if isinstance(mv, dict):
+                    # 서브 메트릭을 컴팩트하게 포맷
+                    parts = [
+                        f"{k}={v}" for k, v in mv.items()
+                        if not isinstance(v, (dict, list))
+                    ]
+                    if parts:
+                        lines.append(f"  - {mk}: {', '.join(parts[:5])}")
+                elif not isinstance(mv, (list, dict)):
+                    lines.append(f"  - {mk}: {mv}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _build_intelligence_summary(intelligence_data: Optional[Dict]) -> str:
+    """인텔리전스 데이터의 간략 요약 (Worker B/C용).
+
+    Args:
+        intelligence_data: MarketIntelligence.analyze() 반환값
+
+    Returns:
+        간략 요약 문자열 (데이터 없으면 빈 문자열)
+    """
+    if not intelligence_data:
+        return ""
+
+    overall = intelligence_data.get('overall', {})
+    score = overall.get('score', 0)
+    signal = overall.get('signal', 'N/A')
+
+    lines = [
+        "\n## 5-Layer Intelligence 요약",
+        f"**종합**: {score:+.1f} ({signal}) — {overall.get('interpretation', '')}",
+    ]
+
+    layer_names_kr = {
+        'macro_regime': '매크로',
+        'market_structure': '시장 구조',
+        'sector_rotation': '섹터 로테이션',
+        'enhanced_technicals': '기술적',
+        'sentiment': '센티먼트',
+    }
+
+    for layer_key, layer_data in intelligence_data.get('layers', {}).items():
+        kr = layer_names_kr.get(layer_key, layer_key)
+        ls = layer_data.get('score', 0)
+        lsig = layer_data.get('signal', 'N/A')
+        lines.append(f"- {kr}: {ls:+.1f} ({lsig})")
+
+    return "\n".join(lines)
+
+
+def _build_historical_performance_block() -> str:
+    """SignalTracker에서 최근 30일 시그널 정확도 → 프롬프트 텍스트.
+
+    RAG 컨텍스트로 과거 시그널 성과를 주입하여 LLM이 참고하도록 합니다.
+    SIGNAL_TRACKING_ENABLED=false이거나 데이터 없으면 빈 문자열 반환.
+    """
+    if os.getenv('SIGNAL_TRACKING_ENABLED', 'true').lower() != 'true':
+        return ''
+
+    try:
+        from trading_bot.signal_tracker import SignalTracker
+        tracker = SignalTracker()
+        summary = tracker.get_recent_accuracy_summary(lookback_days=30)
+        if not summary:
+            return ''
+
+        overall = summary.get('overall', {})
+        total = overall.get('total_signals', 0)
+        if total == 0:
+            return ''
+
+        correct = overall.get('correct_count', 0)
+        accuracy = overall.get('accuracy_pct')
+        avg_bullish = overall.get('avg_return_when_bullish')
+        avg_bearish = overall.get('avg_return_when_bearish')
+
+        lines = [
+            "\n## 과거 시그널 성과 (최근 30일)",
+            f"- 전체 정확도: {accuracy:.1f}% ({correct}/{total}건)" if accuracy is not None else f"- 전체: {total}건 (정확도 미측정)",
+        ]
+
+        if avg_bullish is not None:
+            lines.append(f"- Bullish 시그널 평균 5일 수익: {avg_bullish:+.1f}%")
+        if avg_bearish is not None:
+            lines.append(f"- Bearish 시그널 평균 5일 수익: {avg_bearish:+.1f}%")
+
+        # 레이어별 정확도
+        layers = summary.get('layers', {})
+        if layers:
+            best_layer = max(layers.items(), key=lambda x: x[1].get('accuracy_pct') or 0)
+            worst_layer = min(layers.items(), key=lambda x: x[1].get('accuracy_pct') or 100)
+            if best_layer[1].get('accuracy_pct') is not None:
+                lines.append(f"- 가장 정확한 레이어: {best_layer[0]} ({best_layer[1]['accuracy_pct']:.0f}%)")
+            if worst_layer[1].get('accuracy_pct') is not None:
+                lines.append(f"- 가장 부정확한 레이어: {worst_layer[0]} ({worst_layer[1]['accuracy_pct']:.0f}%)")
+
+        lines.append("**이 과거 데이터를 참고하여 오늘의 분석 신뢰도를 판단하세요.**")
+        return "\n".join(lines)
+
+    except Exception as e:
+        logger.debug(f"RAG 컨텍스트 빌드 실패: {e}")
+        return ''
 
 
 def _calculate_var_95(snapshots: List[Dict]) -> Optional[float]:
@@ -261,18 +419,35 @@ def precompute_session_metrics(session_reports_dir: str) -> Dict[str, Any]:
     }
 
 
-def build_worker_a_prompt(market_data: Dict, today: str) -> str:
+def build_worker_a_prompt(
+    market_data: Dict,
+    today: str,
+    macro_data: Optional[Dict] = None,
+    intelligence_data: Optional[Dict] = None,
+    events_data: Optional[Dict] = None,
+    fundamentals_data: Optional[Dict] = None,
+) -> str:
     """
     Worker A 프롬프트를 생성합니다.
-    담당 섹션: 1 (시장 전체 요약), 2 (종목별 분석)
+    담당 섹션: 0 (매크로 시장 환경, macro_data 있을 때), 1 (시장 전체 요약), 2 (종목별 분석)
 
     Args:
         market_data: 시장 분석 JSON 데이터 (market_summary, stocks 포함)
         today: 분석 날짜 (YYYY-MM-DD)
+        macro_data: 매크로 시장 환경 데이터 (Optional)
+        intelligence_data: 5-Layer Intelligence 분석 결과 (Optional)
+        events_data: 이벤트 캘린더 데이터 (Optional)
+        fundamentals_data: 펀더멘탈 데이터 (Optional)
 
     Returns:
         Worker A용 프롬프트 문자열
     """
+    # 5-Layer Intelligence 블록 (있을 때만)
+    intel_block = _build_intelligence_block(intelligence_data)
+
+    # RAG 컨텍스트 (과거 시그널 성과)
+    rag_block = _build_historical_performance_block()
+
     # stocks 데이터만 추출 (뉴스, fear_greed 제외)
     data_for_worker = {
         'market_summary': market_data.get('market_summary', {}),
@@ -283,15 +458,185 @@ def build_worker_a_prompt(market_data: Dict, today: str) -> str:
     symbols = list(market_data.get('stocks', {}).keys())
     symbols_str = ", ".join(symbols)
 
-    prompt = f"""당신은 시장 분석 워커 A입니다.
-아래 JSON 데이터를 분석하여 **섹션 1과 섹션 2만** Notion Enhanced Markdown으로 출력하세요.
+    # 매크로 시장 환경 데이터 블록
+    macro_block = ""
+    if macro_data:
+        ml = []
 
-**중요**: TOC, 푸터, 다른 섹션은 절대 출력하지 마세요. 섹션 1과 2만 출력합니다.
+        # 지수
+        ml.append("### 주요 지수 현황")
+        for sym, info in macro_data.get('indices', {}).items():
+            chg_1d = info.get('chg_1d', 0)
+            chg_5d = info.get('chg_5d', 0)
+            chg_20d = info.get('chg_20d', 0)
+            s1 = '+' if chg_1d and chg_1d > 0 else ''
+            s5 = '+' if chg_5d > 0 else ''
+            s20 = '+' if chg_20d and chg_20d > 0 else ''
+            ml.append(f"- **{sym}**: ${info.get('last', 'N/A')} (1일 {s1}{chg_1d}%, 5일 {s5}{chg_5d}%, 20일 {s20}{chg_20d}%, RSI {info.get('rsi', 'N/A')})")
+
+        # 섹터 (rank 순)
+        ml.append("\n### 섹터 상대강도 (5일/20일 수익률)")
+        sectors = sorted(macro_data.get('sectors', {}).items(), key=lambda x: x[1].get('rank_5d', 99))
+        for sym, info in sectors:
+            chg_5d = info.get('chg_5d', 0)
+            chg_20d = info.get('chg_20d', 0)
+            s5 = '+' if chg_5d > 0 else ''
+            s20 = '+' if chg_20d and chg_20d > 0 else ''
+            r20 = info.get('rank_20d', '?')
+            ml.append(f"- #{info.get('rank_5d', '?')} **{info.get('name', sym)}**({sym}): 5일 {s5}{chg_5d}%, 20일 {s20}{chg_20d}% (20일순위 #{r20}, RSI {info.get('rsi', 'N/A')})")
+
+        # 로테이션
+        rot = macro_data.get('rotation', {})
+        if rot:
+            ml.append(f"\n### 섹터 로테이션: {rot.get('signal', 'N/A')}")
+            ml.append(f"- 공격적 섹터 평균: {rot.get('offensive_avg_5d', 'N/A')}%")
+            ml.append(f"- 방어적 섹터 평균: {rot.get('defensive_avg_5d', 'N/A')}%")
+
+        # 시장 폭
+        breadth = macro_data.get('breadth', {})
+        if breadth:
+            ml.append(f"\n### 시장 폭: {breadth.get('interpretation', 'N/A')}")
+            ml.append(f"- SPY vs IWM 5일 괴리: {breadth.get('spy_vs_iwm_5d', 'N/A')}%p")
+            ml.append(f"- 상승 섹터: {breadth.get('sectors_positive_5d', 0)}개 / 하락: {breadth.get('sectors_negative_5d', 0)}개")
+
+        # 리스크 환경
+        risk = macro_data.get('risk_environment', {})
+        if risk:
+            ml.append(f"\n### 리스크 환경: {risk.get('assessment', 'N/A')}")
+            ml.append(f"- TLT(국채): {risk.get('tlt_chg_5d', 'N/A')}%")
+            ml.append(f"- GLD(금): {risk.get('gld_chg_5d', 'N/A')}%")
+            ml.append(f"- HYG(하이일드): {risk.get('hyg_chg_5d', 'N/A')}%")
+
+        # 종합
+        overall = macro_data.get('overall', '')
+        if overall:
+            ml.append(f"\n### 종합: {overall}")
+
+        macro_block = "\n## 매크로 시장 환경 데이터\n" + "\n".join(ml)
+
+    # 이벤트 캘린더 블록 (있을 때만)
+    events_block = _build_events_data_block(events_data) if events_data else ""
+
+    # 펀더멘탈 데이터 블록 (있을 때만)
+    fundamentals_block = _build_fundamentals_data_block(fundamentals_data) if fundamentals_data else ""
+
+    # 매크로 섹션 템플릿 (있을 때만)
+    macro_section_template = ""
+    if macro_data:
+        macro_section_template = r"""
+# 0. 매크로 시장 환경 {color="blue"}
+::: callout {icon="🌍" color="blue_bg"}
+	**시장 환경 종합**: [매크로 데이터의 overall 요약 기반 1-2문장. 어떤 섹터가 강세/약세인지, 로테이션 방향, 리스크 환경 포함]
+:::
+## 주요 지수 동향
+<table fit-page-width="true" header-row="true">
+<tr color="blue_bg">
+<td>**지수**</td>
+<td>**현재가**</td>
+<td>**1일**</td>
+<td>**5일**</td>
+<td>**20일**</td>
+<td>**RSI**</td>
+<td>**해석**</td>
+</tr>
+<tr>
+<td>**SPY** (S&P 500)</td>
+<td>\${price}</td>
+<td><span color="red/green">{chg}</span></td>
+<td><span color="red/green">{chg}</span></td>
+<td><span color="red/green">{chg}</span></td>
+<td>{rsi}</td>
+<td>[interpretation]</td>
+</tr>
+[... QQQ, DIA, IWM rows]
+</table>
+## 섹터 상대강도 히트맵
+<table fit-page-width="true" header-row="true" header-column="true">
+<tr color="blue_bg">
+<td>**순위**</td>
+<td>**섹터**</td>
+<td>**ETF**</td>
+<td>**5일 수익률**</td>
+<td>**20일 수익률**</td>
+<td>**RSI**</td>
+<td>**강약**</td>
+</tr>
+<tr color="green_bg"> for top 3 sectors (rank 1-3)
+<td>{rank}</td>
+<td>{sector_name}</td>
+<td>{ETF}</td>
+<td><span color="green">+{chg}%</span></td>
+<td>...</td>
+<td>{rsi}</td>
+<td>🟢 강세</td>
+</tr>
+[... middle sectors with no special color]
+<tr color="red_bg"> for bottom 3 sectors (rank 9-11)
+<td>{rank}</td>
+<td>{sector_name}</td>
+<td>{ETF}</td>
+<td><span color="red">-{chg}%</span></td>
+<td>...</td>
+<td>{rsi}</td>
+<td>🔴 약세</td>
+</tr>
+</table>
+## 섹터 로테이션 & 시장 폭
+::: callout {icon="🔄" color="yellow_bg"}
+	**섹터 로테이션**: [공격적 vs 방어적 평균 비교 분석. signal 데이터 활용]
+	**시장 폭**: SPY vs IWM 괴리 {value}%p — [interpretation 데이터 활용]
+	상승 섹터 {n}개 / 하락 섹터 {n}개
+:::
+## 리스크 환경
+<table fit-page-width="true" header-row="true">
+<tr color="blue_bg">
+<td>**자산**</td>
+<td>**5일 변화**</td>
+<td>**의미**</td>
+</tr>
+<tr>
+<td>**TLT** (장기국채)</td>
+<td><span color="green/red">{chg}%</span></td>
+<td>[금리 하락=채권상승=리스크오프, 금리 상승=채권하락=리스크온 해석]</td>
+</tr>
+<tr>
+<td>**GLD** (금)</td>
+<td><span color="green/red">{chg}%</span></td>
+<td>[안전자산 수요 해석]</td>
+</tr>
+<tr>
+<td>**HYG** (하이일드 채권)</td>
+<td><span color="green/red">{chg}%</span></td>
+<td>[신용 스프레드 해석. HYG 하락=스프레드 확대=리스크오프]</td>
+</tr>
+</table>
+::: callout {icon="⚡" color="orange_bg"}
+	**리스크 판단**: [risk_environment assessment 기반 분석]
+:::
+---
+"""
+
+    if macro_data:
+        section_spec = "**섹션 0, 섹션 1, 섹션 2를**"
+        section_note = "섹션 0(매크로 시장 환경), 1, 2만 출력합니다"
+    else:
+        section_spec = "**섹션 1과 섹션 2만**"
+        section_note = "섹션 1과 2만 출력합니다"
+
+    prompt = f"""당신은 시장 분석 워커 A입니다.
+아래 JSON 데이터를 분석하여 {section_spec} Notion Enhanced Markdown으로 출력하세요.
+
+**중요**: TOC, 푸터, 다른 섹션은 절대 출력하지 마세요. {section_note}.
 
 ## WebSearch 활용 지시
 - WebSearch 도구를 사용하여 각 종목의 최신 뉴스와 시장 동향을 검색하세요.
+{intel_block}
+{rag_block}
 - 특히 극단적 과매도/과매수, 급등/급락 종목의 뉴스를 심층 검색하세요.
 - 검색 결과에서 발견한 주요 뉴스는 분석에 반영하되, 출처를 명시하세요.
+{macro_block}
+{events_block}
+{fundamentals_block}
 
 ## 대상 종목
 {symbols_str} ({len(symbols)}개)
@@ -299,7 +644,7 @@ def build_worker_a_prompt(market_data: Dict, today: str) -> str:
 {_FORMAT_RULES}
 
 --- EXACT OUTPUT STRUCTURE (이 구조만 출력하세요) ---
-""" + r"""
+""" + macro_section_template + r"""
 # 1. 시장 전체 요약 {color="blue"}
 ::: callout {icon="📅" color="gray_bg"}
 """ + f"""\t**분석 일자**: {today}  \\|  **대상 종목**: {len(symbols)}개 ({symbols_str})
@@ -389,6 +734,8 @@ def build_worker_b_prompt(
     news_data: Dict,
     fear_greed_data: Dict,
     today: str,
+    intelligence_data: Optional[Dict] = None,
+    worker_a_context: Optional[str] = None,
 ) -> str:
     """
     Worker B 프롬프트를 생성합니다.
@@ -399,12 +746,51 @@ def build_worker_b_prompt(
         news_data: 뉴스 데이터 딕셔너리
         fear_greed_data: Fear & Greed 지수 데이터 딕셔너리
         today: 분석 날짜 (YYYY-MM-DD)
+        intelligence_data: 5-Layer Intelligence 분석 결과 (Optional)
+        worker_a_context: Worker A의 출력 (Reflection 교차 검증용, Optional)
 
     Returns:
         Worker B용 프롬프트 문자열
     """
-    # 종목 데이터
-    stocks_json = json.dumps(market_data.get('stocks', {}), ensure_ascii=False, indent=2)
+    # 5-Layer Intelligence 요약 (Top 3 선정 참고용)
+    intel_summary = _build_intelligence_summary(intelligence_data)
+
+    # RAG 컨텍스트 (과거 시그널 성과)
+    rag_block = _build_historical_performance_block()
+
+    # Reflection 컨텍스트 (Worker A 출력 교차 검증)
+    reflection_block = ""
+    if worker_a_context:
+        reflection_block = f"""
+## Worker-A 분석 결과 (교차 검증용)
+아래 분석과 일치하는지 확인하고, 불일치 시 이유를 명시하세요.
+{worker_a_context}
+"""
+
+    # 종목 데이터 경량화 (Worker B는 Top 3 선정과 뉴스 분석이 목적이므로 핵심 지표만 추출)
+    stocks_compact = {}
+    for sym, sdata in market_data.get('stocks', {}).items():
+        price_info = sdata.get('price', {})
+        indicators = sdata.get('indicators', {})
+        regime = sdata.get('regime', {})
+        patterns = sdata.get('patterns', {})
+        stocks_compact[sym] = {
+            'price': {
+                'last': price_info.get('last'),
+                'change_1d': price_info.get('change_1d'),
+                'change_5d': price_info.get('change_5d'),
+                'change_20d': price_info.get('change_20d'),
+            },
+            'indicators': {
+                'rsi': indicators.get('rsi', {}),
+                'macd': {'signal': indicators.get('macd', {}).get('signal')},
+                'bollinger': {'signal': indicators.get('bollinger', {}).get('signal')},
+                'adx': indicators.get('adx', {}).get('value'),
+            },
+            'regime': {'state': regime.get('state'), 'confidence': regime.get('confidence')},
+            'support_levels': patterns.get('support_levels', [])[:3],
+        }
+    stocks_json = json.dumps(stocks_compact, ensure_ascii=False, indent=2)
 
     # 뉴스 블록 구성
     news_block = ""
@@ -457,10 +843,15 @@ def build_worker_b_prompt(
 
 **중요**: TOC, 푸터, 다른 섹션은 절대 출력하지 마세요. 섹션 3, 4, 5만 출력합니다.
 
-## WebSearch + Read 도구 활용 지시
-- WebSearch: 주목할 종목 Top 3 선정 시 최신 뉴스를 검색하여 분석에 반영하세요.
-- Read: Fear & Greed 차트 이미지 파일을 읽어 시각적 분석에 반영하세요.
+## WebSearch + Read 도구 활용 지시 (예산 절약 중요!)
+- WebSearch는 **최대 3회**만 사용하세요 (예: Top 3 종목 각각 1회씩, 또는 시장 전체 1회 + 주요 종목 2회).
+- Read: Fear & Greed 차트 이미지 파일이 있으면 **1회**만 읽으세요.
+- 이미 수집된 뉴스 데이터가 아래에 있으므로, WebSearch는 추가 확인이 필요한 경우에만 사용하세요.
 - 검색 결과에서 발견한 주요 뉴스는 분석에 반영하되, 출처를 명시하세요.
+- **중요**: 도구 호출보다 최종 마크다운 출력 생성을 우선하세요. 예산이 부족하면 도구 호출을 줄이세요.
+{intel_summary}
+{rag_block}
+{reflection_block}
 {news_block}
 {fg_block}
 
@@ -562,6 +953,7 @@ def build_worker_c_prompt(
     session_metrics: Dict,
     today: str,
     has_sessions: bool,
+    intelligence_data: Optional[Dict] = None,
 ) -> str:
     """
     Worker C 프롬프트를 생성합니다.
@@ -574,10 +966,14 @@ def build_worker_c_prompt(
         session_metrics: precompute_session_metrics()가 반환한 메트릭
         today: 분석 날짜 (YYYY-MM-DD)
         has_sessions: 세션 데이터 존재 여부
+        intelligence_data: 5-Layer Intelligence 분석 결과 (Optional)
 
     Returns:
         Worker C용 프롬프트 문자열
     """
+    # 5-Layer Intelligence 요약 (전략 파라미터 제안 참고용)
+    intel_summary = _build_intelligence_summary(intelligence_data)
+
     # 종목 데이터 (전략 파라미터/전망용)
     stocks_json = json.dumps(market_data.get('stocks', {}), ensure_ascii=False, indent=2)
 
@@ -614,6 +1010,7 @@ def build_worker_c_prompt(
 
 **중요**: TOC, 푸터, 다른 섹션은 절대 출력하지 마세요. 지정된 섹션만 출력합니다.
 **중요**: 도구(WebSearch, Read 등)는 사용하지 마세요. 주어진 데이터만으로 분석하세요.
+{intel_summary}
 
 {_FORMAT_RULES}
 

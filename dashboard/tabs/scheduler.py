@@ -23,7 +23,7 @@ def scheduler_tab():
 
     st.header("자동 스케줄러")
     st.markdown("""
-    미국 시장 시간에 맞춰 자동으로 전략 최적화, 페이퍼 트레이딩 시작/중지를 실행합니다.
+    미국 시장 시간에 맞춰 자동으로 페이퍼 트레이딩 시작/중지를 실행합니다.
     """)
 
     # 세션 상태에 스케줄러 매니저 초기화
@@ -94,23 +94,16 @@ def scheduler_tab():
     with st.expander("스케줄 시간 설정", expanded=False):
         st.markdown("**스케줄 시간 (Asia/Seoul - KST)**")
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
 
         with col1:
-            optimize_time = st.time_input(
-                "전략 최적화",
-                value=manager.schedule_config['optimize_time'],
-                help="장 시작 전 전략 파라미터 최적화"
-            )
-
-        with col2:
             start_time = st.time_input(
                 "트레이딩 시작",
                 value=manager.schedule_config['start_time'],
                 help="미국 시장 개장 시각 (23:30 KST)"
             )
 
-        with col3:
+        with col2:
             stop_time = st.time_input(
                 "트레이딩 종료",
                 value=manager.schedule_config['stop_time'],
@@ -118,7 +111,7 @@ def scheduler_tab():
             )
 
         if st.button("스케줄 시간 업데이트"):
-            result = manager.update_schedule(optimize_time, start_time, stop_time)
+            result = manager.update_schedule(start_time, stop_time)
             if result['success']:
                 st.success(result['message'])
                 st.rerun()
@@ -280,7 +273,6 @@ def scheduler_tab():
     with col1:
         st.markdown("**현재 스케줄 (KST)**")
         schedule_data = [
-            {"시간": manager.schedule_config['optimize_time'].strftime('%H:%M'), "작업": "전략 최적화", "설명": "장 시작 전 파라미터 최적화"},
             {"시간": manager.schedule_config['start_time'].strftime('%H:%M'), "작업": "트레이딩 시작", "설명": "미국 시장 개장"},
             {"시간": manager.schedule_config['stop_time'].strftime('%H:%M'), "작업": "트레이딩 종료", "설명": "미국 시장 마감, 리포트 생성"}
         ]

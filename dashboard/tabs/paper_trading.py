@@ -50,7 +50,8 @@ def start_paper_trading(
     combo_strategy_params: Dict[str, Dict] = None,
     combo_logic: str = 'MAJORITY',
     combo_weights: List[float] = None,
-    preset_name: Optional[str] = None
+    preset_name: Optional[str] = None,
+    limit_orders: Optional[List[Dict]] = None
 ) -> Optional[str]:
     """
     Start paper trading session in background thread
@@ -134,7 +135,8 @@ def start_paper_trading(
             enable_stop_loss=enable_stop_loss,
             enable_take_profit=enable_take_profit,
             db=db,
-            display_name=display_name
+            display_name=display_name,
+            limit_orders=limit_orders
         )
 
         # Store in session state
@@ -245,6 +247,8 @@ def paper_trading_tab():
     # Initialize session state for loaded preset
     if 'loaded_preset' not in st.session_state:
         st.session_state.loaded_preset = None
+    if 'limit_orders_list' not in st.session_state:
+        st.session_state.limit_orders_list = []
 
     col_preset1, col_preset2 = st.columns([2, 1])
 
@@ -272,6 +276,7 @@ def paper_trading_tab():
                         loaded = preset_manager.load_preset(selected_preset_name)
                         if loaded:
                             st.session_state.loaded_preset = loaded
+                            st.session_state.limit_orders_list = loaded.get('limit_orders', [])
                             st.success(f"'{selected_preset_name}' 프리셋을 불러왔습니다!")
                             st.rerun()
 
@@ -293,6 +298,7 @@ def paper_trading_tab():
                                     enable_stop_loss=preset_data.get('enable_stop_loss', True),
                                     enable_take_profit=preset_data.get('enable_take_profit', True),
                                     preset_name=selected_preset_name,
+                                    limit_orders=preset_data.get('limit_orders', []) or None,
                                 )
                                 if session_id:
                                     st.session_state.loaded_preset = preset_data
@@ -326,6 +332,14 @@ def paper_trading_tab():
                         st.caption(f"생성일: {preset.get('created_at', 'N/A')[:19]}")
                         if preset.get('last_used'):
                             st.caption(f"최근 사용: {preset['last_used'][:19]}")
+                        limit_orders_info = preset.get('limit_orders', [])
+                        if limit_orders_info:
+                            st.write(f"**지정가 주문:** {len(limit_orders_info)}건")
+                            for lo in limit_orders_info:
+                                chain_text = ""
+                                if lo.get('trigger_order'):
+                                    chain_text = f" → {lo['trigger_order']['side'].upper()} ${lo['trigger_order']['price']}"
+                                st.caption(f"  {lo['side'].upper()} {lo['symbol']} @ ${lo['price']}{chain_text}")
         else:
             st.info("저장된 프리셋이 없습니다. 설정을 구성한 후 저장해보세요.")
 
@@ -806,6 +820,132 @@ def paper_trading_tab():
         risk_reward_ratio = take_profit_pct / stop_loss_pct
         st.info(f"리스크/보상 비율: 1:{risk_reward_ratio:.1f} (손실 {stop_loss_pct*100:.1f}% 대비 수익 {take_profit_pct*100:.1f}%)")
 
+    # Limit Order Section
+    st.markdown("---")
+    st.subheader("지정가 주문 (선택사항)")
+
+    with st.expander("지정가 주문 설정", expanded=bool(st.session_state.limit_orders_list)):
+        if not selected_symbols:
+            st.warning("종목을 먼저 선택해주세요. 종목 선택 후 지정가 주문을 설정할 수 있습니다.")
+        else:
+            enable_limit_orders = st.checkbox(
+                "지정가 주문 활성화",
+                value=bool(st.session_state.limit_orders_list),
+                help="특정 가격에 매수/매도 주문을 설정합니다"
+            )
+
+            if enable_limit_orders:
+                st.markdown("**새 주문 추가**")
+
+                lo_col1, lo_col2, lo_col3, lo_col4 = st.columns([2, 1, 2, 2])
+
+                with lo_col1:
+                    lo_symbol = st.selectbox(
+                        "종목",
+                        options=selected_symbols,
+                        key="lo_symbol"
+                    )
+
+                with lo_col2:
+                    lo_side = st.selectbox(
+                        "방향",
+                        options=["매수", "매도"],
+                        key="lo_side"
+                    )
+
+                with lo_col3:
+                    lo_price = st.number_input(
+                        "지정가 ($)",
+                        min_value=0.01,
+                        max_value=100000.0,
+                        value=100.0,
+                        step=0.5,
+                        key="lo_price"
+                    )
+
+                with lo_col4:
+                    lo_amount = st.number_input(
+                        "투자금액 ($, 0=기본값)",
+                        min_value=0.0,
+                        max_value=1000000.0,
+                        value=0.0,
+                        step=100.0,
+                        key="lo_amount",
+                        help="0이면 초기자본 × 포지션크기 사용"
+                    )
+
+                # Chain order
+                enable_chain = st.checkbox(
+                    "체결 후 반대 주문 자동 생성",
+                    value=False,
+                    key="lo_enable_chain",
+                    help="예: 172달러 매수 체결 → 자동으로 190달러 매도 주문"
+                )
+
+                chain_price = None
+                if enable_chain:
+                    chain_price = st.number_input(
+                        "체인 주문 가격 ($)",
+                        min_value=0.01,
+                        max_value=100000.0,
+                        value=lo_price * 1.1 if lo_side == "매수" else lo_price * 0.9,
+                        step=0.5,
+                        key="lo_chain_price"
+                    )
+
+                if st.button("주문 추가", key="lo_add_btn", type="primary"):
+                    side_eng = 'buy' if lo_side == "매수" else 'sell'
+                    new_order = {
+                        'symbol': lo_symbol,
+                        'side': side_eng,
+                        'price': lo_price,
+                    }
+                    if lo_amount > 0:
+                        new_order['amount'] = lo_amount
+                    if enable_chain and chain_price:
+                        chain_side = 'sell' if side_eng == 'buy' else 'buy'
+                        new_order['trigger_order'] = {
+                            'side': chain_side,
+                            'price': chain_price
+                        }
+                    st.session_state.limit_orders_list.append(new_order)
+                    st.rerun()
+
+                # Display registered orders
+                if st.session_state.limit_orders_list:
+                    st.markdown("---")
+                    st.markdown("**등록된 주문 목록**")
+
+                    orders_display = []
+                    for idx, lo in enumerate(st.session_state.limit_orders_list):
+                        chain_text = ""
+                        if lo.get('trigger_order'):
+                            t = lo['trigger_order']
+                            chain_text = f"→ {'매도' if t['side'] == 'sell' else '매수'} ${t['price']:.2f}"
+                        orders_display.append({
+                            '#': idx + 1,
+                            '종목': lo['symbol'],
+                            '방향': '매수' if lo['side'] == 'buy' else '매도',
+                            '지정가': f"${lo['price']:.2f}",
+                            '금액': f"${lo['amount']:,.0f}" if lo.get('amount') else '기본값',
+                            '체인': chain_text or '-',
+                        })
+
+                    st.dataframe(pd.DataFrame(orders_display), use_container_width=True, hide_index=True)
+
+                    # Delete buttons
+                    del_cols = st.columns(min(len(st.session_state.limit_orders_list), 4))
+                    for idx in range(len(st.session_state.limit_orders_list)):
+                        with del_cols[idx % 4]:
+                            lo = st.session_state.limit_orders_list[idx]
+                            if st.button(
+                                f"삭제 #{idx + 1}",
+                                key=f"lo_del_{idx}",
+                                type="secondary"
+                            ):
+                                st.session_state.limit_orders_list.pop(idx)
+                                st.rerun()
+
     # Strategy Parameters Section
     st.markdown("---")
     st.subheader("전략 파라미터")
@@ -894,7 +1034,8 @@ def paper_trading_tab():
                 take_profit_pct=take_profit_pct,
                 enable_stop_loss=enable_stop_loss,
                 enable_take_profit=enable_take_profit,
-                description=preset_desc_input
+                description=preset_desc_input,
+                limit_orders=st.session_state.get('limit_orders_list', []) or None
             )
 
             if success:
@@ -1022,7 +1163,8 @@ def paper_trading_tab():
             combo_strategy_params=combo_params,
             combo_logic=combo_log,
             combo_weights=combo_wts,
-            preset_name=loaded_preset_name
+            preset_name=loaded_preset_name,
+            limit_orders=st.session_state.get('limit_orders_list', []) or None
         )
 
         if session_id:
@@ -1166,6 +1308,29 @@ def paper_trading_tab():
                         st.info("현재 보유 중인 포지션이 없습니다.")
                 else:
                     st.info("현재 보유 중인 포지션이 없습니다.")
+
+                # 대기 중인 지정가 주문 표시
+                if trader.limit_order_manager:
+                    pending = trader.limit_order_manager.get_pending_orders(
+                        session_id=trader.session_id
+                    )
+                    if pending:
+                        st.markdown("---")
+                        st.subheader("대기 중인 지정가 주문")
+                        orders_data = []
+                        for order in pending:
+                            chain_text = ""
+                            if order.trigger_order:
+                                chain_text = f"→ {order.trigger_order['side'].upper()} ${order.trigger_order['price']}"
+                            orders_data.append({
+                                '종목': order.symbol,
+                                '방향': order.side.upper(),
+                                '지정가': f"${order.limit_price:.2f}",
+                                '금액': f"${order.amount:,.2f}",
+                                '체인': chain_text or '-',
+                                '생성시각': order.created_at.strftime('%H:%M:%S') if hasattr(order.created_at, 'strftime') else str(order.created_at),
+                            })
+                        st.dataframe(pd.DataFrame(orders_data), use_container_width=True, hide_index=True)
 
                 # Auto-refresh trigger (only if enabled)
                 if st.session_state.paper_auto_refresh:

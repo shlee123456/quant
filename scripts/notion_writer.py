@@ -228,12 +228,23 @@ def run_claude_worker(
 
         markdown_output = result.get("result", "")
         cost_usd = result.get("total_cost_usd")
+        session_id = result.get("session_id", "N/A")
 
         logger.info(
             f"[{worker_name}] 완료 (출력 길이: {len(markdown_output)}자, "
-            f"비용: ${cost_usd:.4f})" if cost_usd else
+            f"비용: ${cost_usd:.4f}, session: {session_id})" if cost_usd else
             f"[{worker_name}] 완료 (출력 길이: {len(markdown_output)}자)"
         )
+
+        # 출력이 비어있으면 예산 소진으로 인한 실패로 간주
+        if not markdown_output.strip():
+            logger.warning(
+                f"[{worker_name}] 출력이 비어있음 (예산 소진 가능성). "
+                f"비용: ${cost_usd:.4f}" if cost_usd else
+                f"[{worker_name}] 출력이 비어있음"
+            )
+            return (False, "", cost_usd)
+
         return (True, markdown_output, cost_usd)
 
     except subprocess.TimeoutExpired:
@@ -281,9 +292,12 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    market_data = {k: v for k, v in data.items() if k not in ("news", "fear_greed_index")}
+    market_data = {k: v for k, v in data.items() if k not in ("news", "fear_greed_index", "macro", "events", "fundamentals")}
     news_data = data.get("news", {})
     fear_greed_data = data.get("fear_greed_index", {})
+    macro_data = data.get("macro")
+    events_data = data.get("events")
+    fundamentals_data = data.get("fundamentals")
 
     # 2. 세션 메트릭 사전 계산
     session_metrics = None
@@ -295,52 +309,103 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
     has_sessions = session_metrics is not None and session_metrics.get("has_sessions", False)
 
     # 3. 워커 프롬프트 빌드
-    prompt_a = build_worker_a_prompt(market_data, today)
-    prompt_b = build_worker_b_prompt(market_data, news_data, fear_greed_data, today)
+    intelligence_data = data.get("intelligence")
+
+    prompt_a = build_worker_a_prompt(
+        market_data, today, macro_data=macro_data,
+        intelligence_data=intelligence_data,
+        events_data=events_data,
+        fundamentals_data=fundamentals_data,
+    )
     prompt_c = build_worker_c_prompt(
-        market_data, session_metrics or {}, today, has_sessions
+        market_data, session_metrics or {}, today, has_sessions,
+        intelligence_data=intelligence_data,
     )
 
-    logger.info(
-        f"프롬프트 생성 완료 - A: {len(prompt_a)}자, B: {len(prompt_b)}자, C: {len(prompt_c)}자"
-    )
+    reflection_enabled = os.getenv('REFLECTION_ENABLED', 'true').lower() == 'true'
 
-    # 4. 워커 설정 (이름은 WORKER_MODELS 키와 일치)
-    worker_configs = {
-        "Worker-A": {"prompt": prompt_a, "tools": "WebSearch", "timeout": 600, "max_budget": 0.60},
-        "Worker-B": {"prompt": prompt_b, "tools": "WebSearch,Read", "timeout": 600, "max_budget": 0.80},
-        "Worker-C": {"prompt": prompt_c, "tools": "", "timeout": 300, "max_budget": 0.30},
-    }
+    # 4. 워커 설정
+    worker_a_cfg = {"prompt": prompt_a, "tools": "WebSearch", "timeout": 600, "max_budget": 2.00}
+    worker_b_cfg = {"tools": "WebSearch,Read", "timeout": 600, "max_budget": 3.00}
+    worker_c_cfg = {"prompt": prompt_c, "tools": "", "timeout": 300, "max_budget": 0.30}
 
-    # 스태거 지연 (초)
-    stagger_delays = {"Worker-A": 0, "Worker-B": 2, "Worker-C": 4}
-
-    # 5. 병렬 실행
+    # 5. 실행 (Reflection 모드: A+C 병렬 → B 직렬, 기존: A+B+C 병렬)
     results: Dict[str, Tuple[bool, str, Optional[float]]] = {}
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {}
-        for name, cfg in worker_configs.items():
-            delay = stagger_delays[name]
-            future = executor.submit(
-                _run_with_delay,
-                run_claude_worker,
-                delay,
-                name,
-                cfg["prompt"],
-                cfg["tools"],
-                cfg["timeout"],
-                cfg["max_budget"],
-            )
-            futures[future] = name
+    if reflection_enabled:
+        logger.info("Reflection 모드: Worker-A + Worker-C 병렬 → Worker-B 직렬")
 
-        for future in as_completed(futures):
-            name = futures[future]
+        # Phase 1: A + C 병렬
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_a = executor.submit(run_claude_worker, "Worker-A", worker_a_cfg["prompt"], worker_a_cfg["tools"], worker_a_cfg["timeout"], worker_a_cfg["max_budget"])
+            future_c = executor.submit(run_claude_worker, "Worker-C", worker_c_cfg["prompt"], worker_c_cfg["tools"], worker_c_cfg["timeout"], worker_c_cfg["max_budget"])
+
             try:
-                results[name] = future.result()
+                results["Worker-A"] = future_a.result()
             except Exception as e:
-                logger.error(f"[{name}] 예외 발생: {e}")
-                results[name] = (False, "", None)
+                logger.error(f"[Worker-A] 예외 발생: {e}")
+                results["Worker-A"] = (False, "", None)
+
+            try:
+                results["Worker-C"] = future_c.result()
+            except Exception as e:
+                logger.error(f"[Worker-C] 예외 발생: {e}")
+                results["Worker-C"] = (False, "", None)
+
+        # Phase 2: B with A's context (직렬)
+        worker_a_output = results["Worker-A"][1] if results["Worker-A"][0] else ""
+        worker_a_context = worker_a_output[:3000] if worker_a_output else None
+
+        prompt_b = build_worker_b_prompt(
+            market_data, news_data, fear_greed_data, today,
+            intelligence_data=intelligence_data,
+            worker_a_context=worker_a_context,
+        )
+        logger.info(f"프롬프트 생성 완료 - A: {len(prompt_a)}자, B: {len(prompt_b)}자, C: {len(prompt_c)}자")
+
+        try:
+            results["Worker-B"] = run_claude_worker("Worker-B", prompt_b, worker_b_cfg["tools"], worker_b_cfg["timeout"], worker_b_cfg["max_budget"])
+        except Exception as e:
+            logger.error(f"[Worker-B] 예외 발생: {e}")
+            results["Worker-B"] = (False, "", None)
+    else:
+        # 기존 3개 병렬 실행
+        prompt_b = build_worker_b_prompt(
+            market_data, news_data, fear_greed_data, today,
+            intelligence_data=intelligence_data,
+        )
+        logger.info(f"프롬프트 생성 완료 - A: {len(prompt_a)}자, B: {len(prompt_b)}자, C: {len(prompt_c)}자")
+
+        worker_configs = {
+            "Worker-A": worker_a_cfg,
+            "Worker-B": {**worker_b_cfg, "prompt": prompt_b},
+            "Worker-C": worker_c_cfg,
+        }
+        stagger_delays = {"Worker-A": 0, "Worker-B": 2, "Worker-C": 4}
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {}
+            for name, cfg in worker_configs.items():
+                delay = stagger_delays[name]
+                future = executor.submit(
+                    _run_with_delay,
+                    run_claude_worker,
+                    delay,
+                    name,
+                    cfg["prompt"],
+                    cfg["tools"],
+                    cfg["timeout"],
+                    cfg["max_budget"],
+                )
+                futures[future] = name
+
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    results[name] = future.result()
+                except Exception as e:
+                    logger.error(f"[{name}] 예외 발생: {e}")
+                    results[name] = (False, "", None)
 
     # 6. 결과 수집 및 비용 로깅
     costs: Dict[str, float] = {}
@@ -359,16 +424,35 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
 
     logger.info(f"워커 결과: {success_count}/3 성공")
 
-    # 7. 핵심 워커 실패 → 레거시 폴백
+    # 7. 핵심 워커 실패 → 재시도 → 레거시 폴백
     # Worker A (시장요약), B (Top3/F&G/뉴스)가 없으면 리포트 가치 없음
     if success_count == 0:
         logger.error("모든 워커 실패")
         return _run_legacy_fallback(json_path, session_reports_dir)
 
-    if "Worker-A" not in worker_outputs or "Worker-B" not in worker_outputs:
-        failed = [k for k in ["Worker-A", "Worker-B"] if k not in worker_outputs]
-        logger.warning(f"핵심 워커 실패 {failed} → 레거시 폴백")
-        return _run_legacy_fallback(json_path, session_reports_dir)
+    failed_core = [k for k in ["Worker-A", "Worker-B"] if k not in worker_outputs]
+    if failed_core:
+        logger.warning(f"핵심 워커 실패 {failed_core} → 재시도 (예산 2배 상향)")
+        for name in failed_core:
+            cfg = worker_configs[name]
+            retry_budget = cfg["max_budget"] * 2.0  # 예산 100% 상향
+            logger.info(f"[{name}] 재시도 (budget=${retry_budget:.2f})")
+            ok, output, cost = run_claude_worker(
+                name, cfg["prompt"], cfg["tools"], cfg["timeout"], retry_budget
+            )
+            costs[name] = costs.get(name, 0) + (cost or 0.0)
+            if ok and output:
+                worker_outputs[name] = output
+                success_count += 1
+                logger.info(f"[{name}] 재시도 성공")
+            else:
+                logger.warning(f"[{name}] 재시도 실패")
+
+        # 재시도 후에도 핵심 워커가 빠져 있으면 레거시 폴백
+        still_failed = [k for k in ["Worker-A", "Worker-B"] if k not in worker_outputs]
+        if still_failed:
+            logger.warning(f"핵심 워커 재시도 실패 {still_failed} → 레거시 폴백")
+            return _run_legacy_fallback(json_path, session_reports_dir)
 
     # 8. Worker-C만 실패 시 플레이스홀더 삽입 (전략/리스크는 보조 섹션)
     if "Worker-C" not in worker_outputs:
@@ -393,6 +477,9 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
     else:
         expected = ["# 1.", "# 2.", "# 3.", "# 4.", "# 5.",
                      "# 6.", "# 7.", "# 8."]
+
+    if macro_data:
+        expected = ["# 0."] + expected
 
     if success_count == 3 and not validate_assembly(assembled, expected):
         logger.error("조합 결과 유효성 검증 실패 → 레거시 폴백")
@@ -486,7 +573,7 @@ def main():
         with open(str(json_path), "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        market_data = {k: v for k, v in data.items() if k not in ("news", "fear_greed_index")}
+        market_data = {k: v for k, v in data.items() if k not in ("news", "fear_greed_index", "macro", "events", "fundamentals")}
         news_data = data.get("news", {})
         fear_greed_data = data.get("fear_greed_index", {})
 
@@ -500,10 +587,22 @@ def main():
         prompts_dir = PROJECT_ROOT / "data" / "debug_prompts"
         prompts_dir.mkdir(parents=True, exist_ok=True)
 
-        prompt_a = build_worker_a_prompt(market_data, today)
-        prompt_b = build_worker_b_prompt(market_data, news_data, fear_greed_data, today)
+        macro_data_dry = data.get("macro")
+        events_data_dry = data.get("events")
+        fundamentals_data_dry = data.get("fundamentals")
+        intelligence_data_dry = data.get("intelligence")
+        prompt_a = build_worker_a_prompt(
+            market_data, today, macro_data=macro_data_dry,
+            intelligence_data=intelligence_data_dry,
+            events_data=events_data_dry, fundamentals_data=fundamentals_data_dry,
+        )
+        prompt_b = build_worker_b_prompt(
+            market_data, news_data, fear_greed_data, today,
+            intelligence_data=intelligence_data_dry,
+        )
         prompt_c = build_worker_c_prompt(
-            market_data, session_metrics or {}, today, has_sessions
+            market_data, session_metrics or {}, today, has_sessions,
+            intelligence_data=intelligence_data_dry,
         )
 
         for name, prompt in [("worker_a", prompt_a), ("worker_b", prompt_b), ("worker_c", prompt_c)]:

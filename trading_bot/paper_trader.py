@@ -16,6 +16,7 @@ from .order_executor import OrderExecutor
 from .risk_manager import RiskManager
 from .portfolio_manager import PortfolioManager
 from .signal_pipeline import SignalPipeline
+from .limit_order import LimitOrderManager
 import time
 import json
 import threading
@@ -54,7 +55,9 @@ class PaperTrader:
         display_name: Optional[str] = None,
         regime_detector=None,
         llm_client=None,
-        notifier=None
+        notifier=None,
+        limit_orders: Optional[List[Dict]] = None,
+        sentiment_sizing: bool = False,
     ):
         """
         Initialize paper trader
@@ -166,6 +169,14 @@ class PaperTrader:
             enable_take_profit=enable_take_profit,
         )
 
+        # Sentiment-based position sizing
+        self._sentiment_sizing = sentiment_sizing
+        self._intelligence_report: Optional[Dict] = None
+
+        # Limit order manager
+        self._limit_order_manager = LimitOrderManager(db=db, lock=self._lock) if db else None
+        self._initial_limit_orders = limit_orders or []
+
     # ---- Backward-compatible property accessors delegating to PortfolioManager ----
 
     @property
@@ -216,7 +227,22 @@ class PaperTrader:
     def equity_history(self, value: List[Dict[str, Any]]):
         self._portfolio.equity_history = value
 
+    @property
+    def limit_order_manager(self) -> Optional[LimitOrderManager]:
+        """Access the limit order manager (None if no DB configured)"""
+        return self._limit_order_manager
+
     # ---- Public API ----
+
+    def update_intelligence_report(self, report: Dict, fear_greed_value: Optional[float] = None):
+        """외부에서 5-Layer 인텔리전스 리포트 주입 (스케줄러에서 호출).
+
+        Args:
+            report: MarketIntelligence.analyze() 반환값
+            fear_greed_value: Fear & Greed 지수 값 (0-100)
+        """
+        self._intelligence_report = report
+        self._fear_greed_value = fear_greed_value
 
     def get_portfolio_value(self, current_prices: Optional[Dict[str, float]] = None) -> float:
         """
@@ -251,7 +277,20 @@ class PaperTrader:
             )
             logger.info(f"Created session: {self.session_id}")
 
-    def execute_buy(self, symbol: str, price: float, timestamp: datetime):
+        # Register initial limit orders from preset
+        if self._limit_order_manager and self._initial_limit_orders and self.session_id:
+            for lo in self._initial_limit_orders:
+                self._limit_order_manager.create_limit_order(
+                    session_id=self.session_id,
+                    symbol=lo['symbol'],
+                    side=lo['side'],
+                    limit_price=lo['price'],
+                    amount=lo.get('amount', self.initial_capital * self.position_size),
+                    trigger_order=lo.get('trigger_order'),
+                    source='preset',
+                )
+
+    def execute_buy(self, symbol: str, price: float, timestamp: datetime, amount: float = None):
         """
         Execute a buy order
 
@@ -259,6 +298,7 @@ class PaperTrader:
             symbol: Trading symbol
             price: Buy price
             timestamp: Trade timestamp
+            amount: 투자 금액 (None이면 capital * position_size 사용)
         """
         with self._lock:
             if self.positions[symbol] > 0:
@@ -266,7 +306,25 @@ class PaperTrader:
                 return
 
             prev_position = self.positions[symbol]
-            trade_capital = self.capital * self.position_size
+            base_capital = min(amount, self.capital) if amount else self.capital * self.position_size
+
+            # Sentiment-based position sizing
+            sentiment_multiplier = 1.0
+            if self._sentiment_sizing and self._intelligence_report:
+                try:
+                    from trading_bot.market_intelligence import MarketIntelligence
+                    fg_val = getattr(self, '_fear_greed_value', None)
+                    rec = MarketIntelligence.get_position_size_recommendation(
+                        self._intelligence_report, fear_greed_value=fg_val
+                    )
+                    sentiment_multiplier = rec.get('multiplier', 1.0)
+                    logger.info(
+                        f"[Sentiment Sizing] {symbol}: {sentiment_multiplier:.2f}x - {rec.get('reason', '')}"
+                    )
+                except Exception as e:
+                    logger.debug(f"Sentiment sizing 실패 (1.0x 유지): {e}")
+
+            trade_capital = min(base_capital * sentiment_multiplier, self.capital)
             self.positions[symbol] = trade_capital / price * (1 - self.commission)
             self.entry_prices[symbol] = price
             self.capital = self.capital - trade_capital
@@ -576,6 +634,20 @@ class PaperTrader:
                         logger.info(f"[{timestamp}] {symbol}: 손절/익절 실행됨, 전략 시그널 무시")
                         continue
 
+                    # Limit order fill check (second priority)
+                    if self._limit_order_manager:
+                        filled = self._limit_order_manager.check_and_fill_paper(
+                            symbol=symbol,
+                            ticker=ticker,
+                            timestamp=timestamp,
+                            execute_buy_fn=self.execute_buy,
+                            execute_sell_fn=self.execute_sell,
+                        )
+                        if filled:
+                            for order in filled:
+                                logger.info(f"[지정가 체결] {order.side.upper()} {symbol} @ ${order.fill_price:.2f}")
+                            continue
+
                     # Fetch historical OHLCV data for strategy indicator calculation
                     df = self._fetch_ohlcv_with_retry(symbol, timeframe, limit=100)
 
@@ -681,6 +753,11 @@ class PaperTrader:
         self._stopped = True
         self.is_running = False
         self._stop_event.set()
+
+        # Cancel all pending limit orders
+        if self._limit_order_manager and self.session_id:
+            self._limit_order_manager.cancel_all(self.session_id)
+
         self._print_summary()
 
         # Generate verification report

@@ -8,7 +8,6 @@
 - **scheduler_state.py**: 공유 전역 상태 (전략 매핑, 세션 관리, 알림 등)
 - **scheduler_core.py**: APScheduler 잡 (하트비트, 워치독), CLI 핸들러, 시그널 핸들러
 - **session_manager.py**: 페이퍼 트레이딩 세션 시작/중지/리포트, 시장 분석
-- **optimization_runner.py**: 장전 전략 최적화, KIS 브로커 초기화, 시장 데이터 조회
 - **db_maintenance.py**: DB 다운샘플링, 정리, VACUUM, 백업
 
 ## 디렉토리 구조
@@ -19,7 +18,6 @@ trading_bot/scheduler/
 ├── scheduler_state.py       # 공유 전역 상태 및 상수
 ├── scheduler_core.py        # APScheduler 잡, CLI 핸들러
 ├── session_manager.py       # 세션 시작/중지/리포트
-├── optimization_runner.py   # 전략 최적화
 ├── db_maintenance.py        # DB 유지보수
 └── CLAUDE.md
 ```

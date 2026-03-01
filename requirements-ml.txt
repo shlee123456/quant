@@ -1,0 +1,4 @@
+# FinBERT 감성 분석 의존성 (선택 설치)
+# pip install -r requirements-ml.txt
+transformers>=4.35.0
+torch>=2.0.0

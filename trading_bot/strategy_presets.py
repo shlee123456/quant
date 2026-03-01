@@ -90,7 +90,8 @@ class StrategyPresetManager:
         take_profit_pct: float = 0.10,
         enable_stop_loss: bool = True,
         enable_take_profit: bool = True,
-        description: str = ""
+        description: str = "",
+        limit_orders: Optional[List[Dict[str, Any]]] = None
     ) -> bool:
         """
         Save strategy preset
@@ -107,6 +108,9 @@ class StrategyPresetManager:
             enable_stop_loss: Enable stop loss
             enable_take_profit: Enable take profit
             description: Optional description
+            limit_orders: Optional list of limit order configs
+                Each dict: {"symbol": "NVDA", "side": "buy", "price": 172.0,
+                            "trigger_order": {"side": "sell", "price": 190.0}}
 
         Returns:
             True if saved successfully, False otherwise
@@ -132,6 +136,7 @@ class StrategyPresetManager:
             "enable_stop_loss": enable_stop_loss,
             "enable_take_profit": enable_take_profit,
             "description": description,
+            "limit_orders": limit_orders or [],
             "created_at": existing_preset.get("created_at") if existing_preset else datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
             "last_used": existing_preset.get("last_used") if existing_preset else None
@@ -306,7 +311,8 @@ class StrategyPresetManager:
                 take_profit_pct=preset.get('take_profit_pct', 0.10),
                 enable_stop_loss=preset.get('enable_stop_loss', True),
                 enable_take_profit=preset.get('enable_take_profit', True),
-                description=preset.get('description', '')
+                description=preset.get('description', ''),
+                limit_orders=preset.get('limit_orders', [])
             )
         except Exception as e:
             print(f"Error importing preset: {e}")

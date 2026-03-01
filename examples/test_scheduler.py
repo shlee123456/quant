@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 # Import scheduler functions (not the main scheduler itself)
-from scheduler import optimize_strategy, notifier
+from scheduler import notifier
 
 
 def main():
@@ -21,7 +21,6 @@ def main():
     print("=" * 60)
     print("\nThis test runs scheduler tasks immediately (without waiting)")
     print("In production, tasks run at scheduled times:")
-    print("  23:00 KST - Strategy optimization")
     print("  23:30 KST - Start paper trading")
     print("  06:00 KST - Stop trading & report")
     print("=" * 60)
@@ -35,20 +34,8 @@ def main():
         print("\n   ⚠ No notifications configured")
         print("   Add SLACK_WEBHOOK_URL or SMTP settings to .env to enable")
 
-    # Test optimization task
-    print("\n2. Testing Strategy Optimization Task...")
-    print("   (This may take 10-20 seconds)")
-
-    try:
-        optimize_strategy()
-        print("\n   ✓ Optimization task completed successfully")
-    except Exception as e:
-        print(f"\n   ✗ Optimization task failed: {e}")
-        import traceback
-        traceback.print_exc()
-
     # Note about trading tasks
-    print("\n3. Paper Trading Tasks")
+    print("\n2. Paper Trading Tasks")
     print("   ⚠ NOT testing paper trading tasks (requires market hours)")
     print("   These tasks will run automatically at scheduled times:")
     print("     - start_paper_trading() at 23:30 KST")
@@ -64,7 +51,6 @@ def main():
     print("\n2. Run scheduler:")
     print("   python scheduler.py")
     print("\n3. Scheduler will run tasks automatically at:")
-    print("   - 23:00 KST (11:00 PM) - Strategy optimization")
     print("   - 23:30 KST (11:30 PM) - Start paper trading")
     print("   - 06:00 KST (6:00 AM) - Stop trading & send report")
     print("\n4. Stop scheduler:")

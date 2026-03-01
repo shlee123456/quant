@@ -42,7 +42,6 @@ A multi-asset trading bot supporting cryptocurrencies and stocks (domestic & int
 - **Automated Scheduler** (Phase 2 Complete)
   - APScheduler integration for cron-based execution
   - Automatic trading during US market hours (23:30-06:00 KST)
-  - Pre-market strategy optimization (23:00 KST)
   - Post-market reporting and analysis
   - Slack and Email notifications
   - Trade alerts, daily reports, and error notifications
