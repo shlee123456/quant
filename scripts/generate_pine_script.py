@@ -141,10 +141,17 @@ def _extract_json(text: str) -> dict | None:
 
 
 def _build_llm_prompt(data: dict) -> str:
-    """LLM에게 보낼 프롬프트를 구성합니다."""
+    """LLM에게 보낼 프롬프트를 구성합니다 (v2 데이터 포함)."""
     stocks = data.get("stocks", {})
     fg = data.get("fear_greed_index", {}).get("current", {})
     date = data.get("date", "unknown")
+
+    # v2 데이터 추출
+    intelligence = data.get("intelligence", {})
+    events = data.get("events", {})
+    fundamentals_raw = data.get("fundamentals", {})
+    fundamentals = fundamentals_raw.get("fundamentals", fundamentals_raw)
+    signal_accuracy = data.get("signal_accuracy")
 
     stock_summaries = []
     for symbol, info in stocks.items():
@@ -154,40 +161,98 @@ def _build_llm_prompt(data: dict) -> str:
         diag = info.get("signal_diagnosis", {})
         patterns = info.get("patterns", {})
 
-        stock_summaries.append(
-            {
-                "symbol": symbol,
-                "regime": regime.get("state", "N/A"),
-                "regime_conf": regime.get("confidence", 0),
-                "rsi": ind.get("rsi", {}).get("value"),
-                "rsi_signal": ind.get("rsi", {}).get("signal"),
-                "macd_signal": ind.get("macd", {}).get("signal"),
-                "macd_cross": ind.get("macd", {}).get("cross_recent"),
-                "adx": ind.get("adx", {}).get("value"),
-                "adx_trend": ind.get("adx", {}).get("trend"),
-                "bb_pctb": ind.get("bollinger", {}).get("pct_b"),
-                "stoch_k": ind.get("stochastic", {}).get("k"),
-                "change_5d": price.get("change_5d"),
-                "change_20d": price.get("change_20d"),
-                "optimal_oversold": diag.get("optimal_rsi_range", {}).get("oversold"),
-                "optimal_overbought": diag.get("optimal_rsi_range", {}).get(
-                    "overbought"
-                ),
-                "support_levels": patterns.get("support_levels", []),
-                "double_bottom": patterns.get("double_bottom", False),
-            }
-        )
+        summary = {
+            "symbol": symbol,
+            "regime": regime.get("state", "N/A"),
+            "regime_conf": regime.get("confidence", 0),
+            "rsi": ind.get("rsi", {}).get("value"),
+            "rsi_signal": ind.get("rsi", {}).get("signal"),
+            "macd_signal": ind.get("macd", {}).get("signal"),
+            "macd_cross": ind.get("macd", {}).get("cross_recent"),
+            "adx": ind.get("adx", {}).get("value"),
+            "adx_trend": ind.get("adx", {}).get("trend"),
+            "bb_pctb": ind.get("bollinger", {}).get("pct_b"),
+            "stoch_k": ind.get("stochastic", {}).get("k"),
+            "change_5d": price.get("change_5d"),
+            "change_20d": price.get("change_20d"),
+            "optimal_oversold": diag.get("optimal_rsi_range", {}).get("oversold"),
+            "optimal_overbought": diag.get("optimal_rsi_range", {}).get(
+                "overbought"
+            ),
+            "support_levels": patterns.get("support_levels", []),
+            "double_bottom": patterns.get("double_bottom", False),
+        }
 
-    prompt_data = json.dumps(
-        {
-            "date": date,
-            "fear_greed": fg.get("value"),
-            "fear_greed_class": fg.get("classification"),
-            "stocks": stock_summaries,
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
+        # v2: 펀더멘탈 추가
+        fund = fundamentals.get(symbol, {})
+        if fund:
+            summary["pe_ratio"] = fund.get("pe_ratio")
+            summary["forward_pe"] = fund.get("forward_pe")
+            summary["eps"] = fund.get("eps")
+            summary["dividend_yield"] = fund.get("dividend_yield")
+            summary["beta"] = fund.get("beta")
+
+        # v2: 실적발표일 추가
+        earnings = events.get("earnings", {}).get(symbol, {})
+        if earnings:
+            summary["earnings_date"] = earnings.get("date")
+            summary["earnings_days_until"] = earnings.get("days_until")
+
+        stock_summaries.append(summary)
+
+    # v2: 인텔리전스 요약
+    intel_summary = {}
+    if intelligence:
+        overall = intelligence.get("overall", {})
+        intel_summary["overall_score"] = overall.get("score")
+        intel_summary["overall_signal"] = overall.get("signal")
+        layers = intelligence.get("layers", {})
+        intel_summary["layers"] = {
+            name: {"score": l.get("score"), "signal": l.get("signal")}
+            for name, l in layers.items()
+        }
+
+    # v2: FOMC 일정
+    fomc_summary = {}
+    fomc = events.get("fomc", {})
+    if fomc:
+        fomc_summary["next_date"] = fomc.get("next_date")
+        fomc_summary["days_until"] = fomc.get("days_until")
+
+    # v3: 경제지표/옵션/VIX 일정
+    events_summary = {}
+    economic = events.get("economic", {})
+    if economic:
+        events_summary["economic"] = {
+            k: v for k, v in economic.items()
+            if v.get("next_date")
+        }
+    options = events.get("options", {})
+    if options.get("monthly_expiry", {}).get("next_date"):
+        events_summary["options"] = {
+            "monthly_expiry": options["monthly_expiry"],
+            "is_quad_witching": options.get("is_quad_witching", False),
+        }
+    vix_expiry = events.get("vix_expiry", {})
+    if vix_expiry.get("next_date"):
+        events_summary["vix_expiry"] = vix_expiry
+
+    prompt_obj = {
+        "date": date,
+        "fear_greed": fg.get("value"),
+        "fear_greed_class": fg.get("classification"),
+        "stocks": stock_summaries,
+    }
+    if intel_summary:
+        prompt_obj["intelligence"] = intel_summary
+    if fomc_summary:
+        prompt_obj["fomc"] = fomc_summary
+    if events_summary:
+        prompt_obj["events"] = events_summary
+    if signal_accuracy:
+        prompt_obj["signal_accuracy"] = signal_accuracy
+
+    prompt_data = json.dumps(prompt_obj, ensure_ascii=False, indent=2)
 
     return f"""다음 시장 분석 데이터를 기반으로 TradingView Pine Script에 삽입할 코멘터리를 생성하세요.
 
@@ -210,16 +275,21 @@ def _build_llm_prompt(data: dict) -> str:
 }}
 
 규칙:
-1. comments: 현재 레짐+지표 상태를 반영한 구체적 코멘트. 예: "RSI 과매도 근접, 반등 기대", "횡보 구간, BB 중심 회귀 대기"
-2. strategies: 액션 지향적 전략 제안. 예: "BB 하단 매수 대기", "추세 추종 홀드", "관망 후 지지선 확인"
+1. comments: 레짐+지표+펀더멘탈+이벤트를 종합한 코멘트. 예:
+   - "실적 D-5, PER 고평가, 관망" (실적 임박 + 밸류에이션)
+   - "RSI 과매도+강세감성, 반등 기대" (기술적 + 감성)
+   - "FOMC 전 변동성 확대 주의" (이벤트 영향)
+2. strategies: 액션 지향적 전략. 예: "BB 하단 매수 대기", "실적 전 포지션 축소", "추세 추종 홀드"
 3. alerts: 레짐에 적합한 알림 조건 선택:
    - VOLATILE → bb_extreme (BB %B 극단 알림)
    - BULLISH/BEARISH (ADX>25) → macd_cross (MACD 크로스 알림)
    - SIDEWAYS → rsi_extreme (RSI 극단 알림)
    - stoch_cross는 Stochastic 크로스가 유의미한 경우 사용
-4. market_summary: F&G 지수와 전체 레짐 분포를 반영한 시장 요약
-5. 모든 텍스트는 한글로 작성
-6. 모든 종목(symbol)에 대해 빠짐없이 작성"""
+   - 실적발표 7일 이내 → rsi_extreme 우선 (변동성 대비)
+4. market_summary: F&G + 인텔리전스 종합점수 + FOMC 일정을 반영한 시장 요약
+5. 인텔리전스 overall_score가 +30 이상이면 강세 편향, -30 이하면 약세 편향 반영
+6. 모든 텍스트는 한글로 작성
+7. 모든 종목(symbol)에 대해 빠짐없이 작성"""
 
 
 def _call_claude_cli(prompt: str) -> dict | None:
@@ -269,10 +339,38 @@ def _call_claude_cli(prompt: str) -> dict | None:
 
 
 def _rule_based_commentary(data: dict) -> dict:
-    """규칙 기반 코멘터리를 생성합니다 (LLM 폴백)."""
+    """규칙 기반 코멘터리를 생성합니다 (LLM 폴백, v2 데이터 활용)."""
     stocks = data.get("stocks", {})
     fg = data.get("fear_greed_index", {}).get("current", {})
     fg_value = fg.get("value", 50)
+
+    # v2 데이터 추출
+    intelligence = data.get("intelligence", {})
+    intel_score = intelligence.get("overall", {}).get("score", 0)
+    events = data.get("events", {})
+    fomc = events.get("fomc", {})
+    fomc_days = fomc.get("days_until")
+    earnings_map = events.get("earnings", {})
+    fundamentals_raw = data.get("fundamentals", {})
+    fundamentals = fundamentals_raw.get("fundamentals", fundamentals_raw)
+
+    # v3: 추가 이벤트 추출
+    economic = events.get("economic", {})
+    options = events.get("options", {})
+    near_economic = False
+    near_economic_name = None
+    econ_label_map = {
+        'nfp': 'NFP', 'cpi': 'CPI', 'ppi': 'PPI', 'pce': 'PCE',
+        'gdp': 'GDP', 'ism_manufacturing': 'ISM', 'ism_services': 'ISM',
+        'jackson_hole': '잭슨홀',
+    }
+    for name, info in economic.items():
+        if info.get('days_until') is not None and info['days_until'] <= 3:
+            near_economic = True
+            near_economic_name = econ_label_map.get(name, name)
+            break
+    is_quad = options.get('is_quad_witching', False)
+    opt_days = options.get('monthly_expiry', {}).get('days_until')
 
     comments = {}
     strategies = {}
@@ -289,11 +387,31 @@ def _rule_based_commentary(data: dict) -> dict:
         oversold = optimal.get("oversold", 30)
         overbought = optimal.get("overbought", 70)
 
-        # 코멘트 생성
-        if rsi < oversold:
-            comments[symbol] = "RSI 과매도, 반등 모니터링"
+        # v2: 실적/펀더멘탈 컨텍스트
+        earnings = earnings_map.get(symbol, {})
+        earnings_days = earnings.get("days_until")
+        fund = fundamentals.get(symbol, {})
+        pe = fund.get("pe_ratio")
+
+        # 코멘트 생성 (v3: 이벤트/펀더멘탈 우선)
+        if earnings_days is not None and earnings_days <= 7:
+            comments[symbol] = f"실적 D-{earnings_days}, 변동성 대비"
+        elif near_economic:
+            comments[symbol] = f"{near_economic_name} 발표 임박, 변동성 대비"
+        elif is_quad and opt_days is not None and opt_days <= 3:
+            comments[symbol] = "쿼드위칭 주간, 유동성 주의"
+        elif fomc_days is not None and fomc_days <= 3:
+            comments[symbol] = "FOMC 임박, 관망 권장"
+        elif rsi < oversold:
+            if intel_score > 20:
+                comments[symbol] = "RSI 과매도+강세환경, 반등 기대"
+            else:
+                comments[symbol] = "RSI 과매도, 반등 모니터링"
         elif rsi > overbought:
-            comments[symbol] = "RSI 과매수, 차익실현 고려"
+            if pe and pe > 40:
+                comments[symbol] = "RSI 과매수+고PER, 차익실현"
+            else:
+                comments[symbol] = "RSI 과매수, 차익실현 고려"
         elif regime == "VOLATILE":
             comments[symbol] = "변동성 확대, 리스크 관리 주의"
         elif regime == "BEARISH":
@@ -305,8 +423,14 @@ def _rule_based_commentary(data: dict) -> dict:
         else:
             comments[symbol] = "중립 구간, 관망"
 
-        # 전략 생성
-        if regime == "VOLATILE":
+        # 전략 생성 (v3: 이벤트 반영)
+        if earnings_days is not None and earnings_days <= 7:
+            strategies[symbol] = "실적 전 포지션 축소"
+        elif near_economic:
+            strategies[symbol] = "지표 발표 전 관망"
+        elif is_quad and opt_days is not None and opt_days <= 3:
+            strategies[symbol] = "만기 변동성 경계"
+        elif regime == "VOLATILE":
             strategies[symbol] = "BB 밴드 이탈 대기"
         elif regime == "BEARISH":
             if rsi < oversold:
@@ -323,10 +447,13 @@ def _rule_based_commentary(data: dict) -> dict:
             else:
                 strategies[symbol] = "레인지 매매 대기"
 
-        # 알림 유형
-        alerts[symbol] = _REGIME_ALERT_MAP.get(regime, "rsi_extreme")
+        # 알림 유형 (v2: 실적 임박 시 rsi_extreme 우선)
+        if earnings_days is not None and earnings_days <= 7:
+            alerts[symbol] = "rsi_extreme"
+        else:
+            alerts[symbol] = _REGIME_ALERT_MAP.get(regime, "rsi_extreme")
 
-    # 시장 요약
+    # 시장 요약 (v2: 인텔리전스 점수 + FOMC 반영)
     bullish = sum(
         1
         for s in stocks.values()
@@ -343,10 +470,26 @@ def _rule_based_commentary(data: dict) -> dict:
         if s.get("regime", {}).get("state") == "VOLATILE"
     )
 
-    if fg_value and fg_value < 30:
-        market_summary = "극단적 공포, 역발상 매수 관점 주시"
+    if near_economic:
+        market_summary = f"{near_economic_name} 임박, 변동성 경계"
+    elif is_quad and opt_days is not None and opt_days <= 3:
+        market_summary = "쿼드위칭 주간, 유동성 주의"
+    elif fomc_days is not None and fomc_days <= 3:
+        market_summary = f"FOMC D-{fomc_days}, 변동성 경계"
+    elif fg_value and fg_value < 30:
+        if intel_score > 20:
+            market_summary = "극단적 공포+강세신호, 역발상 매수"
+        else:
+            market_summary = "극단적 공포, 역발상 매수 관점 주시"
     elif fg_value and fg_value > 70:
-        market_summary = "극단적 탐욕, 리스크 관리 강화"
+        if intel_score < -20:
+            market_summary = "극단적 탐욕+약세신호, 리스크 경고"
+        else:
+            market_summary = "극단적 탐욕, 리스크 관리 강화"
+    elif intel_score >= 30:
+        market_summary = "인텔리전스 강세, 적극 매수 구간"
+    elif intel_score <= -30:
+        market_summary = "인텔리전스 약세, 방어적 접근"
     elif bearish > len(stocks) * 0.5:
         market_summary = "약세 우위, 보수적 접근 권장"
     elif bullish > len(stocks) * 0.5:

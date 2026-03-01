@@ -552,24 +552,105 @@ def _build_events_data_block(events_data: dict) -> str:
 
     lines = ["\n## 이벤트 캘린더"]
 
-    # FOMC 일정
-    fomc = events_data.get('fomc', {})
-    next_fomc = fomc.get('next_date')
-    fomc_days = fomc.get('days_until')
-    if next_fomc:
-        lines.append(f"- 다음 FOMC: {next_fomc} ({fomc_days}일 후)")
-        remaining = fomc.get('remaining_2026', [])
-        if len(remaining) > 1:
-            lines.append(f"- 2026년 남은 FOMC: {len(remaining) - 1}회 ({', '.join(remaining[1:])})")
+    def _fmt(label: str, info: dict, extra: str = '') -> str:
+        """이벤트 항목 포맷팅 (7일 이내 ⚠️ 표시)"""
+        nd = info.get('next_date')
+        du = info.get('days_until')
+        if not nd:
+            return ''
+        warn = ' ⚠️' if du is not None and du <= 7 else ''
+        return f"- {label}: {nd} ({du}일 후){warn}{extra}"
 
-    # 실적발표 일정
+    # --- 매크로 경제 지표 ---
+    economic = events_data.get('economic', {})
+    if economic:
+        econ_labels = {
+            'nfp': 'NFP (고용)',
+            'cpi': 'CPI',
+            'ppi': 'PPI',
+            'pce': 'PCE',
+            'gdp': 'GDP',
+            'ism_manufacturing': 'ISM 제조업',
+            'ism_services': 'ISM 서비스업',
+            'jackson_hole': '잭슨홀',
+        }
+        econ_lines = []
+        for key, label in econ_labels.items():
+            info = economic.get(key, {})
+            line = _fmt(label, info)
+            if line:
+                econ_lines.append(line)
+        if econ_lines:
+            lines.append("\n### 매크로 경제 지표")
+            lines.extend(econ_lines)
+
+    # --- 중앙은행 ---
+    fomc = events_data.get('fomc', {})
+    fomc_minutes = events_data.get('fomc_minutes', {})
+    if fomc.get('next_date') or fomc_minutes.get('next_date'):
+        lines.append("\n### 중앙은행")
+        next_fomc = fomc.get('next_date')
+        fomc_days = fomc.get('days_until')
+        if next_fomc:
+            warn = ' ⚠️' if fomc_days is not None and fomc_days <= 7 else ''
+            lines.append(f"- 다음 FOMC: {next_fomc} ({fomc_days}일 후){warn}")
+            remaining = fomc.get('remaining_2026', [])
+            if len(remaining) > 1:
+                lines.append(f"- 2026년 남은 FOMC: {len(remaining) - 1}회 ({', '.join(remaining[1:])})")
+        fm_date = fomc_minutes.get('next_date')
+        if fm_date:
+            lines.append(f"- FOMC 의사록: {fm_date}")
+
+    # --- 옵션/파생 ---
+    options = events_data.get('options', {})
+    vix_expiry = events_data.get('vix_expiry', {})
+    if options.get('monthly_expiry', {}).get('next_date') or vix_expiry.get('next_date'):
+        lines.append("\n### 옵션/파생")
+        me = options.get('monthly_expiry', {})
+        if me.get('next_date'):
+            quad_tag = ' [Quad Witching]' if options.get('is_quad_witching') else ''
+            line = _fmt('옵션 만기', me, quad_tag)
+            if line:
+                lines.append(line)
+        if vix_expiry.get('next_date'):
+            line = _fmt('VIX 만기', vix_expiry)
+            if line:
+                lines.append(line)
+
+    # --- 실적발표 (가까운 순) ---
     earnings = events_data.get('earnings', {})
     if earnings:
-        lines.append("")
+        lines.append("\n### 실적발표 (가까운 순)")
         for symbol, info in sorted(earnings.items(), key=lambda x: x[1].get('days_until', 999)):
             eps_str = f", 컨센서스 EPS ${info['estimate_eps']:.2f}" if info.get('estimate_eps') is not None else ""
             rev_str = f", 예상 매출 ${info['estimate_revenue']:,.0f}" if info.get('estimate_revenue') is not None else ""
-            lines.append(f"- {symbol} 실적발표: {info['date']} ({info['days_until']}일 후){eps_str}{rev_str}")
+            du = info.get('days_until')
+            warn = ' ⚠️' if du is not None and du <= 7 else ''
+            lines.append(f"- {symbol}: {info['date']} ({du}일 후){warn}{eps_str}{rev_str}")
+
+    # --- 시장 구조 ---
+    market_structure = events_data.get('market_structure', {})
+    holidays = events_data.get('holidays', {})
+    ms_lines = []
+    sp500 = market_structure.get('sp500_rebalance', {})
+    if sp500.get('next_date'):
+        line = _fmt('S&P 500 리밸런싱', sp500)
+        if line:
+            ms_lines.append(line)
+    russell = market_structure.get('russell_rebalance', {})
+    if russell.get('next_date'):
+        line = _fmt('Russell 리밸런싱', russell)
+        if line:
+            ms_lines.append(line)
+    nh = holidays.get('next_holiday', {})
+    if nh.get('date'):
+        nh_info = {'next_date': nh['date'], 'days_until': nh['days_until']}
+        line = _fmt(f"다음 휴장일 ({nh['name']})", nh_info)
+        if line:
+            ms_lines.append(line)
+    if ms_lines:
+        lines.append("\n### 시장 구조")
+        lines.extend(ms_lines)
 
     return "\n".join(lines)
 
