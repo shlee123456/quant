@@ -37,8 +37,6 @@ sys.path.append(str(Path(__file__).parent.parent))
 from trading_bot.paper_trader import PaperTrader
 from trading_bot.strategies import RSIStrategy, MACDStrategy, BollingerBandsStrategy, RSIMACDComboStrategy
 from trading_bot.database import TradingDatabase
-from trading_bot.optimizer import StrategyOptimizer
-from trading_bot.simulation_data import SimulationDataGenerator
 from trading_bot.notifications import NotificationService
 from trading_bot.strategy_presets import StrategyPresetManager
 from trading_bot.reports import ReportGenerator
@@ -70,13 +68,11 @@ class SchedulerManager:
         self.active_traders: Dict[str, PaperTrader] = {}  # session_id → PaperTrader
         self.notifier = NotificationService()
         self.preset_manager = StrategyPresetManager()
-        self.optimized_params: Optional[Dict] = None
         self.logs: List[str] = []  # 로그 메시지 저장
         self.max_logs = 500  # 최대 로그 라인 수
 
         # 기본 스케줄 시간 (KST)
         self.schedule_config = {
-            'optimize_time': time(23, 0),  # 23:00 KST
             'start_time': time(23, 30),     # 23:30 KST
             'stop_time': time(6, 0)         # 06:00 KST
         }
@@ -173,62 +169,6 @@ class SchedulerManager:
         """로그 초기화"""
         self.logs = []
 
-    def optimize_strategy(self):
-        """
-        전략 최적화 작업 (23:00 KST)
-        """
-        self._add_log("=" * 60)
-        self._add_log("전략 최적화 시작...")
-        self._add_log("=" * 60)
-
-        try:
-            # 최적화용 다양한 시장 상황 데이터 생성
-            data_gen = SimulationDataGenerator(seed=42)
-            df_bullish = data_gen.generate_trend_data(periods=200, trend='bullish', initial_price=150.0)
-            df_bearish = data_gen.generate_trend_data(periods=200, trend='bearish', initial_price=150.0)
-            df_sideways = data_gen.generate_trend_data(periods=200, trend='sideways', initial_price=150.0)
-            df = pd.concat([df_bullish, df_bearish, df_sideways], ignore_index=True)
-
-            self._add_log(f"최적화 데이터: 상승({len(df_bullish)}) + 하락({len(df_bearish)}) + 횡보({len(df_sideways)}) = {len(df)}개")
-
-            # RSI+MACD 복합 전략 파라미터 그리드
-            param_grid = {
-                'rsi_period': [10, 12, 14],
-                'rsi_overbought': [70, 75, 78],
-                'rsi_oversold': [30, 35, 38],
-                'macd_fast': [8, 12],
-                'macd_slow': [21, 26],
-                'macd_signal': [9]
-            }
-
-            # 최적화 실행
-            optimizer = StrategyOptimizer(initial_capital=10000.0)
-            self._add_log("RSI+MACD 복합 전략 그리드 서치 최적화 실행 중...")
-            best_result = optimizer.optimize(RSIMACDComboStrategy, df, param_grid)
-
-            self._add_log(f"✓ 최적화 완료!")
-            self._add_log(f"  최적 파라미터: {best_result['params']}")
-            self._add_log(f"  샤프 비율: {best_result['sharpe_ratio']:.2f}")
-            self._add_log(f"  총 수익률: {best_result['total_return']:.2f}%")
-
-            # 알림 전송
-            self.notifier.send_slack(
-                f"📊 *전략 최적화 완료*\n\n"
-                f"최적 파라미터: {best_result['params']}\n"
-                f"샤프 비율: {best_result['sharpe_ratio']:.2f}\n"
-                f"총 수익률: {best_result['total_return']:.2f}%",
-                color='good'
-            )
-
-            # 최적 파라미터 저장
-            self.optimized_params = best_result['params']
-
-            self._add_log(f"✓ 최적 파라미터 저장 완료 (다음 세션에서 자동 적용)")
-
-        except Exception as e:
-            self._add_log(f"✗ 최적화 실패: {e}")
-            self.notifier.notify_error(f"전략 최적화 실패: {e}", context="장전 작업")
-
     def start_paper_trading(self):
         """
         페이퍼 트레이딩 시작 (23:30 KST)
@@ -252,15 +192,12 @@ class SchedulerManager:
             # 데이터베이스 초기화
             db = TradingDatabase()
 
-            # 전략 생성 (우선순위: 최적화 결과 > 프리셋 파라미터 > 기본값)
-            if self.optimized_params:
-                self._add_log(f"최적화된 파라미터 사용: {self.optimized_params}")
-                strategy = self._create_strategy(self.optimized_params)
-            elif self.strategy_params:
+            # 전략 생성 (우선순위: 프리셋 파라미터 > 기본값)
+            if self.strategy_params:
                 self._add_log(f"프리셋 파라미터 사용: {self.strategy_params}")
                 strategy = self._create_strategy(self.strategy_params)
             else:
-                self._add_log(f"기본 파라미터 사용 (최적화/프리셋 없음) - {self.strategy_name}")
+                self._add_log(f"기본 파라미터 사용 (프리셋 없음) - {self.strategy_name}")
                 strategy = self._create_strategy()
 
             self._add_log(f"전략: {strategy.name}")
@@ -455,17 +392,6 @@ class SchedulerManager:
 
             # 작업 추가
             self.scheduler.add_job(
-                self.optimize_strategy,
-                CronTrigger(
-                    hour=self.schedule_config['optimize_time'].hour,
-                    minute=self.schedule_config['optimize_time'].minute
-                ),
-                id='optimize_strategy',
-                name='전략 최적화',
-                misfire_grace_time=300
-            )
-
-            self.scheduler.add_job(
                 self.start_paper_trading,
                 CronTrigger(
                     hour=self.schedule_config['start_time'].hour,
@@ -493,7 +419,6 @@ class SchedulerManager:
             self._add_log("=" * 60)
             self._add_log("✓ 스케줄러 시작 성공")
             self._add_log("=" * 60)
-            self._add_log(f"전략 최적화: {self.schedule_config['optimize_time'].strftime('%H:%M')} KST")
             self._add_log(f"트레이딩 시작: {self.schedule_config['start_time'].strftime('%H:%M')} KST")
             self._add_log(f"트레이딩 중지: {self.schedule_config['stop_time'].strftime('%H:%M')} KST")
 
@@ -645,19 +570,17 @@ class SchedulerManager:
                 'error': str(e)
             }
 
-    def update_schedule(self, optimize_time: time, start_time: time, stop_time: time) -> Dict[str, any]:
+    def update_schedule(self, start_time: time, stop_time: time) -> Dict[str, any]:
         """
         스케줄 시간 업데이트
 
         Args:
-            optimize_time: 최적화 시간
             start_time: 트레이딩 시작 시간
             stop_time: 트레이딩 중지 시간
 
         Returns:
             Dict with success, message, error
         """
-        self.schedule_config['optimize_time'] = optimize_time
         self.schedule_config['start_time'] = start_time
         self.schedule_config['stop_time'] = stop_time
 

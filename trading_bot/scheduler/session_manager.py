@@ -22,10 +22,37 @@ from trading_bot.database import TradingDatabase, generate_display_name
 from trading_bot.reports import ReportGenerator
 from trading_bot.us_holidays import is_us_market_holiday
 
+from trading_bot.brokers import KoreaInvestmentBroker
+
 import trading_bot.scheduler.scheduler_state as state
-from trading_bot.scheduler.optimization_runner import _create_kis_broker
 
 logger = logging.getLogger(__name__)
+
+
+def _create_kis_broker() -> Optional[KoreaInvestmentBroker]:
+    """KIS 브로커를 환경 변수에서 직접 초기화합니다."""
+    appkey = os.getenv('KIS_APPKEY', '').strip()
+    appsecret = os.getenv('KIS_APPSECRET', '').strip()
+    account = os.getenv('KIS_ACCOUNT', '').strip()
+
+    if not appkey or not appsecret or not account:
+        logger.warning("KIS API 환경 변수 미설정 - 브로커 초기화 불가")
+        return None
+
+    user_id = os.getenv('KIS_USER_ID', account).strip()
+    mock_str = os.getenv('KIS_MOCK', 'true').strip().lower()
+    mock = mock_str in ('true', '1', 'yes', 'on')
+
+    try:
+        broker = KoreaInvestmentBroker(
+            appkey=appkey, appsecret=appsecret,
+            account=account, user_id=user_id, mock=mock
+        )
+        logger.info(f"KIS 브로커 초기화 성공 (mock={mock})")
+        return broker
+    except Exception as e:
+        logger.error(f"KIS 브로커 초기화 실패: {e}")
+        return None
 
 
 def _is_trading_day() -> bool:
@@ -109,6 +136,7 @@ def _start_single_session(label: str, config: Optional[Dict]):
         take_profit_pct = 0.05
         enable_stop_loss = True
         enable_take_profit = True
+        limit_orders = []
 
         # 프리셋에서 설정 적용
         if config:
@@ -121,34 +149,20 @@ def _start_single_session(label: str, config: Optional[Dict]):
             take_profit_pct = config.get('take_profit_pct', take_profit_pct)
             enable_stop_loss = config.get('enable_stop_loss', enable_stop_loss)
             enable_take_profit = config.get('enable_take_profit', enable_take_profit)
+            limit_orders = config.get('limit_orders', [])
             logger.info(f"{log_prefix} 프리셋 설정 적용됨: {config.get('_preset_name', label)}")
+            if limit_orders:
+                logger.info(f"{log_prefix} 지정가 주문 {len(limit_orders)}건 설정됨")
 
         # 전략 클래스 결정
         strategy_class = state.STRATEGY_CLASS_MAP.get(strategy_name, state.STRATEGY_CLASS_MAP['RSI+MACD Combo Strategy'])
 
-        # 전략 생성 (우선순위: CLI 프리셋 > 최적화 결과 > 기본값)
+        # 전략 생성 (프리셋 파라미터 > 기본값)
         if config and strategy_params:
-            logger.info(f"{log_prefix} CLI 프리셋 파라미터 사용 (--preset 우선): {strategy_params}")
+            logger.info(f"{log_prefix} 프리셋 파라미터 사용: {strategy_params}")
             strategy = strategy_class(**strategy_params)
-        elif state.optimized_params and state.optimized_strategy_class:
-            # 최적화에서 선택된 전략 클래스와 파라미터 사용
-            strategy_class = state.optimized_strategy_class
-            logger.info(f"{log_prefix} 최적화된 전략 사용: {strategy_class.__name__}, 파라미터: {state.optimized_params}")
-            strategy = strategy_class(**state.optimized_params)
-        elif state.optimized_params:
-            # optimized_strategy_class 없이 optimized_params만 있는 경우
-            import inspect
-            valid_params = set(inspect.signature(strategy_class.__init__).parameters.keys()) - {'self'}
-            opt_param_keys = set(state.optimized_params.keys())
-            if opt_param_keys <= valid_params:
-                logger.info(f"{log_prefix} 최적화된 파라미터 사용: {state.optimized_params}")
-                strategy = strategy_class(**state.optimized_params)
-            else:
-                mismatched = opt_param_keys - valid_params
-                logger.warning(f"{log_prefix} 최적화 파라미터가 {strategy_class.__name__}와 호환되지 않음 (불일치: {mismatched}) - 기본 파라미터 사용")
-                strategy = strategy_class()
         else:
-            logger.info(f"{log_prefix} 기본 파라미터 사용 (프리셋/최적화 없음) - {strategy_name}")
+            logger.info(f"{log_prefix} 기본 파라미터 사용 (프리셋 없음) - {strategy_name}")
             strategy = strategy_class()
 
         logger.info(f"{log_prefix} 전략: {strategy.name}")
@@ -176,6 +190,7 @@ def _start_single_session(label: str, config: Optional[Dict]):
             display_name=display_name,
             regime_detector=state.global_regime_detector,
             llm_client=state.global_llm_client,
+            limit_orders=limit_orders if limit_orders else None,
         )
 
         # Attach notifier to trader for stop loss/take profit notifications
@@ -409,6 +424,21 @@ def run_market_analysis():
         logger.info(f"분석 대상 종목: {', '.join(symbols)}")
         result = analyzer.analyze(symbols, broker)
 
+        # 매크로 시장 환경 분석 (yfinance 기반)
+        try:
+            macro_result = analyzer.analyze_macro()
+            if macro_result:
+                result['macro'] = macro_result
+                logger.info(
+                    f"매크로 분석 완료: "
+                    f"지수 {len(macro_result.get('indices', {}))}개, "
+                    f"섹터 {len(macro_result.get('sectors', {}))}개"
+                )
+            else:
+                logger.info("매크로 분석 건너뜀 (yfinance 미설치 또는 데이터 없음)")
+        except Exception as e:
+            logger.warning(f"매크로 분석 실패 (개별 종목 분석은 정상): {e}")
+
         # JSON 저장
         json_path = analyzer.save_json(result)
         logger.info(f"분석 결과 저장: {json_path}")
@@ -423,9 +453,11 @@ def run_market_analysis():
             logger.warning(f"Pine Script 생성 실패 (무시): {e}")
 
         # Slack 알림
+        macro_status = "포함" if 'macro' in result else "미포함"
         state.notifier.send_slack(
             f"*시장 분석 데이터 수집 완료*\n\n"
             f"분석 종목: {', '.join(symbols)}\n"
+            f"매크로 분석: {macro_status}\n"
             f"결과 파일: {json_path}\n"
             f"노션 작성은 호스트 cron에서 처리됩니다",
             color='good'

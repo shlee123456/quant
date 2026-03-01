@@ -4,7 +4,6 @@ Scheduler package - modular scheduler components
 This package splits the monolithic scheduler.py into focused modules:
 - scheduler_core: APScheduler setup, job registration, heartbeat, watchdog
 - session_manager: Paper trading session start/stop/report
-- optimization_runner: Pre-market strategy optimization
 - db_maintenance: Database downsampling, cleanup, backup
 """
 
@@ -22,14 +21,6 @@ from trading_bot.scheduler.scheduler_state import (
     global_regime_detector,
     global_llm_client,
     max_sessions,
-    optimized_params,
-    optimized_strategy_class,
-)
-from trading_bot.scheduler.optimization_runner import (
-    optimize_strategy,
-    _create_kis_broker,
-    _get_symbol_exchange,
-    _fetch_real_market_data,
 )
 from trading_bot.scheduler.session_manager import (
     start_paper_trading,
@@ -63,12 +54,6 @@ __all__ = [
     'global_regime_detector',
     'global_llm_client',
     'max_sessions',
-    'optimized_params',
-    'optimized_strategy_class',
-    'optimize_strategy',
-    '_create_kis_broker',
-    '_get_symbol_exchange',
-    '_fetch_real_market_data',
     'start_paper_trading',
     'stop_paper_trading',
     'run_market_analysis',

@@ -12,11 +12,13 @@ Usage:
 """
 
 import logging
+import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 import feedparser
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +33,14 @@ class NewsCollector:
         "Federal Reserve interest rate",
     ]
 
-    def __init__(self, request_delay: float = 0.3):
+    def __init__(self, request_delay: float = 0.3, finnhub_api_key: str = None):
         """
         Args:
             request_delay: RSS 요청 간 대기 시간(초), rate limit 방지
+            finnhub_api_key: Finnhub API 키 (없으면 환경변수 FINNHUB_API_KEY 사용)
         """
         self.request_delay = request_delay
+        self.finnhub_api_key = finnhub_api_key or os.getenv('FINNHUB_API_KEY')
 
     def collect(self, symbols: List[str], max_per_symbol: int = 5) -> Dict:
         """
@@ -66,6 +70,10 @@ class NewsCollector:
                 logger.warning(f"{symbol} 뉴스 수집 실패: {e}")
                 continue
 
+        # Finnhub 보강 (API 키 있을 때만)
+        if self.finnhub_api_key:
+            self._enrich_with_finnhub(symbols, stock_news, max_per_symbol)
+
         logger.info(f"뉴스 수집 완료: 시장 {len(market_news)}건, 종목 {sum(len(v) for v in stock_news.values())}건")
 
         return {
@@ -93,15 +101,7 @@ class NewsCollector:
                 logger.warning(f"시장 뉴스 수집 실패 ({keyword}): {e}")
                 continue
 
-        # 중복 제거 (제목 기준) + max_items 제한
-        seen_titles = set()
-        unique_news = []
-        for item in all_news:
-            if item['title'] not in seen_titles:
-                seen_titles.add(item['title'])
-                unique_news.append(item)
-
-        return unique_news[:max_items]
+        return self._deduplicate_news(all_news)[:max_items]
 
     def _parse_rss(self, url: str, max_items: int = 5) -> List[Dict]:
         """RSS 피드를 파싱하여 뉴스 리스트 반환"""
@@ -145,3 +145,64 @@ class NewsCollector:
         except Exception as e:
             logger.warning(f"RSS 파싱 예외: {e}")
             return []
+
+    def _deduplicate_news(self, news_list: List[Dict]) -> List[Dict]:
+        """제목 기반 중복 제거"""
+        seen_titles = set()
+        unique = []
+        for item in news_list:
+            title = item.get('title', '')
+            if title and title not in seen_titles:
+                seen_titles.add(title)
+                unique.append(item)
+        return unique
+
+    def _fetch_finnhub_news(self, symbol: str, days_back: int = 3, max_items: int = 3) -> List[Dict]:
+        """Finnhub /company-news endpoint"""
+        today = datetime.now()
+        from_date = (today - timedelta(days=days_back)).strftime('%Y-%m-%d')
+        to_date = today.strftime('%Y-%m-%d')
+
+        url = 'https://finnhub.io/api/v1/company-news'
+        params = {
+            'symbol': symbol,
+            'from': from_date,
+            'to': to_date,
+            'token': self.finnhub_api_key,
+        }
+
+        try:
+            resp = requests.get(url, params=params, timeout=10)
+            resp.raise_for_status()
+            articles = resp.json()
+
+            if not isinstance(articles, list):
+                return []
+
+            news_items = []
+            for article in articles[:max_items]:
+                news_items.append({
+                    'title': article.get('headline', ''),
+                    'source': article.get('source', 'Finnhub'),
+                    'published': datetime.fromtimestamp(article.get('datetime', 0)).strftime('%Y-%m-%d %H:%M:%S') if article.get('datetime') else '',
+                    'link': article.get('url', ''),
+                })
+
+            return news_items
+        except Exception as e:
+            logger.debug(f"Finnhub 뉴스 조회 실패 ({symbol}): {e}")
+            return []
+
+    def _enrich_with_finnhub(self, symbols: List[str], stock_news: Dict, max_per_symbol: int):
+        """종목별 Finnhub 뉴스를 기존 stock_news에 병합 + 중복 제거"""
+        for symbol in symbols:
+            try:
+                finnhub_news = self._fetch_finnhub_news(symbol)
+                if finnhub_news:
+                    existing = stock_news.get(symbol, [])
+                    combined = existing + finnhub_news
+                    stock_news[symbol] = self._deduplicate_news(combined)[:max_per_symbol]
+                time.sleep(self.request_delay)
+            except Exception as e:
+                logger.debug(f"Finnhub 보강 실패 ({symbol}): {e}")
+                continue

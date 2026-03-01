@@ -513,6 +513,63 @@ class KoreaInvestmentBroker(BaseBroker):
                 raise OrderNotFound(f"주문을 찾을 수 없음: {order_id}")
             raise BrokerError(f"주문 조회 실패: {str(e)}")
 
+    def fetch_open_orders(
+        self,
+        symbol: Optional[str] = None,
+        overseas: bool = False,
+        market: str = 'NASDAQ'
+    ) -> List[Dict[str, Any]]:
+        """
+        미체결 주문 목록 조회.
+
+        Args:
+            symbol: 종목 코드 (None이면 전체)
+            overseas: 해외주식 여부
+            market: 해외주식 마켓
+
+        Returns:
+            미체결 주문 목록.
+
+        Example:
+            >>> orders = broker.fetch_open_orders(overseas=True)
+        """
+        self._rate_limiter.wait()
+
+        try:
+            account = self.api.account(self.account)
+
+            if overseas:
+                pending = account.pending_orders(overseas=market)
+            else:
+                pending = account.pending_orders()
+
+            orders = []
+            for order in pending:
+                order_symbol = getattr(order, 'symbol', None) or getattr(order, 'code', '')
+
+                # symbol 필터
+                if symbol and order_symbol != symbol:
+                    continue
+
+                orders.append({
+                    'id': str(getattr(order, 'order_id', '') or getattr(order, 'odno', '')),
+                    'symbol': order_symbol,
+                    'type': getattr(order, 'order_type', 'limit'),
+                    'side': 'buy' if getattr(order, 'side', '') in ('buy', '매수') else 'sell',
+                    'amount': float(getattr(order, 'qty', 0)),
+                    'price': float(getattr(order, 'price', 0)),
+                    'filled': float(getattr(order, 'filled_qty', 0) or 0),
+                    'remaining': float(getattr(order, 'remaining_qty', 0) or getattr(order, 'qty', 0)),
+                    'status': 'open',
+                    'timestamp': int(datetime.now().timestamp() * 1000),
+                    'info': order
+                })
+
+            return orders
+
+        except Exception as e:
+            raise BrokerError(f"미체결 주문 조회 실패: {str(e)}")
+
     def _format_ohlcv(self, data: Any) -> pd.DataFrame:
         """
         한국투자증권 API 응답을 표준 OHLCV DataFrame으로 변환.

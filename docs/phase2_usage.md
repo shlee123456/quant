@@ -252,19 +252,6 @@ docker-compose logs -f
 
 ## Advanced Configuration
 
-### Custom Schedule
-
-Edit `scheduler.py`:
-
-```python
-# Run optimization at different time
-scheduler.add_job(
-    optimize_strategy,
-    CronTrigger(hour=22, minute=30),  # 22:30 instead of 23:00
-    id='optimize_strategy'
-)
-```
-
 ### Custom Trading Hours
 
 ```python

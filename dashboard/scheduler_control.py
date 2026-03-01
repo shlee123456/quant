@@ -314,11 +314,6 @@ class SchedulerController:
             'timezone': 'Asia/Seoul (KST)',
             'schedules': [
                 {
-                    'time': '23:00 KST',
-                    'job': '전략 최적화',
-                    'description': '장 시작 전 전략 파라미터 최적화'
-                },
-                {
                     'time': '23:30 KST',
                     'job': '페이퍼 트레이딩 시작',
                     'description': '미국 시장 개장 (정규장 23:30-06:00)'

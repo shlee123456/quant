@@ -334,12 +334,6 @@ load_dotenv()
 
 scheduler = BlockingScheduler()
 
-def optimize_strategy():
-    """장 시작 30분 전: 전략 파라미터 최적화"""
-    print("전략 최적화 시작...")
-    # optimizer.optimize() 실행
-    # 최적 파라미터 저장
-
 def start_paper_trading():
     """장 시작: 모의투자 시작"""
     print("모의투자 시작...")
@@ -360,12 +354,6 @@ def stop_paper_trading():
     print("모의투자 중지...")
     # trader.stop()
     # 결과 리포트 생성 (CSV, 이메일 전송)
-
-# 미국 장 시작 30분 전 (한국 시간 23:00)
-scheduler.add_job(
-    optimize_strategy,
-    CronTrigger(hour=23, minute=0, timezone='Asia/Seoul')
-)
 
 # 미국 장 시작 (한국 시간 23:30)
 scheduler.add_job(

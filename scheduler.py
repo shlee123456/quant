@@ -2,7 +2,6 @@
 Automated Trading Scheduler
 
 Schedules paper trading sessions during US market hours:
-- Pre-market: 23:00 KST - Strategy optimization
 - Market open: 23:30 KST - Start paper trading
 - Market close: 06:00 KST - Stop trading and generate reports
 
@@ -66,20 +65,12 @@ from trading_bot.scheduler.scheduler_state import (  # noqa: E402
     preset_configs,
     notifier,
     preset_manager,
-    optimized_params,
-    optimized_strategy_class,
     scheduler_health,
     anomaly_detector,
     global_db,
     global_regime_detector,
     global_llm_client,
     max_sessions,
-)
-from trading_bot.scheduler.optimization_runner import (  # noqa: E402
-    optimize_strategy,
-    _create_kis_broker,
-    _get_symbol_exchange,
-    _fetch_real_market_data,
 )
 from trading_bot.scheduler.session_manager import (  # noqa: E402
     start_paper_trading,
@@ -247,7 +238,6 @@ def main():
         logger.info(f"최대 세션 수: {state.max_sessions}")
     logger.info("시간대: Asia/Seoul")
     logger.info("스케줄:")
-    logger.info("  23:00 KST - 전략 최적화")
     logger.info("  23:30 KST - 페이퍼 트레이딩 시작")
     logger.info("  06:00 KST - 트레이딩 중지 및 리포트")
     logger.info("  06:10 KST - 시장 분석 + 노션 작성")
@@ -257,20 +247,6 @@ def main():
     logger.info("=" * 60)
 
     # 스케줄 작업 추가
-
-    # 장전: 전략 최적화 (23:00 KST) - 공휴일/주말 건너뜀
-    def _scheduled_optimize():
-        if not _is_trading_day():
-            return
-        optimize_strategy()
-
-    scheduler.add_job(
-        _scheduled_optimize,
-        CronTrigger(hour=23, minute=0),
-        id='optimize_strategy',
-        name='전략 최적화',
-        misfire_grace_time=300  # 5분 유예 기간
-    )
 
     # 장 시작: 트레이딩 시작 (23:30 KST) - 공휴일/주말 건너뜀
     def _scheduled_start():

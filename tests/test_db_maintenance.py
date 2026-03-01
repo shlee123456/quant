@@ -360,7 +360,7 @@ class TestPruneOldData:
 
         result = db.prune_old_data(days_to_keep=30)
 
-        assert result == {'snapshots': 0, 'signals': 0, 'regimes': 0, 'llm_decisions': 0}
+        assert result == {'snapshots': 0, 'signals': 0, 'regimes': 0, 'llm_decisions': 0, 'pending_orders': 0}
 
         # Data still present
         assert len(db.get_session_snapshots('recent_session')) == 1
@@ -373,7 +373,7 @@ class TestPruneOldData:
 
         result = db.prune_old_data(days_to_keep=30)
 
-        assert result == {'snapshots': 0, 'signals': 0, 'regimes': 0, 'llm_decisions': 0}
+        assert result == {'snapshots': 0, 'signals': 0, 'regimes': 0, 'llm_decisions': 0, 'pending_orders': 0}
         assert len(db.get_session_snapshots('active_old')) == 1
 
     def test_prune_preserves_session_and_trade_records(self, db):
@@ -402,7 +402,7 @@ class TestPruneOldData:
     def test_prune_no_old_sessions(self, db):
         """No old sessions should return all zeros"""
         result = db.prune_old_data(days_to_keep=30)
-        assert result == {'snapshots': 0, 'signals': 0, 'regimes': 0, 'llm_decisions': 0}
+        assert result == {'snapshots': 0, 'signals': 0, 'regimes': 0, 'llm_decisions': 0, 'pending_orders': 0}
 
 
 class TestVacuum:

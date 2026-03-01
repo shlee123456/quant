@@ -82,6 +82,14 @@ except ImportError:
     FearGreedCollector = None
     _has_fear_greed = False
 
+# Market Intelligence (5-Layer analysis)
+try:
+    from .market_intelligence import MarketIntelligence
+    _has_market_intelligence = True
+except ImportError:
+    MarketIntelligence = None
+    _has_market_intelligence = False
+
 # Optional imports (require additional dependencies)
 try:
     from .data_handler import DataHandler
@@ -147,3 +155,17 @@ if _has_news_collector:
     __all__.append('NewsCollector')
 if _has_fear_greed:
     __all__.append('FearGreedCollector')
+if _has_market_intelligence:
+    __all__.append('MarketIntelligence')
+
+# Limit order system
+try:
+    from .limit_order import LimitOrderManager, PendingOrder
+    _has_limit_order = True
+except ImportError:
+    LimitOrderManager = None
+    PendingOrder = None
+    _has_limit_order = False
+
+if _has_limit_order:
+    __all__.extend(['LimitOrderManager', 'PendingOrder'])

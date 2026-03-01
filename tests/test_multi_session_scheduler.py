@@ -274,10 +274,16 @@ class TestMultiSessionManagement:
         assert len(active_traders) == initial_count
 
     @patch('trading_bot.scheduler.session_manager._create_kis_broker')
-    def test_start_single_session_with_preset_config(self, mock_get_kis):
+    @patch('trading_bot.scheduler.session_manager.TradingDatabase')
+    def test_start_single_session_with_preset_config(self, mock_db_cls, mock_get_kis):
         """프리셋 설정이 올바르게 적용되는지 확인"""
         mock_broker = MockBroker()
         mock_get_kis.return_value = mock_broker
+
+        # TradingDatabase를 mock하여 실제 DB에 세션이 생성되지 않도록 함
+        mock_db = MagicMock()
+        mock_db.create_session.return_value = "test_session_id"
+        mock_db_cls.return_value = mock_db
 
         config = {
             '_preset_name': '테스트 프리셋',
@@ -447,11 +453,10 @@ class TestSchedulerController:
             info = controller.get_schedule_info()
 
             assert info['timezone'] == 'Asia/Seoul (KST)'
-            assert len(info['schedules']) == 3
+            assert len(info['schedules']) == 2
 
             # 스케줄 시간 확인
             schedule_times = [s['time'] for s in info['schedules']]
-            assert '23:00 KST' in schedule_times
             assert '23:30 KST' in schedule_times
             assert '06:00 KST' in schedule_times
 

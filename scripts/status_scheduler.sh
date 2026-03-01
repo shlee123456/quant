@@ -27,7 +27,6 @@ if pgrep -f "python.*scheduler.py" > /dev/null; then
 
     echo ""
     echo "📅 스케줄:"
-    echo "  - 23:00 KST: 전략 최적화"
     echo "  - 23:30 KST: Paper Trading 시작"
     echo "  - 06:00 KST: Trading 종료 및 리포트"
     echo ""
