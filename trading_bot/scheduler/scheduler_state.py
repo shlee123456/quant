@@ -2,7 +2,8 @@
 Shared scheduler state - global variables and constants used across scheduler modules.
 
 This module centralizes all mutable global state that was previously scattered
-throughout the monolithic scheduler.py.
+throughout the monolithic scheduler.py. State is encapsulated in SchedulerContext
+so that tests can create isolated instances.
 """
 
 import os
@@ -55,41 +56,51 @@ STRATEGY_CLASS_MAP = {
     'RSI+MACD Combo Strategy': RSIMACDComboStrategy,
 }
 
-# Multi-session management (label -> PaperTrader)
-active_traders: Dict = {}
-trader_threads: Dict = {}
-traders_lock = threading.Lock()
 
-# Global notification service
-notifier = NotificationService()
+class SchedulerContext:
+    """스케줄러 전역 상태를 캡슐화하는 컨텍스트 객체.
 
-# Global preset manager
-preset_manager = StrategyPresetManager()
+    테스트에서 독립 인스턴스를 생성하면 상태가 격리됩니다.
+    """
 
-# Global health + anomaly detector
-scheduler_health = SchedulerHealth()
-anomaly_detector = AnomalyDetector()
+    def __init__(self):
+        self.active_traders: Dict = {}
+        self.trader_threads: Dict = {}
+        self.traders_lock = threading.Lock()
+        self.notifier = NotificationService()
+        self.preset_manager = StrategyPresetManager()
+        self.scheduler_health = SchedulerHealth()
+        self.anomaly_detector = AnomalyDetector()
+        self.global_db = TradingDatabase()
+        self.max_sessions: int = 0
+        self.preset_configs: List[Dict] = []
+        self.global_regime_detector = RegimeDetector() if _has_regime else None
+        self.global_llm_client = None
+        if _has_llm:
+            _llm_config = LLMConfig(
+                base_url=os.getenv('LLM_BASE_URL', 'http://192.168.45.222:8080'),
+                enabled=os.getenv('LLM_ENABLED', 'true').lower() in ('true', '1', 'yes'),
+            )
+            self.global_llm_client = LLMClient(_llm_config)
+        self.global_broker = None
 
-# Global DB (for command polling, zombie recovery)
-global_db = TradingDatabase()
 
-# Maximum concurrent sessions (0 = unlimited)
-max_sessions = 0
+# Default singleton context used by the scheduler at runtime.
+ctx = SchedulerContext()
 
-# Global regime detector + LLM client (optional)
-global_regime_detector = RegimeDetector() if _has_regime else None
-global_llm_client = None
-if _has_llm:
-    _llm_config = LLMConfig(
-        base_url=os.getenv('LLM_BASE_URL', 'http://192.168.45.222:8080'),
-        enabled=os.getenv('LLM_ENABLED', 'true').lower() in ('true', '1', 'yes'),
-    )
-    global_llm_client = LLMClient(_llm_config)
-
-# Shared KIS broker instance for multi-preset sessions.
-# When set, all presets reuse this single broker (and its RateLimiter)
-# instead of each creating a separate one.
-global_broker = None
-
-# Preset configs loaded from CLI (--preset/--presets)
-preset_configs: List[Dict] = []
+# Module-level aliases for mutable objects (backward compatible).
+# These point to the *same* mutable containers inside ctx, so mutations
+# through either name are visible everywhere.
+# NOTE: max_sessions and global_broker are reassigned (not mutated),
+# so they CANNOT be aliased here — use ctx.max_sessions / ctx.global_broker.
+active_traders = ctx.active_traders
+trader_threads = ctx.trader_threads
+traders_lock = ctx.traders_lock
+notifier = ctx.notifier
+preset_manager = ctx.preset_manager
+scheduler_health = ctx.scheduler_health
+anomaly_detector = ctx.anomaly_detector
+global_db = ctx.global_db
+preset_configs = ctx.preset_configs
+global_regime_detector = ctx.global_regime_detector
+global_llm_client = ctx.global_llm_client

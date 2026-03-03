@@ -60,9 +60,9 @@ class StochasticStrategy(BaseStrategy):
         data['highest_high'] = data['high'].rolling(window=self.k_period).max()
 
         # Calculate %K: (Current Close - Lowest Low) / (Highest High - Lowest Low) * 100
+        denom = (data['highest_high'] - data['lowest_low']).replace(0, np.nan)
         data['stochastic_k'] = (
-            (data['close'] - data['lowest_low']) /
-            (data['highest_high'] - data['lowest_low']) * 100
+            (data['close'] - data['lowest_low']) / denom * 100
         )
 
         # Calculate %D: SMA of %K
@@ -111,8 +111,8 @@ class StochasticStrategy(BaseStrategy):
             'signal'
         ] = -1
 
-        # Position tracking (1 = long, 0 = no position)
-        data['position'] = data['signal'].replace(0, np.nan).ffill().fillna(0)
+        # Position tracking
+        self.apply_position_tracking(data)
 
         return data
 

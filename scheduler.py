@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 # in tests and examples continue to work.
 from trading_bot.scheduler.scheduler_state import (  # noqa: E402
     STRATEGY_CLASS_MAP,
+    ctx,
     active_traders,
     trader_threads,
     traders_lock,
@@ -70,7 +71,6 @@ from trading_bot.scheduler.scheduler_state import (  # noqa: E402
     global_db,
     global_regime_detector,
     global_llm_client,
-    max_sessions,
 )
 from trading_bot.scheduler.session_manager import (  # noqa: E402
     start_paper_trading,
@@ -159,7 +159,7 @@ def main():
         return
 
     # 최대 세션 수 설정
-    state.max_sessions = args.max_sessions
+    state.ctx.max_sessions = args.max_sessions
 
     # 프리셋 이름 목록 통합 (--preset -> 1개짜리 리스트로 변환)
     preset_names: List[str] = []
@@ -234,8 +234,8 @@ def main():
             logger.info(f"  - {cfg['_preset_name']} ({cfg['strategy']})")
     else:
         logger.info("프리셋: 없음 (기본 설정 1개 세션)")
-    if state.max_sessions > 0:
-        logger.info(f"최대 세션 수: {state.max_sessions}")
+    if state.ctx.max_sessions > 0:
+        logger.info(f"최대 세션 수: {state.ctx.max_sessions}")
     logger.info("시간대: Asia/Seoul")
     logger.info("스케줄:")
     logger.info("  23:30 KST - 페이퍼 트레이딩 시작")
@@ -320,7 +320,7 @@ def main():
         f"PID: {os.getpid()}\n"
         f"프리셋: {len(state.preset_configs)}개\n"
         f"복구 세션: {recovered_count}개\n"
-        f"최대 세션: {'무제한' if state.max_sessions == 0 else state.max_sessions}",
+        f"최대 세션: {'무제한' if state.ctx.max_sessions == 0 else state.ctx.max_sessions}",
         color='good'
     )
 

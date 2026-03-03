@@ -60,8 +60,11 @@ class RSIStrategy(BaseStrategy):
         avg_losses = losses.ewm(span=self.period, min_periods=self.period, adjust=False).mean()
 
         # Calculate RS and RSI
-        rs = avg_gains / avg_losses
+        # avg_losses==0 & avg_gains>0 → RSI=100, both==0 → RSI=NaN
+        rs = avg_gains / avg_losses.replace(0, np.nan)
         rsi = 100 - (100 / (1 + rs))
+        fill = pd.Series(np.where(avg_gains > 0, 100.0, np.nan), index=rsi.index)
+        rsi = rsi.fillna(fill)
 
         return rsi
 
@@ -105,11 +108,8 @@ class RSIStrategy(BaseStrategy):
             'signal'
         ] = -1
 
-        # Position tracking (1 = long, 0 = flat)
-        # Buy signal (1) -> position = 1
-        # Sell signal (-1) -> position = 0
-        # Hold (0) -> maintain previous position
-        data['position'] = data['signal'].replace(0, np.nan).ffill().fillna(0).clip(lower=0).astype(int)
+        # Position tracking
+        self.apply_position_tracking(data)
 
         return data
 

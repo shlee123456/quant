@@ -58,46 +58,47 @@
   - `trading_bot/strategies/bollinger_bands_strategy.py` — `(upper - lower)` = 0
   - `trading_bot/strategies/rsi_strategy.py` — `avg_losses` = 0
 - **작업**:
-  - [ ] 각 전략에 epsilon 또는 `.replace(0, np.nan)` 방어 코드 추가
-  - [ ] 테스트: 플랫 마켓(모든 가격 동일) 시나리오
+  - [x] 각 전략에 `.replace(0, np.nan)` 방어 코드 추가 (RSI, Stochastic, Bollinger, RSI+MACD Combo)
+  - [x] 테스트: 플랫 마켓(모든 가격 동일) 시나리오 (12건 통과)
 
 ### Task 1-2: 전략 공통 코드 BaseStrategy 통합
 - **파일**: `trading_bot/strategies/base_strategy.py` + 모든 전략 파일
 - **문제**: signal → position 변환 로직이 5개 전략에 동일 반복
 - **작업**:
-  - [ ] `BaseStrategy.apply_position_tracking(data)` mixin 메서드 추가
-  - [ ] 각 전략에서 중복 코드 제거, mixin 호출로 대체
-  - [ ] 전략 파라미터 생성자 검증 추가 (bounds, type)
+  - [x] `BaseStrategy.apply_position_tracking(data)` mixin 메서드 추가
+  - [x] 각 전략에서 중복 코드 제거, mixin 호출로 대체 (Stochastic `.clip(lower=0).astype(int)` 누락 버그도 수정)
+  - [ ] 전략 파라미터 생성자 검증 추가 (bounds, type) — 별도 태스크로 분리
 
 ### Task 1-3: DB 트랜잭션 격리
 - **파일**: `trading_bot/paper_trader.py`
 - **문제**: 상태 변경(Lock 내) → DB 쓰기(Lock 외) 사이 크래시 시 불일치
 - **작업**:
-  - [ ] `execute_buy/sell` 내 상태 변경 + DB 쓰기를 atomic batch로 묶기
-  - [ ] `trading_database.py`에 batch write 메서드 추가
+  - [x] `execute_buy/sell` 내 `_log_trade()` + `db.log_trade()` 호출을 Lock 내부로 이동
+  - [x] 테스트: Lock 내 DB 쓰기 호출 순서 검증 (기존 테스트 전체 통과)
 
 ### Task 1-4: Sharpe Ratio 동적 주기 계산
 - **파일**: `trading_bot/backtester.py:247`
 - **문제**: `np.sqrt(252)` 하드코딩 → 시간봉/주봉에서 부정확
 - **작업**:
-  - [ ] timeframe 파라미터 추가 또는 DataFrame index에서 자동 감지
-  - [ ] 연환산 계수 매핑: `{'1h': sqrt(252*6.5), '1d': sqrt(252), '1w': sqrt(52)}`
+  - [x] `Backtester.__init__`에 `timeframe='1d'` 파라미터 추가 (하위 호환)
+  - [x] `performance_calculator.ANNUALIZATION_FACTORS` 재사용으로 동적 계수 적용
+  - [x] 테스트: timeframe별 Sharpe Ratio 배율 검증 (3건 통과)
 
 ### Task 1-5: 스케줄러 전역 상태 캡슐화
-- **파일**: `trading_bot/scheduler/scheduler_state.py`
+- **파일**: `trading_bot/scheduler/scheduler_state.py`, `session_manager.py`, `scheduler.py`(루트), `__init__.py`
 - **문제**: 모듈 레벨 mutable dict → 테스트 격리 불가, 레이스 컨디션
 - **작업**:
-  - [ ] `SchedulerContext` 클래스 생성
-  - [ ] 기존 global 변수를 context 속성으로 이동
-  - [ ] scheduler_core.py, session_manager.py에서 context 참조로 전환
+  - [x] `SchedulerContext` 클래스 생성 (13개 전역 변수 캡슐화)
+  - [x] 하위 호환 모듈 레벨 별칭 유지 (mutable 객체), 재할당 변수(`max_sessions`, `global_broker`)는 `ctx.xxx` 사용
+  - [x] `scheduler.py`, `session_manager.py`에서 `state.ctx.max_sessions`, `state.ctx.global_broker` 참조로 전환
+  - [x] 테스트: `SchedulerContext` 독립 인스턴스 격리 확인 (기존 테스트 통과)
 
 ### Task 1-6: 대시보드 Streamlit 캐싱 적용
-- **파일들**: `dashboard/tabs/*.py`, `dashboard/kis_broker.py`
+- **파일**: `dashboard/yfinance_helper.py`
 - **문제**: `@st.cache_data` 미사용 → 매 rerun API 호출, UI 느림
 - **작업**:
-  - [ ] `fetch_ticker`, `fetch_ohlcv`에 `@st.cache_data(ttl=60)` 적용
-  - [ ] `@st.cache_resource`로 브로커 싱글턴 관리
-  - [ ] 테스트: 캐시 적중률 확인
+  - [x] `fetch_ticker_yfinance`, `fetch_ohlcv_yfinance`에 `@st.cache_data(ttl=60, show_spinner=False)` 적용
+  - [x] KIS 브로커는 기존 `st.session_state` 패턴 유지 (안정적 동작 유지)
 
 ---
 

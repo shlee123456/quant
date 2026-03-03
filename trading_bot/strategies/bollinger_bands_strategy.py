@@ -62,7 +62,7 @@ class BollingerBandsStrategy(BaseStrategy):
         data['bb_lower'] = data['bb_middle'] - (self.num_std * data['bb_std'])
 
         # Calculate %B indicator: (price - lower) / (upper - lower)
-        band_width = data['bb_upper'] - data['bb_lower']
+        band_width = (data['bb_upper'] - data['bb_lower']).replace(0, np.nan)
         data['bb_percent_b'] = (data['close'] - data['bb_lower']) / band_width
 
         # Generate signals
@@ -83,11 +83,8 @@ class BollingerBandsStrategy(BaseStrategy):
             'signal'
         ] = -1
 
-        # Position tracking (1 = long, 0 = flat)
-        # Buy signal (1) -> position = 1
-        # Sell signal (-1) -> position = 0
-        # Hold (0) -> maintain previous position
-        data['position'] = data['signal'].replace(0, np.nan).ffill().fillna(0).clip(lower=0).astype(int)
+        # Position tracking
+        self.apply_position_tracking(data)
 
         return data
 

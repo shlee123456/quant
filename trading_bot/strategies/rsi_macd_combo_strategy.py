@@ -66,8 +66,11 @@ class RSIMACDComboStrategy(BaseStrategy):
         avg_gains = gains.ewm(span=self.rsi_period, min_periods=self.rsi_period, adjust=False).mean()
         avg_losses = losses.ewm(span=self.rsi_period, min_periods=self.rsi_period, adjust=False).mean()
 
-        rs = avg_gains / avg_losses
+        # avg_losses==0 & avg_gains>0 → RSI=100, both==0 → RSI=NaN
+        rs = avg_gains / avg_losses.replace(0, np.nan)
         rsi = 100 - (100 / (1 + rs))
+        fill = pd.Series(np.where(avg_gains > 0, 100.0, np.nan), index=rsi.index)
+        rsi = rsi.fillna(fill)
 
         return rsi
 
@@ -122,7 +125,7 @@ class RSIMACDComboStrategy(BaseStrategy):
         data.loc[sell_condition_rsi | sell_condition_macd, 'signal'] = -1
 
         # 4. 포지션 추적
-        data['position'] = data['signal'].replace(0, np.nan).ffill().fillna(0).clip(lower=0).astype(int)
+        self.apply_position_tracking(data)
 
         return data
 
