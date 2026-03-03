@@ -35,6 +35,7 @@ from typing import Dict, List, Optional, Any
 import pandas as pd
 from datetime import datetime, timedelta
 import time
+import threading
 
 from .base_broker import (
     BaseBroker,
@@ -705,23 +706,26 @@ class RateLimiter:
         self.max_calls = max_calls
         self.period = period
         self.calls: List[float] = []
+        self._lock = threading.RLock()
 
     def wait(self):
         """
         API 호출 전 대기 (필요 시).
 
         호출 제한을 초과할 경우 자동으로 대기합니다.
+        스레드 안전: 내부 RLock으로 self.calls 접근을 보호합니다.
         """
-        now = time.time()
+        with self._lock:
+            now = time.time()
 
-        # 기간 이전의 호출 기록 제거
-        self.calls = [call_time for call_time in self.calls if call_time > now - self.period]
+            # 기간 이전의 호출 기록 제거
+            self.calls = [call_time for call_time in self.calls if call_time > now - self.period]
 
-        # 호출 제한 초과 시 대기
-        if len(self.calls) >= self.max_calls:
-            sleep_time = self.period - (now - self.calls[0])
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            # 호출 제한 초과 시 대기
+            if len(self.calls) >= self.max_calls:
+                sleep_time = self.period - (now - self.calls[0])
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
-        # 현재 호출 기록 추가
-        self.calls.append(time.time())
+            # 현재 호출 기록 추가
+            self.calls.append(time.time())

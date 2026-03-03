@@ -116,8 +116,12 @@ def _start_single_session(label: str, config: Optional[Dict]):
             return
 
     try:
-        # 브로커 초기화
-        broker = _create_kis_broker()
+        # 브로커 초기화 (공유 브로커가 있으면 재사용)
+        if state.global_broker is not None:
+            broker = state.global_broker
+            logger.info(f"{log_prefix} 공유 브로커 재사용")
+        else:
+            broker = _create_kis_broker()
         if not broker:
             logger.error(f"{log_prefix} ✗ KIS 브로커 초기화 실패 - 세션을 시작할 수 없습니다")
             state.notifier.notify_error(f"KIS 브로커 초기화 실패", context=f"세션 시작: {label}")
@@ -247,6 +251,14 @@ def start_paper_trading():
 
     if state.preset_configs:
         logger.info(f"총 {len(state.preset_configs)}개 프리셋 세션 시작")
+
+        # 멀티 프리셋: 공유 브로커를 한 번만 생성하여 RateLimiter를 공유
+        if len(state.preset_configs) > 1 and state.global_broker is None:
+            shared = _create_kis_broker()
+            if shared:
+                state.global_broker = shared
+                logger.info("멀티 프리셋용 공유 브로커 초기화 완료")
+
         for cfg in state.preset_configs:
             label = cfg.get('_preset_name', 'unknown')
             _start_single_session(label, cfg)
@@ -438,6 +450,42 @@ def run_market_analysis():
                 logger.info("매크로 분석 건너뜀 (yfinance 미설치 또는 데이터 없음)")
         except Exception as e:
             logger.warning(f"매크로 분석 실패 (개별 종목 분석은 정상): {e}")
+
+        # 5-Layer Market Intelligence (v2)
+        try:
+            from trading_bot.market_intelligence import MarketIntelligence
+            mi = MarketIntelligence()
+            intel_report = mi.analyze(
+                stock_symbols=symbols,
+                stocks_data=result.get('stocks', {}),
+                news_data=result.get('news'),
+                fear_greed_data=result.get('fear_greed_index'),
+            )
+            result['intelligence'] = intel_report
+            logger.info(
+                f"5-Layer Intelligence: "
+                f"score={intel_report['overall']['score']}, "
+                f"signal={intel_report['overall']['signal']}"
+            )
+        except ImportError:
+            logger.info("MarketIntelligence not available - skipping")
+        except Exception as e:
+            logger.warning(f"Market Intelligence failed (analysis continues): {e}")
+
+        # 시그널 성과 추적 (v2)
+        if os.getenv('SIGNAL_TRACKING_ENABLED', 'true').lower() == 'true':
+            try:
+                from trading_bot.signal_tracker import SignalTracker
+                tracker = SignalTracker()
+                count = tracker.log_daily_signals(result)
+                logger.info(f"시그널 기록: {count}건")
+                updated = tracker.update_pending_outcomes()
+                logger.info(f"과거 시그널 성과 측정: {updated}건 업데이트")
+                tracker.calculate_accuracy_stats(
+                    result.get('date', datetime.now().strftime('%Y-%m-%d'))
+                )
+            except Exception as e:
+                logger.warning(f"시그널 추적 실패 (분석 계속): {e}")
 
         # JSON 저장
         json_path = analyzer.save_json(result)

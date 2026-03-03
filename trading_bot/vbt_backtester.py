@@ -104,8 +104,11 @@ class VBTBacktester:
             avg_win = 0.0
             avg_loss = 0.0
 
-        # 호환성을 위해 equity curve 저장
-        self.equity_curve = pf.value().tolist()
+        # trades 리스트를 레거시 형식으로 변환 (orders에서 BUY/SELL 추출)
+        self.trades = self._extract_trades(pf, records)
+
+        # equity curve를 레거시 Dict 형식으로 변환
+        self.equity_curve = self._build_equity_curve(pf, df)
 
         return {
             'initial_capital': self.initial_capital,
@@ -124,9 +127,65 @@ class VBTBacktester:
             'end_date': df.index[-1],
         }
 
+    def _extract_trades(self, pf, trade_records: pd.DataFrame) -> list:
+        """VBT 거래 레코드를 레거시 Backtester 형식의 trade list로 변환"""
+        legacy_trades = []
+        order_records = pf.orders.records_readable
+
+        # orders를 BUY/SELL 쌍으로 변환
+        for _, order in order_records.iterrows():
+            trade = {
+                'timestamp': order['Timestamp'],
+                'type': 'BUY' if order['Side'] == 'Buy' else 'SELL',
+                'price': float(order['Price']),
+                'size': float(order['Size']),
+                'commission': float(order['Fees']),
+                'slippage_cost': 0.0,
+            }
+            legacy_trades.append(trade)
+
+        # SELL 거래에 pnl, pnl_pct 추가 (trade_records에서 매칭)
+        sell_idx = 0
+        for t in legacy_trades:
+            if t['type'] == 'SELL' and sell_idx < len(trade_records):
+                rec = trade_records.iloc[sell_idx]
+                t['pnl'] = float(rec['PnL'])
+                t['pnl_pct'] = float(rec['Return'] * 100)
+                sell_idx += 1
+
+        return legacy_trades
+
+    def _build_equity_curve(self, pf, df: pd.DataFrame) -> list:
+        """VBT Portfolio에서 레거시 형식의 equity curve 생성"""
+        equity_values = pf.value()
+        close_prices = df['close']
+        position_sizes = pf.asset_flow().cumsum()
+
+        curve = []
+        for ts in df.index:
+            curve.append({
+                'timestamp': ts,
+                'equity': float(equity_values.loc[ts]),
+                'price': float(close_prices.loc[ts]),
+                'position': float(position_sizes.loc[ts]),
+            })
+        return curve
+
     def _no_trade_results(self, df: pd.DataFrame) -> Dict:
         """거래가 없을 때의 결과"""
-        self.equity_curve = [self.initial_capital] * len(df) if len(df) > 0 else []
+        self.trades = []
+        if len(df) > 0:
+            self.equity_curve = [
+                {
+                    'timestamp': ts,
+                    'equity': self.initial_capital,
+                    'price': float(df.loc[ts, 'close']),
+                    'position': 0.0,
+                }
+                for ts in df.index
+            ]
+        else:
+            self.equity_curve = []
         return {
             'initial_capital': self.initial_capital,
             'final_capital': self.initial_capital,
@@ -146,6 +205,7 @@ class VBTBacktester:
 
     def _empty_results(self, df: pd.DataFrame) -> Dict:
         """빈 DataFrame일 때의 결과"""
+        self.trades = []
         self.equity_curve = []
         return {
             'initial_capital': self.initial_capital,
