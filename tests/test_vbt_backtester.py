@@ -131,6 +131,17 @@ class TestVBTBacktesterWithRSI:
         bt.run(sample_data)
 
         assert len(bt.equity_curve) == len(sample_data)
+        # 레거시 형식: List[Dict]
+        assert isinstance(bt.equity_curve[0], dict)
+
+    def test_trades_populated_when_signals_exist(self, sample_data):
+        strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+        bt = VBTBacktester(strategy)
+        result = bt.run(sample_data)
+
+        if result['total_trades'] > 0:
+            assert len(bt.trades) > 0
+            assert isinstance(bt.trades[0], dict)
 
     def test_with_macd_strategy(self, sample_data):
         strategy = MACDStrategy(fast_period=12, slow_period=26, signal_period=9)
@@ -278,3 +289,198 @@ class TestVBTBacktesterReasonableValues:
         result = bt.run(sample_data)
 
         assert result['max_drawdown'] >= -100.0
+
+
+class TestVBTTradesFormat:
+    """self.trades가 레거시 Backtester와 동일한 Dict 형식인지 검증"""
+
+    def test_trades_is_list_of_dicts(self, volatile_data):
+        strategy = RSIStrategy(period=10, overbought=65, oversold=35)
+        bt = VBTBacktester(strategy)
+        result = bt.run(volatile_data)
+
+        assert isinstance(bt.trades, list)
+        if result['total_trades'] > 0:
+            for t in bt.trades:
+                assert isinstance(t, dict)
+
+    def test_buy_trade_has_required_keys(self, volatile_data):
+        strategy = RSIStrategy(period=10, overbought=65, oversold=35)
+        bt = VBTBacktester(strategy)
+        result = bt.run(volatile_data)
+
+        if result['total_trades'] > 0:
+            buy_trades = [t for t in bt.trades if t['type'] == 'BUY']
+            assert len(buy_trades) > 0, "Should have at least one BUY trade"
+            for t in buy_trades:
+                assert 'timestamp' in t
+                assert 'type' in t
+                assert 'price' in t
+                assert 'size' in t
+                assert 'commission' in t
+                assert t['type'] == 'BUY'
+                assert t['price'] > 0
+                assert t['size'] > 0
+
+    def test_sell_trade_has_pnl(self, volatile_data):
+        strategy = RSIStrategy(period=10, overbought=65, oversold=35)
+        bt = VBTBacktester(strategy)
+        result = bt.run(volatile_data)
+
+        if result['total_trades'] > 0:
+            sell_trades = [t for t in bt.trades if t['type'] == 'SELL']
+            assert len(sell_trades) > 0, "Should have at least one SELL trade"
+            for t in sell_trades:
+                assert 'pnl' in t, "SELL trade must have pnl"
+                assert 'pnl_pct' in t, "SELL trade must have pnl_pct"
+                assert isinstance(t['pnl'], float)
+                assert isinstance(t['pnl_pct'], float)
+
+    def test_trades_alternate_buy_sell(self, volatile_data):
+        """거래가 BUY-SELL 쌍으로 교대하는지 확인"""
+        strategy = RSIStrategy(period=10, overbought=65, oversold=35)
+        bt = VBTBacktester(strategy)
+        result = bt.run(volatile_data)
+
+        if result['total_trades'] > 0:
+            types = [t['type'] for t in bt.trades]
+            for i in range(0, len(types) - 1, 2):
+                assert types[i] == 'BUY'
+                if i + 1 < len(types):
+                    assert types[i + 1] == 'SELL'
+
+    def test_trades_empty_when_no_signals(self, empty_data):
+        strategy = RSIStrategy()
+        bt = VBTBacktester(strategy)
+        bt.run(empty_data)
+
+        assert bt.trades == []
+
+    def test_get_trades_df_works(self, volatile_data):
+        """get_trades_df가 DataFrame을 반환하고 레거시와 호환"""
+        strategy = RSIStrategy(period=10, overbought=65, oversold=35)
+        bt = VBTBacktester(strategy)
+        result = bt.run(volatile_data)
+
+        trades_df = pd.DataFrame(bt.trades)
+        if result['total_trades'] > 0:
+            assert len(trades_df) > 0
+            assert 'type' in trades_df.columns
+            assert 'price' in trades_df.columns
+
+
+class TestVBTEquityCurveFormat:
+    """self.equity_curve가 레거시 List[Dict] 형식인지 검증"""
+
+    def test_equity_curve_is_list_of_dicts(self, sample_data):
+        strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+        bt = VBTBacktester(strategy)
+        bt.run(sample_data)
+
+        assert isinstance(bt.equity_curve, list)
+        assert len(bt.equity_curve) == len(sample_data)
+        for entry in bt.equity_curve:
+            assert isinstance(entry, dict)
+
+    def test_equity_curve_has_required_keys(self, sample_data):
+        strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+        bt = VBTBacktester(strategy)
+        bt.run(sample_data)
+
+        required_keys = {'timestamp', 'equity', 'price', 'position'}
+        for entry in bt.equity_curve:
+            missing = required_keys - set(entry.keys())
+            assert not missing, f"Missing keys in equity_curve entry: {missing}"
+
+    def test_equity_curve_values_types(self, sample_data):
+        strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+        bt = VBTBacktester(strategy)
+        bt.run(sample_data)
+
+        for entry in bt.equity_curve:
+            assert isinstance(entry['equity'], float)
+            assert isinstance(entry['price'], float)
+            assert isinstance(entry['position'], (int, float))
+            assert entry['equity'] > 0
+            assert entry['price'] > 0
+
+    def test_equity_curve_timestamps_match_data(self, sample_data):
+        strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+        bt = VBTBacktester(strategy)
+        bt.run(sample_data)
+
+        curve_timestamps = [e['timestamp'] for e in bt.equity_curve]
+        assert curve_timestamps == list(sample_data.index)
+
+    def test_equity_curve_df_compatible(self, sample_data):
+        """pd.DataFrame(equity_curve)가 레거시와 동일한 컬럼을 가지는지"""
+        strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+        bt = VBTBacktester(strategy)
+        bt.run(sample_data)
+
+        equity_df = pd.DataFrame(bt.equity_curve)
+        assert 'timestamp' in equity_df.columns
+        assert 'equity' in equity_df.columns
+        assert 'price' in equity_df.columns
+        assert 'position' in equity_df.columns
+
+    def test_equity_curve_no_trade_scenario(self):
+        """거래 없을 때도 equity_curve가 Dict 형식"""
+        gen = SimulationDataGenerator(seed=42)
+        short_df = gen.generate_ohlcv(periods=5, volatility=0.001)
+        strategy = RSIStrategy(period=14, overbought=99, oversold=1)
+        bt = VBTBacktester(strategy)
+        bt.run(short_df)
+
+        assert isinstance(bt.equity_curve, list)
+        if len(bt.equity_curve) > 0:
+            assert isinstance(bt.equity_curve[0], dict)
+            assert 'timestamp' in bt.equity_curve[0]
+            assert 'equity' in bt.equity_curve[0]
+
+    def test_equity_curve_empty_when_empty_df(self, empty_data):
+        strategy = RSIStrategy()
+        bt = VBTBacktester(strategy)
+        bt.run(empty_data)
+
+        assert bt.equity_curve == []
+
+
+class TestVBTLegacyFormatCompatibility:
+    """VBTBacktester와 Backtester의 trades/equity_curve 형식 호환성 비교"""
+
+    def test_equity_curve_same_structure(self, sample_data):
+        """두 백테스터의 equity_curve가 동일한 Dict 키를 가지는지"""
+        strategy = RSIStrategy(period=14, overbought=70, oversold=30)
+
+        legacy = Backtester(strategy, initial_capital=10000.0)
+        vbt_bt = VBTBacktester(strategy, initial_capital=10000.0)
+
+        legacy.run(sample_data)
+        vbt_bt.run(sample_data)
+
+        if len(legacy.equity_curve) > 0 and len(vbt_bt.equity_curve) > 0:
+            legacy_keys = set(legacy.equity_curve[0].keys())
+            vbt_keys = set(vbt_bt.equity_curve[0].keys())
+            assert legacy_keys == vbt_keys, (
+                f"Equity curve key mismatch: legacy={legacy_keys}, vbt={vbt_keys}"
+            )
+
+    def test_trades_sell_has_pnl_like_legacy(self, volatile_data):
+        """VBT SELL 거래에 pnl이 있는지 (레거시와 동일)"""
+        strategy = RSIStrategy(period=10, overbought=65, oversold=35)
+
+        legacy = Backtester(strategy, initial_capital=10000.0)
+        vbt_bt = VBTBacktester(strategy, initial_capital=10000.0)
+
+        r_legacy = legacy.run(volatile_data)
+        r_vbt = vbt_bt.run(volatile_data)
+
+        if r_legacy['total_trades'] > 0:
+            legacy_sells = [t for t in legacy.trades if 'pnl' in t]
+            assert len(legacy_sells) > 0
+
+        if r_vbt['total_trades'] > 0:
+            vbt_sells = [t for t in vbt_bt.trades if t['type'] == 'SELL']
+            for t in vbt_sells:
+                assert 'pnl' in t, "VBT SELL trade missing pnl key"
