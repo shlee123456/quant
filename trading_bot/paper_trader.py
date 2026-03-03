@@ -341,19 +341,19 @@ class PaperTrader:
 
             self._portfolio.record_trade(trade)
 
-        self._log_trade(trade)
+            self._log_trade(trade)
 
-        # Verify execution
+            # Log to database
+            if self.db and self.session_id:
+                self.db.log_trade(self.session_id, trade)
+
+        # Verify execution (read-only, outside lock)
         if self.enable_verification:
             is_valid, msg = self._execution_verifier.verify_execution(
                 expected_signal=1, executed_trade=trade, current_position=prev_position
             )
             if not is_valid:
                 logger.warning(f"실행 검증 실패 [{symbol}]: {msg}")
-
-        # Log to database
-        if self.db and self.session_id:
-            self.db.log_trade(self.session_id, trade)
 
         logger.info(f"[BUY] {symbol} {timestamp}")
         logger.debug(f"Price: ${price:.2f}")
@@ -414,19 +414,19 @@ class PaperTrader:
             self.positions[symbol] = 0
             self.entry_prices[symbol] = 0
 
-        self._log_trade(trade)
+            self._log_trade(trade)
 
-        # Verify execution
+            # Log to database
+            if self.db and self.session_id:
+                self.db.log_trade(self.session_id, trade)
+
+        # Verify execution (read-only, outside lock)
         if self.enable_verification:
             is_valid, msg = self._execution_verifier.verify_execution(
                 expected_signal=-1, executed_trade=trade, current_position=prev_position
             )
             if not is_valid:
                 logger.warning(f"실행 검증 실패 [{symbol}]: {msg}")
-
-        # Log to database
-        if self.db and self.session_id:
-            self.db.log_trade(self.session_id, trade)
 
     def update(self, symbol: str, timeframe: str):
         """
