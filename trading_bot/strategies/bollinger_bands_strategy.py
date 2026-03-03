@@ -62,7 +62,7 @@ class BollingerBandsStrategy(BaseStrategy):
         data['bb_lower'] = data['bb_middle'] - (self.num_std * data['bb_std'])
 
         # Calculate %B indicator: (price - lower) / (upper - lower)
-        band_width = data['bb_upper'] - data['bb_lower']
+        band_width = (data['bb_upper'] - data['bb_lower']).replace(0, np.nan)
         data['bb_percent_b'] = (data['close'] - data['bb_lower']) / band_width
 
         # Generate signals
