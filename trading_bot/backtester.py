@@ -9,6 +9,7 @@ from .strategies.base_strategy import BaseStrategy
 from .signal_validator import SignalValidator
 from .execution_verifier import OrderExecutionVerifier
 from .logging_config import get_backtester_logger, log_exception
+from .performance_calculator import ANNUALIZATION_FACTORS
 
 logger = get_backtester_logger()
 
@@ -21,7 +22,8 @@ class Backtester:
     def __init__(self, strategy: BaseStrategy, initial_capital: float = 10000.0,
                  position_size: float = 0.95, commission: float = 0.001,
                  slippage_pct: float = 0.0,
-                 enable_verification: bool = False):
+                 enable_verification: bool = False,
+                 timeframe: str = '1d'):
         """
         Initialize backtester
 
@@ -32,6 +34,7 @@ class Backtester:
             commission: Trading commission/fee (0.001 = 0.1%)
             slippage_pct: Slippage as a fraction (0.001 = 0.1%). BUY executes higher, SELL executes lower.
             enable_verification: Enable signal/execution verification (default: False)
+            timeframe: Data timeframe for Sharpe ratio annualization (default: '1d')
         """
         self.strategy = strategy
         self.initial_capital = initial_capital
@@ -39,6 +42,7 @@ class Backtester:
         self.commission = commission
         self.slippage_pct = slippage_pct
         self.enable_verification = enable_verification
+        self.timeframe = timeframe
 
         # Verification
         self._signal_validator = SignalValidator()
@@ -244,7 +248,8 @@ class Backtester:
         # Sharpe ratio (simplified - assumes daily data)
         if len(equity_df) > 1:
             equity_df['returns'] = equity_df['equity'].pct_change()
-            sharpe_ratio = (equity_df['returns'].mean() / equity_df['returns'].std()) * np.sqrt(252)
+            annualization_factor = ANNUALIZATION_FACTORS.get(self.timeframe, ANNUALIZATION_FACTORS['1d'])
+            sharpe_ratio = (equity_df['returns'].mean() / equity_df['returns'].std()) * annualization_factor
             sharpe_ratio = sharpe_ratio if not np.isnan(sharpe_ratio) else 0
         else:
             sharpe_ratio = 0
