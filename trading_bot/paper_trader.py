@@ -470,13 +470,12 @@ class PaperTrader:
         # Track equity (single symbol version)
         current_prices = {symbol: current_price}
         portfolio_value = self.get_portfolio_value(current_prices)
-        with self._lock:
-            self.equity_history.append({
-                'timestamp': timestamp,
-                'equity': portfolio_value,
-                'price': current_price,
-                'position': self.positions[symbol]
-            })
+        self._portfolio.record_equity({
+            'timestamp': timestamp,
+            'equity': portfolio_value,
+            'price': current_price,
+            'position': self.positions[symbol]
+        })
 
         # Take portfolio snapshot
         self._take_portfolio_snapshot(timestamp, portfolio_value, current_prices)
@@ -543,33 +542,42 @@ class PaperTrader:
         """
         Check and execute stop loss or take profit if triggered.
         Delegates to RiskManager for the check logic.
+
+        Holds RLock across position check + sell execution to prevent race
+        condition where another thread sells the position between the check
+        and execute_sell. RLock allows re-entrant acquisition in execute_sell.
         """
-        if self.positions[symbol] == 0:
-            return False
+        with self._lock:
+            if self.positions[symbol] == 0:
+                return False
 
-        action = self._risk_manager.check_symbol(
-            symbol=symbol,
-            position=self.positions[symbol],
-            entry_price=self.entry_prices[symbol],
-            current_price=current_price,
-        )
+            action = self._risk_manager.check_symbol(
+                symbol=symbol,
+                position=self.positions[symbol],
+                entry_price=self.entry_prices[symbol],
+                current_price=current_price,
+            )
 
-        if action is None:
-            return False
+            if action is None:
+                return False
 
-        # Execute the sell
-        self.execute_sell(symbol, current_price, timestamp, reason=action.action)
+            # Capture size before sell zeroes the position
+            sell_size = self.positions[symbol]
+            pnl_pct = action.pnl_pct
 
-        # Send notification
+            # Execute the sell while still holding the lock (RLock is reentrant)
+            self.execute_sell(symbol, current_price, timestamp, reason=action.action)
+
+        # Send notification (outside lock -- no shared state mutation)
         if self.notifier:
             reason_label = '손절매' if action.action == 'stop_loss' else '익절매'
             self.notifier.notify_trade({
                 'type': 'SELL',
                 'symbol': symbol,
                 'price': current_price,
-                'size': self.positions.get(symbol, 0),
+                'size': sell_size,
                 'timestamp': timestamp,
-                'reason': f'{reason_label} ({action.pnl_pct*100:.2f}%)'
+                'reason': f'{reason_label} ({pnl_pct*100:.2f}%)'
             })
 
         return True
