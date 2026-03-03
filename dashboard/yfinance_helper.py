@@ -5,6 +5,7 @@ Yahoo Finance API를 사용하여 모든 미국 주식의 시세와 OHLCV 데이
 """
 
 import logging
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 from typing import Dict, Optional
@@ -13,6 +14,7 @@ from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_ticker_yfinance(symbol: str) -> Optional[Dict]:
     """
     yfinance로 주식 시세 조회
@@ -102,6 +104,7 @@ def fetch_ticker_yfinance(symbol: str) -> Optional[Dict]:
         return None
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_ohlcv_yfinance(
     symbol: str,
     period: str = '1mo',
