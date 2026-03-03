@@ -86,5 +86,10 @@ if _has_llm:
     )
     global_llm_client = LLMClient(_llm_config)
 
+# Shared KIS broker instance for multi-preset sessions.
+# When set, all presets reuse this single broker (and its RateLimiter)
+# instead of each creating a separate one.
+global_broker = None
+
 # Preset configs loaded from CLI (--preset/--presets)
 preset_configs: List[Dict] = []
