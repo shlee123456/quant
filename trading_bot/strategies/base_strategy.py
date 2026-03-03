@@ -7,6 +7,7 @@ BaseStrategy - 모든 트레이딩 전략의 추상 기본 클래스
 from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple
 import pandas as pd
+import numpy as np
 import logging
 
 
@@ -127,6 +128,21 @@ class BaseStrategy(ABC):
                 f"필수 OHLCV 컬럼 누락: {sorted(missing)}. "
                 f"필요한 컬럼: {sorted(REQUIRED_OHLCV_COLUMNS)}"
             )
+
+    def apply_position_tracking(self, data: pd.DataFrame) -> pd.DataFrame:
+        """signal 컬럼에서 position 컬럼을 생성 (공통 로직).
+
+        BUY(1) → position=1, SELL(-1) → position=0, HOLD(0) → 이전 유지.
+        """
+        data['position'] = (
+            data['signal']
+            .replace(0, np.nan)
+            .ffill()
+            .fillna(0)
+            .clip(lower=0)
+            .astype(int)
+        )
+        return data
 
     def get_params(self) -> Dict:
         """

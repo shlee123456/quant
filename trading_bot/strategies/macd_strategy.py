@@ -92,11 +92,8 @@ class MACDStrategy(BaseStrategy):
             'signal'
         ] = -1
 
-        # Position tracking (1 = long, 0 = flat)
-        # Buy signal (1) -> position = 1
-        # Sell signal (-1) -> position = 0
-        # Hold (0) -> maintain previous position
-        data['position'] = data['signal'].replace(0, np.nan).ffill().fillna(0).clip(lower=0).astype(int)
+        # Position tracking
+        self.apply_position_tracking(data)
 
         return data
 

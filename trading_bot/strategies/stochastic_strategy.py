@@ -111,8 +111,8 @@ class StochasticStrategy(BaseStrategy):
             'signal'
         ] = -1
 
-        # Position tracking (1 = long, 0 = no position)
-        data['position'] = data['signal'].replace(0, np.nan).ffill().fillna(0)
+        # Position tracking
+        self.apply_position_tracking(data)
 
         return data
 

@@ -125,7 +125,7 @@ class RSIMACDComboStrategy(BaseStrategy):
         data.loc[sell_condition_rsi | sell_condition_macd, 'signal'] = -1
 
         # 4. 포지션 추적
-        data['position'] = data['signal'].replace(0, np.nan).ffill().fillna(0).clip(lower=0).astype(int)
+        self.apply_position_tracking(data)
 
         return data
 

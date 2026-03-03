@@ -304,3 +304,47 @@ class TestRealStrategiesAreBaseStrategy:
         ]
         for s in strategies:
             assert isinstance(s.get_param_info(), dict), f"{s.name}: get_param_info가 dict가 아님"
+
+
+# ---------------------------------------------------------------------------
+# 7. apply_position_tracking 테스트
+# ---------------------------------------------------------------------------
+
+class TestApplyPositionTracking:
+    """apply_position_tracking 메서드 테스트"""
+
+    def test_buy_signal_sets_position_one(self, dummy):
+        """BUY(1) 시그널은 position=1"""
+        df = pd.DataFrame({'signal': [0, 1, 0, 0]})
+        result = dummy.apply_position_tracking(df)
+        assert list(result['position']) == [0, 1, 1, 1]
+
+    def test_sell_signal_sets_position_zero(self, dummy):
+        """SELL(-1) 시그널은 position=0"""
+        df = pd.DataFrame({'signal': [1, 0, -1, 0]})
+        result = dummy.apply_position_tracking(df)
+        assert list(result['position']) == [1, 1, 0, 0]
+
+    def test_hold_maintains_previous(self, dummy):
+        """HOLD(0)은 이전 position 유지"""
+        df = pd.DataFrame({'signal': [1, 0, 0, -1, 0, 0, 1, 0]})
+        result = dummy.apply_position_tracking(df)
+        assert list(result['position']) == [1, 1, 1, 0, 0, 0, 1, 1]
+
+    def test_all_zeros_stays_flat(self, dummy):
+        """시그널이 모두 0이면 position=0"""
+        df = pd.DataFrame({'signal': [0, 0, 0, 0]})
+        result = dummy.apply_position_tracking(df)
+        assert list(result['position']) == [0, 0, 0, 0]
+
+    def test_position_values_are_int(self, dummy):
+        """position은 정수형(int)"""
+        df = pd.DataFrame({'signal': [0, 1, -1, 0]})
+        result = dummy.apply_position_tracking(df)
+        assert result['position'].dtype == int
+
+    def test_position_clipped_to_zero_and_one(self, dummy):
+        """position은 0 또는 1만 허용 (clip)"""
+        df = pd.DataFrame({'signal': [1, 0, -1, 0]})
+        result = dummy.apply_position_tracking(df)
+        assert result['position'].isin([0, 1]).all()
