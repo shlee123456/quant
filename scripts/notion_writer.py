@@ -270,6 +270,19 @@ def _run_legacy_fallback(json_path: str, session_reports_dir: Optional[str]) -> 
     return run_claude(prompt)
 
 
+def _notify_worker_failure(worker_name: str, detail: str) -> None:
+    """워커 실패 시 Slack 알림을 전송합니다."""
+    try:
+        from trading_bot.notifications import NotificationService
+        notifier = NotificationService()
+        notifier.notify_error(
+            f"Notion Writer {worker_name} 실패",
+            context=detail,
+        )
+    except Exception as e:
+        logger.warning(f"Slack 알림 전송 실패 (무시): {e}")
+
+
 def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str]) -> bool:
     """
     병렬 Claude CLI 실행으로 Notion 페이지를 작성합니다.
@@ -424,17 +437,25 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
 
     logger.info(f"워커 결과: {success_count}/3 성공")
 
-    # 7. 핵심 워커 실패 → 재시도 → 레거시 폴백
+    # 7. 워커별 설정 (재시도에 사용, prompt_b는 이 시점에서 항상 정의됨)
+    all_worker_cfgs = {
+        "Worker-A": {**worker_a_cfg, "prompt": prompt_a},
+        "Worker-B": {**worker_b_cfg, "prompt": prompt_b},
+        "Worker-C": {**worker_c_cfg, "prompt": prompt_c},
+    }
+
+    # 8. 핵심 워커 실패 → 재시도 → 레거시 폴백
     # Worker A (시장요약), B (Top3/F&G/뉴스)가 없으면 리포트 가치 없음
     if success_count == 0:
         logger.error("모든 워커 실패")
+        _notify_worker_failure("전체 워커", "모든 워커(A/B/C)가 실패하여 레거시 폴백으로 전환합니다.")
         return _run_legacy_fallback(json_path, session_reports_dir)
 
     failed_core = [k for k in ["Worker-A", "Worker-B"] if k not in worker_outputs]
     if failed_core:
         logger.warning(f"핵심 워커 실패 {failed_core} → 재시도 (예산 2배 상향)")
         for name in failed_core:
-            cfg = worker_configs[name]
+            cfg = all_worker_cfgs[name]
             retry_budget = cfg["max_budget"] * 2.0  # 예산 100% 상향
             logger.info(f"[{name}] 재시도 (budget=${retry_budget:.2f})")
             ok, output, cost = run_claude_worker(
@@ -454,15 +475,28 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
             logger.warning(f"핵심 워커 재시도 실패 {still_failed} → 레거시 폴백")
             return _run_legacy_fallback(json_path, session_reports_dir)
 
-    # 8. Worker-C만 실패 시 플레이스홀더 삽입 (전략/리스크는 보조 섹션)
+    # 9. Worker-C 실패 시 재시도 → 레거시 폴백
     if "Worker-C" not in worker_outputs:
-        logger.warning("[Worker-C] 실패 - 플레이스홀더 삽입")
-        worker_outputs["Worker-C"] = (
-            '::: callout {icon="⚠️" color="red_bg"}\n'
-            "\t전략 분석 섹션은 생성에 실패했습니다.\n:::"
+        logger.warning("[Worker-C] 실패 → 재시도 (타임아웃 2배, 예산 2배 상향)")
+        _notify_worker_failure("Worker-C", "Worker-C 실패 - 재시도 중 (timeout=600s, budget=$0.60)")
+        cfg_c = all_worker_cfgs["Worker-C"]
+        retry_timeout = cfg_c["timeout"] * 2  # 300s → 600s
+        retry_budget = cfg_c["max_budget"] * 2.0  # $0.30 → $0.60
+        logger.info(f"[Worker-C] 재시도 (timeout={retry_timeout}s, budget=${retry_budget:.2f})")
+        ok, output, cost = run_claude_worker(
+            "Worker-C", cfg_c["prompt"], cfg_c["tools"], retry_timeout, retry_budget
         )
+        costs["Worker-C"] = costs.get("Worker-C", 0) + (cost or 0.0)
+        if ok and output:
+            worker_outputs["Worker-C"] = output
+            success_count += 1
+            logger.info("[Worker-C] 재시도 성공")
+        else:
+            logger.warning("[Worker-C] 재시도 실패 → 레거시 폴백")
+            _notify_worker_failure("Worker-C", "Worker-C 재시도도 실패하여 레거시 폴백으로 전환합니다.")
+            return _run_legacy_fallback(json_path, session_reports_dir)
 
-    # 9. 섹션 조합
+    # 10. 섹션 조합
     assembled = assemble_sections(
         worker_a_output=worker_outputs["Worker-A"],
         worker_b_output=worker_outputs["Worker-B"],
@@ -470,7 +504,7 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
         today=today,
     )
 
-    # 10. 유효성 검증
+    # 11. 유효성 검증 (모든 워커 성공 시에만 도달)
     if has_sessions:
         expected = ["# 1.", "# 2.", "# 3.", "# 4.", "# 5.",
                      "# 6.", "# 7.", "# 8.", "# 9.", "# 10."]
@@ -481,15 +515,13 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
     if macro_data:
         expected = ["# 0."] + expected
 
-    if success_count == 3 and not validate_assembly(assembled, expected):
+    if not validate_assembly(assembled, expected):
         logger.error("조합 결과 유효성 검증 실패 → 레거시 폴백")
         return _run_legacy_fallback(json_path, session_reports_dir)
-    elif success_count < 3:
-        logger.warning("일부 워커 실패 - 유효성 검증 건너뜀")
 
     logger.info(f"섹션 조합 완료 (총 길이: {len(assembled)}자)")
 
-    # 11. Notion Writer Claude 실행
+    # 12. Notion Writer Claude 실행
     parent_page_id = get_notion_page_id()
     notion_prompt = build_notion_writer_prompt(assembled, today, parent_page_id)
 
@@ -505,7 +537,7 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
 
     costs["Notion-Writer"] = notion_cost or 0.0
 
-    # 12. 비용 요약 로깅
+    # 13. 비용 요약 로깅
     total_cost = sum(costs.values())
     logger.info(
         f"총 비용: ${total_cost:.4f} "
