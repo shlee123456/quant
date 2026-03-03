@@ -217,6 +217,72 @@ class TestBacktester(unittest.TestCase):
         self.assertFalse(np.isnan(results['sharpe_ratio']))
 
 
+class TestBacktesterTimeframe(unittest.TestCase):
+    """Test Sharpe ratio annualization with different timeframes"""
+
+    def setUp(self):
+        """Set up test fixtures"""
+        self.strategy = MovingAverageCrossover(fast_period=5, slow_period=10)
+
+        # Create sample data with clear signals
+        dates = pd.date_range(start='2024-01-01', periods=100, freq='1h')
+        prices = np.concatenate([
+            np.linspace(100, 120, 30),
+            np.linspace(120, 110, 20),
+            np.linspace(110, 130, 30),
+            np.linspace(130, 115, 20)
+        ])
+        self.sample_data = pd.DataFrame({
+            'open': prices,
+            'high': prices + 2,
+            'low': prices - 2,
+            'close': prices,
+            'volume': np.random.randint(1000, 10000, 100)
+        }, index=dates)
+
+    def test_default_timeframe_is_1d(self):
+        """Default timeframe should be '1d'"""
+        backtester = Backtester(strategy=self.strategy)
+        self.assertEqual(backtester.timeframe, '1d')
+
+    def test_hourly_timeframe_sharpe_differs_from_daily(self):
+        """Sharpe ratio with timeframe='1h' should differ from '1d'"""
+        bt_daily = Backtester(strategy=self.strategy, timeframe='1d')
+        bt_hourly = Backtester(strategy=self.strategy, timeframe='1h')
+
+        results_daily = bt_daily.run(self.sample_data)
+        results_hourly = bt_hourly.run(self.sample_data)
+
+        # Both should produce valid Sharpe ratios
+        self.assertIsInstance(results_daily['sharpe_ratio'], (int, float))
+        self.assertIsInstance(results_hourly['sharpe_ratio'], (int, float))
+
+        # If Sharpe != 0, hourly factor (sqrt(252*6.5)) > daily factor (sqrt(252))
+        # so |hourly sharpe| should be larger than |daily sharpe|
+        if results_daily['sharpe_ratio'] != 0:
+            self.assertNotAlmostEqual(
+                results_daily['sharpe_ratio'],
+                results_hourly['sharpe_ratio'],
+                places=2,
+                msg="1h and 1d Sharpe ratios should differ due to annualization"
+            )
+
+    def test_unknown_timeframe_falls_back_to_1d(self):
+        """Unknown timeframe should fall back to '1d' factor"""
+        bt_daily = Backtester(strategy=self.strategy, timeframe='1d')
+        bt_unknown = Backtester(strategy=self.strategy, timeframe='3d')
+
+        results_daily = bt_daily.run(self.sample_data)
+        results_unknown = bt_unknown.run(self.sample_data)
+
+        self.assertAlmostEqual(
+            results_daily['sharpe_ratio'],
+            results_unknown['sharpe_ratio'],
+            places=10,
+            msg="Unknown timeframe should use '1d' fallback"
+        )
+
+
 class TestBacktesterEdgeCases(unittest.TestCase):
     """Test edge cases for backtester"""
 
