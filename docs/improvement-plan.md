@@ -12,41 +12,41 @@
 - **파일**: `trading_bot/brokers/korea_investment_broker.py`
 - **문제**: `RateLimiter.wait()`에 Lock 없음. 멀티 프리셋 실행 시 레이스 컨디션 → API 차단
 - **작업**:
-  - [ ] `threading.RLock` 추가
-  - [ ] 프리셋 간 브로커 인스턴스 공유 옵션 추가 (scheduler_state.py)
-  - [ ] 테스트: 멀티스레드 환경에서 rate limit 준수 확인
+  - [x] `threading.RLock` 추가
+  - [x] 프리셋 간 브로커 인스턴스 공유 옵션 추가 (scheduler_state.py)
+  - [x] 테스트: 멀티스레드 환경에서 rate limit 준수 확인 (5건 통과)
 
 ### Task 0-2: PaperTrader 메모리 누수 수정
 - **파일**: `trading_bot/paper_trader.py`
 - **문제**: `equity_history`에 매 iteration 데이터 추가되지만 MAX_SIZE 초과 시 트리밍 없음
 - **작업**:
-  - [ ] `record_equity()` 또는 `_realtime_iteration()`에 트리밍 로직 추가
-  - [ ] 테스트: 5000건 초과 시 자동 트리밍 확인
+  - [x] `update()` 메서드에서 직접 append 대신 `PortfolioManager.record_equity()` 사용으로 수정 (트리밍 로직 활용)
+  - [x] 테스트: 5000건 초과 시 자동 트리밍 확인 (4건 통과)
 
 ### Task 0-3: Stop Loss/Take Profit 경쟁 조건 수정
 - **파일**: `trading_bot/paper_trader.py`
 - **문제**: `_check_stop_loss_take_profit()`에서 포지션 확인 시 Lock 미획득
 - **작업**:
-  - [ ] Lock 범위를 포지션 확인 시점으로 확장
-  - [ ] 테스트: 동시 매도 시나리오 검증
+  - [x] Lock 범위를 포지션 확인 시점으로 확장 (RLock reentrant 활용)
+  - [x] 테스트: 동시 매도 시나리오 검증 (6건 통과)
 
 ### Task 0-4: VBTBacktester 인터페이스 호환성 수정
 - **파일**: `trading_bot/vbt_backtester.py`
 - **문제**: `self.trades` 항상 빈 배열, `equity_curve`가 `List[float]`만 반환
 - **작업**:
-  - [ ] VBT trade records에서 trades 리스트 추출
-  - [ ] equity_curve를 `List[Dict]` (timestamp, equity, price, position) 포맷으로 변환
-  - [ ] 기존 Backtester와 동일한 결과 Dict 키 보장
-  - [ ] 테스트: VBT vs Legacy 결과 포맷 일치 검증
+  - [x] VBT trade records에서 trades 리스트 추출 (`_extract_trades()` 메서드 추가)
+  - [x] equity_curve를 `List[Dict]` (timestamp, equity, price, position) 포맷으로 변환 (`_build_equity_curve()` 추가)
+  - [x] 기존 Backtester와 동일한 결과 Dict 키 보장
+  - [x] 테스트: VBT vs Legacy 결과 포맷 일치 검증 (15건 추가, 전체 37건 통과)
 
 ### Task 0-5: Notion Writer Worker-C 폴백 로직 수정
 - **파일**: `scripts/notion_writer.py`
 - **문제**: Worker-C 실패 시 플레이스홀더만 삽입, 레거시 폴백 미진입
 - **작업**:
-  - [ ] Worker-C 실패 시 레거시 폴백 체인 진입하도록 수정
-  - [ ] 또는: Worker-C 재시도 (timeout 2배, budget 2배)
-  - [ ] 알림 전송 (Slack) 추가
-  - [ ] 테스트: Worker-C 타임아웃 시나리오 모킹
+  - [x] Worker-C 실패 시 timeout/budget 2배로 재시도, 재시도 실패 시 레거시 폴백
+  - [x] 알림 전송 (Slack `_notify_worker_failure()`) 추가
+  - [x] 유효성 검증 항상 실행 (건너뜀 제거), worker_configs NameError 수정
+  - [x] 테스트: Worker-C 타임아웃 시나리오 모킹 (6건 통과)
 
 ---
 
