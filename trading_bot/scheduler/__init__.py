@@ -9,6 +9,8 @@ This package splits the monolithic scheduler.py into focused modules:
 
 from trading_bot.scheduler.scheduler_state import (
     STRATEGY_CLASS_MAP,
+    SchedulerContext,
+    ctx,
     active_traders,
     trader_threads,
     traders_lock,
@@ -20,7 +22,6 @@ from trading_bot.scheduler.scheduler_state import (
     global_db,
     global_regime_detector,
     global_llm_client,
-    max_sessions,
 )
 from trading_bot.scheduler.session_manager import (
     start_paper_trading,
@@ -42,6 +43,8 @@ from trading_bot.scheduler.scheduler_core import (
 
 __all__ = [
     'STRATEGY_CLASS_MAP',
+    'SchedulerContext',
+    'ctx',
     'active_traders',
     'trader_threads',
     'traders_lock',
@@ -53,7 +56,6 @@ __all__ = [
     'global_db',
     'global_regime_detector',
     'global_llm_client',
-    'max_sessions',
     'start_paper_trading',
     'stop_paper_trading',
     'run_market_analysis',

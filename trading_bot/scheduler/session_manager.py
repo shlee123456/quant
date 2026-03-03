@@ -108,17 +108,17 @@ def _start_single_session(label: str, config: Optional[Dict]):
     log_prefix = f"[{label}]"
 
     # 최대 세션 수 제한 검사
-    if state.max_sessions > 0:
+    if state.ctx.max_sessions > 0:
         with state.traders_lock:
             current_count = len(state.active_traders)
-        if current_count >= state.max_sessions:
-            logger.warning(f"{log_prefix} ⚠ 최대 세션 수 초과 ({current_count}/{state.max_sessions}) - 세션 시작 거부")
+        if current_count >= state.ctx.max_sessions:
+            logger.warning(f"{log_prefix} ⚠ 최대 세션 수 초과 ({current_count}/{state.ctx.max_sessions}) - 세션 시작 거부")
             return
 
     try:
         # 브로커 초기화 (공유 브로커가 있으면 재사용)
-        if state.global_broker is not None:
-            broker = state.global_broker
+        if state.ctx.global_broker is not None:
+            broker = state.ctx.global_broker
             logger.info(f"{log_prefix} 공유 브로커 재사용")
         else:
             broker = _create_kis_broker()
@@ -253,10 +253,10 @@ def start_paper_trading():
         logger.info(f"총 {len(state.preset_configs)}개 프리셋 세션 시작")
 
         # 멀티 프리셋: 공유 브로커를 한 번만 생성하여 RateLimiter를 공유
-        if len(state.preset_configs) > 1 and state.global_broker is None:
+        if len(state.preset_configs) > 1 and state.ctx.global_broker is None:
             shared = _create_kis_broker()
             if shared:
-                state.global_broker = shared
+                state.ctx.global_broker = shared
                 logger.info("멀티 프리셋용 공유 브로커 초기화 완료")
 
         for cfg in state.preset_configs:
