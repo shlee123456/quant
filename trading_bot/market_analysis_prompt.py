@@ -474,6 +474,99 @@ MACRO_SECTION_TEMPLATE = r"""# 0. 매크로 시장 환경 {{{{color="blue"}}}}
 ---
 """
 
+MACRO_SECTION_TEMPLATE_PARALLEL = r"""
+# 0. 매크로 시장 환경 {color="blue"}
+::: callout {icon="🌍" color="blue_bg"}
+	**시장 환경 종합**: [매크로 데이터의 overall 요약 기반 1-2문장. 어떤 섹터가 강세/약세인지, 로테이션 방향, 리스크 환경 포함]
+:::
+## 주요 지수 동향
+<table fit-page-width="true" header-row="true">
+<tr color="blue_bg">
+<td>**지수**</td>
+<td>**현재가**</td>
+<td>**1일**</td>
+<td>**5일**</td>
+<td>**20일**</td>
+<td>**RSI**</td>
+<td>**해석**</td>
+</tr>
+<tr>
+<td>**SPY** (S&P 500)</td>
+<td>\${price}</td>
+<td><span color="red/green">{chg}</span></td>
+<td><span color="red/green">{chg}</span></td>
+<td><span color="red/green">{chg}</span></td>
+<td>{rsi}</td>
+<td>[interpretation]</td>
+</tr>
+[... QQQ, DIA, IWM rows]
+</table>
+## 섹터 상대강도 히트맵
+<table fit-page-width="true" header-row="true" header-column="true">
+<tr color="blue_bg">
+<td>**순위**</td>
+<td>**섹터**</td>
+<td>**ETF**</td>
+<td>**5일 수익률**</td>
+<td>**20일 수익률**</td>
+<td>**RSI**</td>
+<td>**강약**</td>
+</tr>
+<tr color="green_bg"> for top 3 sectors (rank 1-3)
+<td>{rank}</td>
+<td>{sector_name}</td>
+<td>{ETF}</td>
+<td><span color="green">+{chg}%</span></td>
+<td>...</td>
+<td>{rsi}</td>
+<td>🟢 강세</td>
+</tr>
+[... middle sectors with no special color]
+<tr color="red_bg"> for bottom 3 sectors (rank 9-11)
+<td>{rank}</td>
+<td>{sector_name}</td>
+<td>{ETF}</td>
+<td><span color="red">-{chg}%</span></td>
+<td>...</td>
+<td>{rsi}</td>
+<td>🔴 약세</td>
+</tr>
+</table>
+## 섹터 로테이션 & 시장 폭
+::: callout {icon="🔄" color="yellow_bg"}
+	**섹터 로테이션**: [공격적 vs 방어적 평균 비교 분석. signal 데이터 활용]
+	**시장 폭**: SPY vs IWM 괴리 {value}%p — [interpretation 데이터 활용]
+	상승 섹터 {n}개 / 하락 섹터 {n}개
+:::
+## 리스크 환경
+<table fit-page-width="true" header-row="true">
+<tr color="blue_bg">
+<td>**자산**</td>
+<td>**5일 변화**</td>
+<td>**의미**</td>
+</tr>
+<tr>
+<td>**TLT** (장기국채)</td>
+<td><span color="green/red">{chg}%</span></td>
+<td>[금리 하락=채권상승=리스크오프, 금리 상승=채권하락=리스크온 해석]</td>
+</tr>
+<tr>
+<td>**GLD** (금)</td>
+<td><span color="green/red">{chg}%</span></td>
+<td>[안전자산 수요 해석]</td>
+</tr>
+<tr>
+<td>**HYG** (하이일드 채권)</td>
+<td><span color="green/red">{chg}%</span></td>
+<td>[신용 스프레드 해석. HYG 하락=스프레드 확대=리스크오프]</td>
+</tr>
+</table>
+::: callout {icon="⚡" color="orange_bg"}
+	**리스크 판단**: [risk_environment assessment 기반 분석]
+:::
+---
+"""
+
 
 INTELLIGENCE_SECTION_TEMPLATE = r"""# 0.5 시장 인텔리전스 대시보드 {{{{color="blue"}}}}
 ::: callout {{{{icon="🧠" color="blue_bg"}}}}

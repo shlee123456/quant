@@ -321,6 +321,17 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
     today = datetime.now().strftime("%Y-%m-%d")
     has_sessions = session_metrics is not None and session_metrics.get("has_sessions", False)
 
+    # 2.5. 전일 대비 변화 계산
+    daily_changes = None
+    try:
+        from trading_bot.market_analyzer import MarketAnalyzer
+        previous_data = MarketAnalyzer._load_previous_day_json(today, str(Path(json_path).parent))
+        if previous_data:
+            daily_changes = MarketAnalyzer._calculate_daily_changes(data, previous_data)
+            logger.info(f"전일 변화 계산 완료 (이전 날짜: {daily_changes.get('previous_date', 'N/A')})")
+    except Exception as e:
+        logger.warning(f"전일 변화 계산 실패 (무시): {e}")
+
     # 3. 워커 프롬프트 빌드
     intelligence_data = data.get("intelligence")
 
@@ -329,10 +340,13 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
         intelligence_data=intelligence_data,
         events_data=events_data,
         fundamentals_data=fundamentals_data,
+        fear_greed_data=fear_greed_data,
+        daily_changes=daily_changes,
     )
     prompt_c = build_worker_c_prompt(
         market_data, session_metrics or {}, today, has_sessions,
         intelligence_data=intelligence_data,
+        daily_changes=daily_changes,
     )
 
     reflection_enabled = os.getenv('REFLECTION_ENABLED', 'true').lower() == 'true'
@@ -623,10 +637,23 @@ def main():
         events_data_dry = data.get("events")
         fundamentals_data_dry = data.get("fundamentals")
         intelligence_data_dry = data.get("intelligence")
+
+        # 전일 대비 변화 계산
+        daily_changes_dry = None
+        try:
+            from trading_bot.market_analyzer import MarketAnalyzer
+            previous_data_dry = MarketAnalyzer._load_previous_day_json(today, str(Path(str(json_path)).parent))
+            if previous_data_dry:
+                daily_changes_dry = MarketAnalyzer._calculate_daily_changes(data, previous_data_dry)
+        except Exception as e:
+            logger.warning(f"전일 변화 계산 실패 (무시): {e}")
+
         prompt_a = build_worker_a_prompt(
             market_data, today, macro_data=macro_data_dry,
             intelligence_data=intelligence_data_dry,
             events_data=events_data_dry, fundamentals_data=fundamentals_data_dry,
+            fear_greed_data=fear_greed_data,
+            daily_changes=daily_changes_dry,
         )
         prompt_b = build_worker_b_prompt(
             market_data, news_data, fear_greed_data, today,
@@ -635,6 +662,7 @@ def main():
         prompt_c = build_worker_c_prompt(
             market_data, session_metrics or {}, today, has_sessions,
             intelligence_data=intelligence_data_dry,
+            daily_changes=daily_changes_dry,
         )
 
         for name, prompt in [("worker_a", prompt_a), ("worker_b", prompt_b), ("worker_c", prompt_c)]:

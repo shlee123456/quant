@@ -248,6 +248,7 @@ class MarketAnalyzer:
 
         # 가격 정보
         last_close = float(df['close'].iloc[-1])
+        change_1d = self._pct_change(df['close'], 1)
         change_5d = self._pct_change(df['close'], 5)
         change_20d = self._pct_change(df['close'], 20)
 
@@ -260,6 +261,7 @@ class MarketAnalyzer:
         return {
             'price': {
                 'last': last_close,
+                'change_1d': change_1d,
                 'change_5d': change_5d,
                 'change_20d': change_20d,
             },
@@ -623,6 +625,100 @@ class MarketAnalyzer:
             return 'moderate_trend'
         else:
             return 'strong_trend'
+
+    # ─── 전일 대비 변화 분석 ───
+
+    @staticmethod
+    def _load_previous_day_json(today: str, data_dir: str = "data/market_analysis") -> Optional[Dict]:
+        """전날(또는 가장 최근) 분석 JSON 로드.
+
+        Args:
+            today: 오늘 날짜 (YYYY-MM-DD)
+            data_dir: 분석 JSON 저장 디렉토리
+
+        Returns:
+            이전 분석 데이터 dict, 없으면 None
+        """
+        import glob
+
+        pattern = os.path.join(data_dir, "*.json")
+        files = sorted(glob.glob(pattern))
+
+        # 오늘 파일 제외, 가장 최근 파일 선택
+        previous_files = [f for f in files if not f.endswith(f"{today}.json")]
+        if not previous_files:
+            return None
+
+        latest_file = previous_files[-1]
+        try:
+            with open(latest_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            logger.info(f"이전 분석 로드: {latest_file}")
+            return data
+        except Exception as e:
+            logger.warning(f"이전 분석 로드 실패: {e}")
+            return None
+
+    @staticmethod
+    def _calculate_daily_changes(current_data: Dict, previous_data: Dict) -> Dict:
+        """전일 대비 주요 변화 계산.
+
+        Args:
+            current_data: 오늘 분석 결과
+            previous_data: 이전 분석 결과
+
+        Returns:
+            변화 정보 dict
+        """
+        changes = {
+            'has_previous': True,
+            'previous_date': previous_data.get('date', 'unknown'),
+            'stocks': {},
+            'intelligence': {},
+        }
+
+        # 종목별 가격 변화
+        curr_stocks = current_data.get('stocks', {})
+        prev_stocks = previous_data.get('stocks', {})
+        for symbol in curr_stocks:
+            if symbol in prev_stocks:
+                curr_price = curr_stocks[symbol].get('price', {}).get('last')
+                prev_price = prev_stocks[symbol].get('price', {}).get('last')
+                curr_rsi = curr_stocks[symbol].get('indicators', {}).get('rsi', {}).get('value')
+                prev_rsi = prev_stocks[symbol].get('indicators', {}).get('rsi', {}).get('value')
+
+                stock_change = {}
+                if curr_price and prev_price and prev_price > 0:
+                    stock_change['price_change_pct'] = round((curr_price - prev_price) / prev_price * 100, 2)
+                if curr_rsi is not None and prev_rsi is not None:
+                    stock_change['rsi_change'] = round(curr_rsi - prev_rsi, 1)
+
+                if stock_change:
+                    changes['stocks'][symbol] = stock_change
+
+        # 인텔리전스 점수 변화
+        curr_intel = current_data.get('intelligence', {})
+        prev_intel = previous_data.get('intelligence', {})
+        curr_overall = curr_intel.get('overall', {}).get('score')
+        prev_overall = prev_intel.get('overall', {}).get('score')
+        if curr_overall is not None and prev_overall is not None:
+            changes['intelligence']['overall_score_change'] = round(curr_overall - prev_overall, 1)
+            changes['intelligence']['prev_signal'] = prev_intel.get('overall', {}).get('signal')
+
+        # 레이어별 점수 변화
+        curr_layers = curr_intel.get('layers', {})
+        prev_layers = prev_intel.get('layers', {})
+        layer_changes = {}
+        for layer_name in curr_layers:
+            if layer_name in prev_layers:
+                curr_score = curr_layers[layer_name].get('score')
+                prev_score = prev_layers[layer_name].get('score')
+                if curr_score is not None and prev_score is not None:
+                    layer_changes[layer_name] = round(curr_score - prev_score, 1)
+        if layer_changes:
+            changes['intelligence']['layer_changes'] = layer_changes
+
+        return changes
 
     # ─── 매크로 시장 분석 ───
 

@@ -271,6 +271,19 @@ class TestMarketAnalyzerIntegration:
         assert 'value' in indicators['adx']
         assert 'trend' in indicators['adx']
 
+    def test_price_structure_includes_change_1d(self, analyzer, mock_broker):
+        """price 딕셔너리에 change_1d 포함 확인"""
+        results = analyzer.analyze(['AAPL'], mock_broker)
+        price = results['stocks']['AAPL']['price']
+
+        assert 'last' in price
+        assert 'change_1d' in price
+        assert 'change_5d' in price
+        assert 'change_20d' in price
+        assert isinstance(price['last'], float)
+        # change_1d는 float 또는 None (데이터 부족 시)
+        assert price['change_1d'] is None or isinstance(price['change_1d'], float)
+
     def test_market_summary_structure(self, analyzer, mock_broker):
         """시장 요약 구조 검증"""
         results = analyzer.analyze(['AAPL', 'MSFT', 'NVDA'], mock_broker)
