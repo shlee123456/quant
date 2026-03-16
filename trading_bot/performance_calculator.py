@@ -104,7 +104,7 @@ class PerformanceCalculator:
         Returns:
             Win rate as a percentage, or None if no sell trades.
         """
-        sell_trades = [t for t in trades if t['type'] == 'SELL']
+        sell_trades = [t for t in trades if t['type'] in ('SELL', 'COVER')]
 
         if not sell_trades:
             return None
@@ -119,12 +119,12 @@ class PerformanceCalculator:
         Calculate profit factor (gross profit / gross loss).
 
         Args:
-            trades: List of trade dicts. SELL trades with 'pnl' key are used.
+            trades: List of trade dicts. SELL/COVER trades with 'pnl' key are used.
 
         Returns:
             Profit factor, or None if no losing trades.
         """
-        sell_trades = [t for t in trades if t['type'] == 'SELL']
+        sell_trades = [t for t in trades if t['type'] in ('SELL', 'COVER')]
 
         if not sell_trades:
             return None
@@ -157,7 +157,7 @@ class PerformanceCalculator:
         final_value = equity_history[-1]['equity'] if equity_history else initial_capital
         total_return = ((final_value - initial_capital) / initial_capital) * 100
 
-        sell_trades = [t for t in trades if t['type'] == 'SELL']
+        sell_trades = [t for t in trades if t['type'] in ('SELL', 'COVER')]
 
         summary = {
             'initial_capital': initial_capital,

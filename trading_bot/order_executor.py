@@ -236,6 +236,143 @@ class OrderExecutor:
 
         return trade
 
+    def execute_short(
+        self,
+        symbol: str,
+        price: float,
+        timestamp: datetime,
+        capital: float,
+        positions: Dict[str, float],
+        entry_prices: Dict[str, float],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Execute a short sell order.
+
+        Args:
+            symbol: Trading symbol
+            price: Short entry price
+            timestamp: Trade timestamp
+            capital: Current available capital
+            positions: Dict of current positions (modified in-place)
+            entry_prices: Dict of entry prices (modified in-place)
+
+        Returns:
+            Trade dict if executed, None if skipped
+        """
+        # Deduplication check
+        if self._is_duplicate_order(symbol, 'SHORT', timestamp):
+            return None
+
+        # Cannot short if already in a position
+        if positions.get(symbol, 0) != 0:
+            logger.info(f"Already in position for {symbol}, skipping SHORT signal")
+            return None
+
+        trade_capital = capital * self.position_size
+        new_quantity = trade_capital / price * (1 - self.commission)
+
+        positions[symbol] = -new_quantity  # Negative = short
+        entry_prices[symbol] = price
+
+        new_capital = capital - trade_capital
+
+        trade = {
+            'symbol': symbol,
+            'timestamp': timestamp,
+            'type': 'SHORT',
+            'price': price,
+            'size': new_quantity,
+            'capital': new_capital,
+            'commission': trade_capital * self.commission,
+        }
+
+        self._log_trade_to_file(trade)
+
+        logger.info(f"[SHORT] {symbol} {timestamp}")
+        logger.debug(f"Price: ${price:.2f}")
+        logger.debug(f"Size: {new_quantity:.6f}")
+        logger.debug(f"Capital remaining: ${new_capital:.2f}")
+
+        return trade
+
+    def execute_cover(
+        self,
+        symbol: str,
+        price: float,
+        timestamp: datetime,
+        capital: float,
+        positions: Dict[str, float],
+        entry_prices: Dict[str, float],
+        reason: str = 'signal',
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Execute a cover (buy-to-cover) order to close a short position.
+
+        Args:
+            symbol: Trading symbol
+            price: Cover price
+            timestamp: Trade timestamp
+            capital: Current available capital
+            positions: Dict of current positions (modified in-place)
+            entry_prices: Dict of entry prices (modified in-place)
+            reason: Reason for cover ('signal', 'stop_loss', 'take_profit')
+
+        Returns:
+            Trade dict if executed, None if skipped
+        """
+        if positions.get(symbol, 0) >= 0:
+            logger.info(f"No short position to cover for {symbol}, skipping COVER signal")
+            return None
+
+        # Deduplication check
+        if self._is_duplicate_order(symbol, 'COVER', timestamp):
+            return None
+
+        entry_price = entry_prices[symbol]
+        abs_position = abs(positions[symbol])
+        commission_cost = abs_position * price * self.commission
+
+        # PnL for short: profit when price drops
+        pnl = abs_position * (entry_price - price) * (1 - self.commission)
+        pnl_pct = (entry_price - price) / entry_price * 100
+
+        # Return collateral + pnl
+        new_capital = capital + abs_position * entry_price + abs_position * (entry_price - price) - commission_cost
+
+        trade = {
+            'symbol': symbol,
+            'timestamp': timestamp,
+            'type': 'COVER',
+            'price': price,
+            'size': abs_position,
+            'capital': new_capital,
+            'pnl': pnl,
+            'pnl_pct': pnl_pct,
+            'commission': commission_cost,
+            'reason': reason,
+        }
+
+        reason_text = {
+            'signal': '시그널 커버',
+            'stop_loss': '손절매 커버',
+            'take_profit': '익절매 커버',
+        }
+        reason_kr = reason_text.get(reason, '커버')
+
+        logger.info(f"[커버 - {reason_kr}] {symbol} {timestamp}")
+        logger.debug(f"가격: ${price:.2f}")
+        logger.debug(f"수량: {abs_position:.6f}")
+        logger.debug(f"손익: ${pnl:.2f} ({pnl_pct:+.2f}%)")
+        logger.debug(f"자본: ${new_capital:.2f}")
+
+        # Update positions
+        positions[symbol] = 0
+        entry_prices[symbol] = 0
+
+        self._log_trade_to_file(trade)
+
+        return trade
+
     def _log_trade_to_file(self, trade: Dict):
         """Log trade to file if configured."""
         if not self.log_file:

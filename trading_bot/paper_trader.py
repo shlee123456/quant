@@ -58,6 +58,7 @@ class PaperTrader:
         notifier=None,
         limit_orders: Optional[List[Dict]] = None,
         sentiment_sizing: bool = False,
+        enable_short: bool = False,
     ):
         """
         Initialize paper trader
@@ -168,6 +169,9 @@ class PaperTrader:
             enable_stop_loss=enable_stop_loss,
             enable_take_profit=enable_take_profit,
         )
+
+        # Short selling support
+        self.enable_short = enable_short
 
         # Sentiment-based position sizing
         self._sentiment_sizing = sentiment_sizing
@@ -428,6 +432,109 @@ class PaperTrader:
             if not is_valid:
                 logger.warning(f"실행 검증 실패 [{symbol}]: {msg}")
 
+    def execute_short(self, symbol: str, price: float, timestamp: datetime):
+        """
+        Execute a short sell order.
+
+        Args:
+            symbol: Trading symbol
+            price: Short entry price
+            timestamp: Trade timestamp
+        """
+        with self._lock:
+            if self.positions[symbol] != 0:
+                logger.info(f"Already in position for {symbol}, skipping SHORT signal")
+                return
+
+            # Short position size = 50% of long position size
+            short_capital = self.capital * self.position_size * 0.5
+            short_qty = short_capital / price * (1 - self.commission)
+            self.positions[symbol] = -short_qty
+            self.entry_prices[symbol] = price
+            self.capital = self.capital - short_capital
+
+            trade = {
+                'symbol': symbol,
+                'timestamp': timestamp,
+                'type': 'SHORT',
+                'price': price,
+                'size': short_qty,
+                'capital': self.capital,
+                'commission': short_capital * self.commission,
+            }
+
+            self._portfolio.record_trade(trade)
+            self._log_trade(trade)
+
+            if self.db and self.session_id:
+                self.db.log_trade(self.session_id, trade)
+
+        logger.info(f"[SHORT] {symbol} {timestamp}")
+        logger.debug(f"Price: ${price:.2f}")
+        logger.debug(f"Size: {short_qty:.6f}")
+        logger.debug(f"Capital remaining: ${self.capital:.2f}")
+
+    def execute_cover(self, symbol: str, price: float, timestamp: datetime, reason: str = 'signal'):
+        """
+        Execute a cover (buy-to-cover) order to close a short position.
+
+        Args:
+            symbol: Trading symbol
+            price: Cover price
+            timestamp: Trade timestamp
+            reason: Reason for cover ('signal', 'stop_loss', 'take_profit')
+        """
+        with self._lock:
+            if self.positions[symbol] >= 0:
+                logger.info(f"No short position to cover for {symbol}, skipping COVER signal")
+                return
+
+            abs_position = abs(self.positions[symbol])
+            entry_price = self.entry_prices[symbol]
+            commission_cost = abs_position * price * self.commission
+
+            pnl = abs_position * (entry_price - price) * (1 - self.commission)
+            pnl_pct = (entry_price - price) / entry_price * 100
+
+            # Return collateral + pnl
+            self.capital = self.capital + abs_position * entry_price + abs_position * (entry_price - price) - commission_cost
+
+            trade = {
+                'symbol': symbol,
+                'timestamp': timestamp,
+                'type': 'COVER',
+                'price': price,
+                'size': abs_position,
+                'capital': self.capital,
+                'pnl': pnl,
+                'pnl_pct': pnl_pct,
+                'commission': commission_cost,
+                'reason': reason,
+            }
+
+            self._portfolio.record_trade(trade)
+
+            reason_text = {
+                'signal': '시그널 커버',
+                'stop_loss': '손절매 커버',
+                'take_profit': '익절매 커버',
+            }
+            reason_kr = reason_text.get(reason, '커버')
+
+            logger.info(f"[커버 - {reason_kr}] {symbol} {timestamp}")
+            logger.debug(f"가격: ${price:.2f}")
+            logger.debug(f"수량: {abs_position:.6f}")
+            logger.debug(f"손익: ${pnl:.2f} ({pnl_pct:+.2f}%)")
+            logger.debug(f"자본: ${self.capital:.2f}")
+
+            self.positions[symbol] = 0
+            self.entry_prices[symbol] = 0
+
+            self._log_trade(trade)
+
+            if self.db and self.session_id:
+                self.db.log_trade(self.session_id, trade)
+
     def update(self, symbol: str, timeframe: str):
         """
         Update with latest market data and execute trades (backward compatibility)
@@ -561,12 +668,15 @@ class PaperTrader:
             if action is None:
                 return False
 
-            # Capture size before sell zeroes the position
+            # Capture size before sell/cover zeroes the position
             sell_size = self.positions[symbol]
             pnl_pct = action.pnl_pct
 
-            # Execute the sell while still holding the lock (RLock is reentrant)
-            self.execute_sell(symbol, current_price, timestamp, reason=action.action)
+            # Execute the sell/cover while still holding the lock (RLock is reentrant)
+            if sell_size < 0:
+                self.execute_cover(symbol, current_price, timestamp, reason=action.action)
+            else:
+                self.execute_sell(symbol, current_price, timestamp, reason=action.action)
 
         # Send notification (outside lock -- no shared state mutation)
         if self.notifier:
@@ -695,9 +805,15 @@ class PaperTrader:
 
                     # Execute trades based on signals
                     if signal == 1 and self.last_signals.get(symbol, 0) != 1:
-                        self.execute_buy(symbol, current_price, timestamp)
+                        if self.enable_short and self.positions.get(symbol, 0) < 0:
+                            self.execute_cover(symbol, current_price, timestamp)
+                        else:
+                            self.execute_buy(symbol, current_price, timestamp)
                     elif signal == -1 and self.last_signals.get(symbol, 0) != -1:
-                        self.execute_sell(symbol, current_price, timestamp, reason='signal')
+                        if self.enable_short and self.positions.get(symbol, 0) == 0:
+                            self.execute_short(symbol, current_price, timestamp)
+                        elif self.positions.get(symbol, 0) > 0:
+                            self.execute_sell(symbol, current_price, timestamp, reason='signal')
 
                     self.last_signals[symbol] = signal
 
@@ -866,7 +982,7 @@ class PaperTrader:
         final_value = self.equity_history[-1]['equity']
         total_return = ((final_value - self.initial_capital) / self.initial_capital) * 100
 
-        sell_trades = [t for t in self.trades if t['type'] == 'SELL']
+        sell_trades = [t for t in self.trades if t['type'] in ('SELL', 'COVER')]
 
         summary_parts = [
             "PAPER TRADING SUMMARY",

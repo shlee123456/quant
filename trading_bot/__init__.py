@@ -143,6 +143,17 @@ if _has_ccxt:
     __all__.append('DataHandler')
 if _has_paper_trader:
     __all__.extend(['PaperTrader', 'PerformanceCalculator', 'OrderExecutor', 'RiskManager', 'PortfolioManager', 'SignalPipeline'])
+
+# Portfolio allocator
+try:
+    from .portfolio_allocator import PortfolioAllocator
+    _has_portfolio_allocator = True
+except ImportError:
+    PortfolioAllocator = None
+    _has_portfolio_allocator = False
+
+if _has_portfolio_allocator:
+    __all__.append('PortfolioAllocator')
 if _has_automation:
     __all__.extend(['TradingDatabase', 'ReportGenerator'])
 if _has_regime:

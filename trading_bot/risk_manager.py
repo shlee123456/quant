@@ -40,11 +40,16 @@ class RiskManager:
         take_profit_pct: float = 0.10,
         enable_stop_loss: bool = True,
         enable_take_profit: bool = True,
+        short_stop_loss_pct: float = None,
+        short_take_profit_pct: float = None,
     ):
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct
         self.enable_stop_loss = enable_stop_loss
         self.enable_take_profit = enable_take_profit
+        # Short-specific thresholds (default to long thresholds if not specified)
+        self.short_stop_loss_pct = short_stop_loss_pct if short_stop_loss_pct is not None else 0.03
+        self.short_take_profit_pct = short_take_profit_pct if short_take_profit_pct is not None else 0.07
 
     def check_positions(
         self,
@@ -77,22 +82,33 @@ class RiskManager:
                 continue
 
             current_price = current_prices[symbol]
-            pnl_pct = (current_price - entry_price) / entry_price
+
+            # PnL direction depends on position sign
+            if position_size > 0:
+                # Long position
+                pnl_pct = (current_price - entry_price) / entry_price
+                sl_pct = self.stop_loss_pct
+                tp_pct = self.take_profit_pct
+            else:
+                # Short position: profit when price drops
+                pnl_pct = (entry_price - current_price) / entry_price
+                sl_pct = self.short_stop_loss_pct
+                tp_pct = self.short_take_profit_pct
 
             # Check stop loss
-            if self.enable_stop_loss and pnl_pct <= -self.stop_loss_pct:
+            if self.enable_stop_loss and pnl_pct <= -sl_pct:
                 logger.info(
                     f"손절매 발동! {symbol}: {pnl_pct*100:.2f}% "
-                    f"(기준: -{self.stop_loss_pct*100:.0f}%)"
+                    f"(기준: -{sl_pct*100:.0f}%)"
                 )
                 actions.append(RiskAction(symbol, 'stop_loss', current_price, pnl_pct))
                 continue
 
             # Check take profit
-            if self.enable_take_profit and pnl_pct >= self.take_profit_pct:
+            if self.enable_take_profit and pnl_pct >= tp_pct:
                 logger.info(
                     f"익절매 발동! {symbol}: {pnl_pct*100:.2f}% "
-                    f"(기준: +{self.take_profit_pct*100:.0f}%)"
+                    f"(기준: +{tp_pct*100:.0f}%)"
                 )
                 actions.append(RiskAction(symbol, 'take_profit', current_price, pnl_pct))
 
@@ -120,19 +136,28 @@ class RiskManager:
         if position == 0 or entry_price == 0:
             return None
 
-        pnl_pct = (current_price - entry_price) / entry_price
+        # PnL direction depends on position sign
+        if position > 0:
+            pnl_pct = (current_price - entry_price) / entry_price
+            sl_pct = self.stop_loss_pct
+            tp_pct = self.take_profit_pct
+        else:
+            # Short position: profit when price drops
+            pnl_pct = (entry_price - current_price) / entry_price
+            sl_pct = self.short_stop_loss_pct
+            tp_pct = self.short_take_profit_pct
 
-        if self.enable_stop_loss and pnl_pct <= -self.stop_loss_pct:
+        if self.enable_stop_loss and pnl_pct <= -sl_pct:
             logger.info(
                 f"손절매 발동! {symbol}: {pnl_pct*100:.2f}% "
-                f"(기준: -{self.stop_loss_pct*100:.0f}%)"
+                f"(기준: -{sl_pct*100:.0f}%)"
             )
             return RiskAction(symbol, 'stop_loss', current_price, pnl_pct)
 
-        if self.enable_take_profit and pnl_pct >= self.take_profit_pct:
+        if self.enable_take_profit and pnl_pct >= tp_pct:
             logger.info(
                 f"익절매 발동! {symbol}: {pnl_pct*100:.2f}% "
-                f"(기준: +{self.take_profit_pct*100:.0f}%)"
+                f"(기준: +{tp_pct*100:.0f}%)"
             )
             return RiskAction(symbol, 'take_profit', current_price, pnl_pct)
 

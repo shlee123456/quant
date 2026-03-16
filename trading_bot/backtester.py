@@ -23,7 +23,8 @@ class Backtester:
                  position_size: float = 0.95, commission: float = 0.001,
                  slippage_pct: float = 0.0,
                  enable_verification: bool = False,
-                 timeframe: str = '1d'):
+                 timeframe: str = '1d',
+                 enable_short: bool = False):
         """
         Initialize backtester
 
@@ -35,6 +36,7 @@ class Backtester:
             slippage_pct: Slippage as a fraction (0.001 = 0.1%). BUY executes higher, SELL executes lower.
             enable_verification: Enable signal/execution verification (default: False)
             timeframe: Data timeframe for Sharpe ratio annualization (default: '1d')
+            enable_short: Enable short selling (default: False)
         """
         self.strategy = strategy
         self.initial_capital = initial_capital
@@ -43,6 +45,7 @@ class Backtester:
         self.slippage_pct = slippage_pct
         self.enable_verification = enable_verification
         self.timeframe = timeframe
+        self.enable_short = enable_short
 
         # Verification
         self._signal_validator = SignalValidator()
@@ -90,6 +93,9 @@ class Backtester:
                 # Track equity
                 if position > 0:
                     current_value = capital + (position * price)
+                elif position < 0:
+                    # Short position: value = capital + abs(position) * (2 * entry_price - price)
+                    current_value = capital + abs(position) * (2 * entry_price - price)
                 else:
                     current_value = capital
 
@@ -129,6 +135,32 @@ class Backtester:
                         if not is_valid:
                             logger.warning(f"실행 검증 실패: {msg}")
 
+                elif signal == 1 and position < 0 and self.enable_short:  # COVER short
+                    actual_price = price * (1 + self.slippage_pct)
+                    cover_proceeds = abs(position) * (entry_price - actual_price)
+                    commission_cost = abs(position) * actual_price * self.commission
+                    capital = capital + abs(position) * entry_price + cover_proceeds - commission_cost
+                    slippage_cost = abs(actual_price - price) * abs(position)
+
+                    pnl = cover_proceeds - commission_cost
+                    pnl_pct = (entry_price - actual_price) / entry_price * 100
+
+                    trade = {
+                        'timestamp': idx,
+                        'type': 'COVER',
+                        'price': actual_price,
+                        'size': abs(position),
+                        'capital': capital,
+                        'pnl': pnl,
+                        'pnl_pct': pnl_pct,
+                        'commission': commission_cost,
+                        'slippage_cost': slippage_cost
+                    }
+                    trades.append(trade)
+
+                    position = 0
+                    entry_price = 0
+
                 elif signal == -1 and position > 0:  # SELL signal
                     # Exit long position
                     actual_price = price * (1 - self.slippage_pct)
@@ -164,7 +196,27 @@ class Backtester:
                     position = 0
                     entry_price = 0
 
-            # Close any open position at the end
+                elif signal == -1 and position == 0 and self.enable_short:  # SHORT entry
+                    actual_price = price * (1 - self.slippage_pct)
+                    trade_capital = capital * self.position_size
+                    short_qty = trade_capital / actual_price * (1 - self.commission)
+                    position = -short_qty
+                    entry_price = actual_price
+                    capital = capital - trade_capital
+                    slippage_cost = abs(price - actual_price) * short_qty
+
+                    trade = {
+                        'timestamp': idx,
+                        'type': 'SHORT',
+                        'price': actual_price,
+                        'size': short_qty,
+                        'capital': capital,
+                        'commission': trade_capital * self.commission,
+                        'slippage_cost': slippage_cost
+                    }
+                    trades.append(trade)
+
+            # Close any open long position at the end
             if position > 0:
                 final_price = data.iloc[-1]['close']
                 actual_price = final_price * (1 - self.slippage_pct)
@@ -184,6 +236,31 @@ class Backtester:
                     'pnl': pnl,
                     'pnl_pct': pnl_pct,
                     'commission': position * actual_price * self.commission,
+                    'slippage_cost': slippage_cost
+                })
+
+            # Close any open short position at the end
+            if position < 0:
+                final_price = data.iloc[-1]['close']
+                actual_price = final_price * (1 + self.slippage_pct)
+                abs_pos = abs(position)
+                cover_proceeds = abs_pos * (entry_price - actual_price)
+                commission_cost = abs_pos * actual_price * self.commission
+                capital = capital + abs_pos * entry_price + cover_proceeds - commission_cost
+                slippage_cost = abs(actual_price - final_price) * abs_pos
+
+                pnl = cover_proceeds - commission_cost
+                pnl_pct = (entry_price - actual_price) / entry_price * 100
+
+                trades.append({
+                    'timestamp': data.index[-1],
+                    'type': 'COVER (CLOSE)',
+                    'price': actual_price,
+                    'size': abs_pos,
+                    'capital': capital,
+                    'pnl': pnl,
+                    'pnl_pct': pnl_pct,
+                    'commission': commission_cost,
                     'slippage_cost': slippage_cost
                 })
 

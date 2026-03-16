@@ -81,12 +81,17 @@ class StockRanker:
                 if v is not None
             }
 
+            direction_info = self._determine_direction(indicators, regime_data)
+
             ranked.append({
                 'symbol': symbol,
                 'total_score': round(total_score, 1),
                 'factor_scores': factor_scores,
                 'reasons': reasons,
                 'rank': 0,
+                'direction': direction_info['direction'],
+                'short_eligible': direction_info['short_eligible'],
+                'short_signal_count': direction_info['short_signal_count'],
             })
 
         ranked.sort(key=lambda x: x['total_score'], reverse=True)
@@ -219,6 +224,62 @@ class StockRanker:
 
         total_available = sum(available.values())
         return {k: v / total_available for k, v in available.items()}
+
+    # ──────────────────────────────────────────────────────────────
+    # Direction determination (short eligibility)
+    # ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _determine_direction(
+        indicators: Dict[str, Any], regime_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """숏 시그널 개수를 세어 방향을 결정한다.
+
+        숏 시그널 기준 (5개):
+        1. RSI > 75
+        2. 레짐이 BEARISH
+        3. MACD 데드 크로스 + 최근 발생
+        4. Stochastic %K > 80
+        5. Bollinger %B > 0.95
+
+        3개 이상이면 'short', 그렇지 않으면 'long'.
+        """
+        short_signals = 0
+
+        # 1. RSI > 75
+        rsi_val = indicators.get('rsi', {}).get('value')
+        if rsi_val is not None and rsi_val > 75:
+            short_signals += 1
+
+        # 2. BEARISH 레짐
+        state = regime_data.get('state', 'SIDEWAYS')
+        if state == 'BEARISH':
+            short_signals += 1
+
+        # 3. MACD 데드 크로스 (최근)
+        macd_data = indicators.get('macd', {})
+        histogram = macd_data.get('histogram', 0) or 0
+        cross_recent = macd_data.get('cross_recent', False)
+        if histogram < 0 and cross_recent:
+            short_signals += 1
+
+        # 4. Stochastic %K > 80
+        stoch_k = indicators.get('stochastic', {}).get('k')
+        if stoch_k is not None and stoch_k > 80:
+            short_signals += 1
+
+        # 5. Bollinger %B > 0.95
+        pct_b = indicators.get('bollinger', {}).get('pct_b')
+        if pct_b is not None and pct_b > 0.95:
+            short_signals += 1
+
+        direction = 'short' if short_signals >= 3 else 'long'
+
+        return {
+            'direction': direction,
+            'short_eligible': short_signals >= 3,
+            'short_signal_count': short_signals,
+        }
 
     # ──────────────────────────────────────────────────────────────
     # Duplicate penalty

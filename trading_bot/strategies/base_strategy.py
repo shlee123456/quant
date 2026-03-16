@@ -34,6 +34,7 @@ class BaseStrategy(ABC):
             name: 전략 이름 (예: "RSI_14_30_70")
         """
         self.name = name
+        self.supports_short: bool = False
         self.logger = logging.getLogger(f"trading_bot.strategies.{self.__class__.__name__}")
 
     @abstractmethod
@@ -129,19 +130,24 @@ class BaseStrategy(ABC):
                 f"필요한 컬럼: {sorted(REQUIRED_OHLCV_COLUMNS)}"
             )
 
-    def apply_position_tracking(self, data: pd.DataFrame) -> pd.DataFrame:
+    def apply_position_tracking(self, data: pd.DataFrame, allow_short: bool = False) -> pd.DataFrame:
         """signal 컬럼에서 position 컬럼을 생성 (공통 로직).
 
-        BUY(1) → position=1, SELL(-1) → position=0, HOLD(0) → 이전 유지.
+        BUY(1) → position=1, SELL(-1) → position=0 (또는 -1 if allow_short), HOLD(0) → 이전 유지.
+
+        Args:
+            data: signal 컬럼이 포함된 DataFrame
+            allow_short: True면 숏 포지션(음수) 허용, False면 0 이하로 클리핑
         """
-        data['position'] = (
+        position = (
             data['signal']
             .replace(0, np.nan)
             .ffill()
             .fillna(0)
-            .clip(lower=0)
-            .astype(int)
         )
+        if not allow_short:
+            position = position.clip(lower=0)
+        data['position'] = position.astype(int)
         return data
 
     def get_params(self) -> Dict:
