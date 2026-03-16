@@ -297,6 +297,12 @@ class TradingDatabase:
             except sqlite3.OperationalError:
                 cursor.execute("ALTER TABLE paper_trading_sessions ADD COLUMN display_name TEXT")
 
+            # Migrate existing DB: add side column to trades if missing
+            try:
+                cursor.execute("SELECT side FROM trades LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute("ALTER TABLE trades ADD COLUMN side TEXT")
+
             conn.commit()
         finally:
             conn.close()

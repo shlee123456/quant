@@ -48,15 +48,25 @@ class VBTBacktester:
         if df.empty:
             return self._empty_results(df)
 
-        entries, exits = self.strategy.get_entries_exits(df)
+        result = self.strategy.get_entries_exits(df)
+
+        # Detect if strategy returns 4-tuple (with short signals)
+        short_entries = None
+        short_exits = None
+        if isinstance(result, tuple) and len(result) == 4:
+            entries, exits, short_entries, short_exits = result
+        else:
+            entries, exits = result
 
         # 시그널이 전혀 없는 경우
-        if not entries.any() and not exits.any():
+        has_long = entries.any() or exits.any()
+        has_short = short_entries is not None and (short_entries.any() or short_exits.any())
+        if not has_long and not has_short:
             return self._no_trade_results(df)
 
         close = df['close']
 
-        pf = vbt.Portfolio.from_signals(
+        signal_kwargs = dict(
             close=close,
             entries=entries,
             exits=exits,
@@ -67,6 +77,12 @@ class VBTBacktester:
             slippage=self.slippage_pct,
             freq='1D',
         )
+
+        if short_entries is not None and short_exits is not None:
+            signal_kwargs['short_entries'] = short_entries
+            signal_kwargs['short_exits'] = short_exits
+
+        pf = vbt.Portfolio.from_signals(**signal_kwargs)
 
         return self._adapt_results(pf, df)
 

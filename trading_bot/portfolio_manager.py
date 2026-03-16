@@ -67,6 +67,11 @@ class PortfolioManager:
         for symbol, position in self.positions.items():
             if position > 0 and symbol in current_prices:
                 total_value += position * current_prices[symbol]
+            elif position < 0 and symbol in current_prices:
+                # Short position: value = abs(position) * (2 * entry_price - current_price)
+                entry_price = self.entry_prices.get(symbol, 0)
+                if entry_price > 0:
+                    total_value += abs(position) * (2 * entry_price - current_prices[symbol])
 
         return total_value
 

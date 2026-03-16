@@ -44,15 +44,24 @@ class OrderExecutionVerifier:
             (is_valid, message) - is_valid가 False면 오류, True면 정상 또는 경고
         """
         trade_type = executed_trade.get('type', '').upper()
-        # 'SELL (CLOSE)' 같은 형태도 처리
+        # 'SELL (CLOSE)', 'COVER (CLOSE)' 같은 형태도 처리
         is_buy = 'BUY' in trade_type
         is_sell = 'SELL' in trade_type
+        is_short = 'SHORT' in trade_type and 'SELL' not in trade_type
+        is_cover = 'COVER' in trade_type
 
         result_is_valid = True
         message = "검증 통과"
 
+        # SHORT/COVER are valid with matching signals when short is enabled
+        if expected_signal == -1 and is_short and current_position == 0:
+            # Valid: SHORT entry when no position
+            message = "검증 통과: SHORT 진입"
+        elif expected_signal == 1 and is_cover and current_position < 0:
+            # Valid: COVER when holding short position
+            message = "검증 통과: SHORT 커버"
         # 시그널과 주문 방향 불일치 검사 (오류)
-        if expected_signal == 1 and is_sell:
+        elif expected_signal == 1 and is_sell:
             result_is_valid = False
             message = f"오류: BUY 시그널인데 SELL 주문 실행됨 (trade={trade_type})"
             logger.error(message)
@@ -115,6 +124,10 @@ class OrderExecutionVerifier:
                 reconstructed[symbol] += size
             elif 'SELL' in trade_type:
                 reconstructed[symbol] = 0.0  # 전량 매도 가정
+            elif 'SHORT' in trade_type and 'SELL' not in trade_type:
+                reconstructed[symbol] = -size  # 숏 진입
+            elif 'COVER' in trade_type:
+                reconstructed[symbol] = 0.0  # 숏 커버
 
         # 재구성된 포지션과 현재 포지션 비교
         all_symbols = set(list(positions.keys()) + list(reconstructed.keys()))
@@ -173,15 +186,12 @@ class OrderExecutionVerifier:
             trade_type = trade.get('type', '').upper()
             commission = trade.get('commission', 0.0)
 
-            if 'BUY' in trade_type:
+            if 'BUY' in trade_type and 'SELL' not in trade_type:
                 # BUY: capital 필드가 있으면 해당 값의 변화를 추적
                 # 없으면 size * price + commission 차감
                 price = trade.get('price', 0.0)
                 size = trade.get('size', 0.0)
                 if 'capital' in trade:
-                    # trade에 기록된 capital이 거래 후 잔액이므로
-                    # 직접 계산: 매수금액 = size * price / (1 - commission_rate)에 해당
-                    # 하지만 정확한 매수 금액은 (이전 capital - trade['capital'])
                     trade_cost = reconstructed_capital - trade.get('capital', reconstructed_capital)
                     reconstructed_capital -= trade_cost
                 else:
@@ -191,11 +201,29 @@ class OrderExecutionVerifier:
                 price = trade.get('price', 0.0)
                 size = trade.get('size', 0.0)
                 if 'capital' in trade:
-                    # SELL 거래 후 자본금이 capital 필드에 기록됨
-                    # sale_proceeds = capital(after) - capital(before)
                     sale_proceeds = trade['capital'] - reconstructed_capital
                     reconstructed_capital += sale_proceeds
                 else:
+                    reconstructed_capital += (size * price - commission)
+
+            elif 'SHORT' in trade_type and 'SELL' not in trade_type:
+                # SHORT entry: same as BUY - capital decreases by trade cost
+                price = trade.get('price', 0.0)
+                size = trade.get('size', 0.0)
+                if 'capital' in trade:
+                    trade_cost = reconstructed_capital - trade.get('capital', reconstructed_capital)
+                    reconstructed_capital -= trade_cost
+                else:
+                    reconstructed_capital -= (size * price + commission)
+
+            elif 'COVER' in trade_type:
+                # COVER: like SELL - capital changes to trade['capital']
+                if 'capital' in trade:
+                    cover_change = trade['capital'] - reconstructed_capital
+                    reconstructed_capital += cover_change
+                else:
+                    price = trade.get('price', 0.0)
+                    size = trade.get('size', 0.0)
                     reconstructed_capital += (size * price - commission)
 
         diff = abs(reconstructed_capital - current_capital)
