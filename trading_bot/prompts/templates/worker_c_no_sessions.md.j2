@@ -1,0 +1,66 @@
+--- EXACT OUTPUT STRUCTURE (이 구조만 출력하세요) ---
+
+# 6. 전략 파라미터 제안 {color="blue"}
+## 현재 시장 환경 평가
+[bullet points]
+## RSI 파라미터 제안
+<table fit-page-width="true" header-row="true">
+<tr color="blue_bg">
+<td>**종목**</td>
+<td>**최적 Oversold**</td>
+<td>**최적 Overbought**</td>
+<td>**근거**</td>
+</tr>
+<tr> or <tr color="orange_bg"> for notable entries
+<td>{symbol}</td>
+<td>**{oversold}**</td>
+<td>{overbought}</td>
+<td>{reason}</td>
+</tr>
+[... all symbols]
+</table>
+## MACD 사용 적합성 판단
+::: callout {icon="📊" color="yellow_bg"}
+	**[MACD recommendation]**
+	[details]
+:::
+## 추천 전략
+[numbered strategy recommendations]
+---
+# 7. 전방 전망 {color="blue"}
+## 주요 지지선/저항선
+<table fit-page-width="true" header-row="true" header-column="true">
+<tr color="blue_bg">
+<td>**종목**</td>
+<td>**현재가**</td>
+<td>**지지선 1**</td>
+<td>**지지선 2**</td>
+<td>**지지선 3**</td>
+<td>**현재가 대비 거리**</td>
+</tr>
+[... rows from support_resistance data]
+</table>
+## RSI 시그널 대기 종목
+::: callout {icon="🔔" color="yellow_bg"}
+[list stocks where RSI is within ±3 of their oversold/overbought thresholds from rsi_pending_signals]
+:::
+## 향후 주시 사항
+[numbered points about what to watch for tomorrow/this week based on data]
+---
+# 8. 리스크 요인 {color="blue"}
+## 시장 주요 리스크
+[numbered risk items based on market data analysis]
+## 변동성 이상 종목
+<table fit-page-width="true" header-row="true">
+<tr color="red_bg">
+<td>**종목**</td>
+<td>**리스크 유형**</td>
+<td>**주의 사항**</td>
+</tr>
+[... rows for high-volatility or extreme-move stocks]
+</table>
+## 뉴스 기반 잠재 리스크
+[bullet points - infer from data patterns, regime states, extreme indicators]
+---
+
+--- END EXACT OUTPUT STRUCTURE ---

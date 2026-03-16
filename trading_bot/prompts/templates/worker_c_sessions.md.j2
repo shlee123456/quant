@@ -1,0 +1,118 @@
+--- EXACT OUTPUT STRUCTURE (이 구조만 출력하세요) ---
+
+# 6. 전략 파라미터 제안 {color="blue"}
+## 현재 시장 환경 평가
+[bullet points]
+## RSI 파라미터 제안
+<table fit-page-width="true" header-row="true">
+<tr color="blue_bg">
+<td>**종목**</td>
+<td>**최적 Oversold**</td>
+<td>**최적 Overbought**</td>
+<td>**근거**</td>
+</tr>
+<tr> or <tr color="orange_bg"> for notable entries
+<td>{symbol}</td>
+<td>**{oversold}**</td>
+<td>{overbought}</td>
+<td>{reason}</td>
+</tr>
+[... all symbols]
+</table>
+## MACD 사용 적합성 판단
+::: callout {icon="📊" color="yellow_bg"}
+	**[MACD recommendation]**
+	[details]
+:::
+## 추천 전략
+[numbered strategy recommendations]
+---
+# 7. 성과 대시보드 {color="blue"}
+## 전략별 성과 테이블
+<table fit-page-width="true" header-row="true">
+<tr color="blue_bg">
+<td>**세션**</td>
+<td>**수익률**</td>
+<td>**Sharpe**</td>
+<td>**Profit Factor**</td>
+<td>**Max DD**</td>
+<td>**VaR(95%)**</td>
+<td>**Win Rate**</td>
+</tr>
+[... rows from session_details data, use color="orange_bg" for negative returns]
+</table>
+## PnL 기여도 분석
+[analysis based on strategy_pnl_breakdown data - which symbols contributed most/least]
+## 거래 로그
+<details>
+<summary>📋 최근 거래 내역 (최대 20건)</summary>
+<table fit-page-width="true" header-row="true">
+<tr color="blue_bg">
+<td>**시간**</td>
+<td>**종목**</td>
+<td>**유형**</td>
+<td>**가격**</td>
+<td>**수량**</td>
+<td>**PnL**</td>
+</tr>
+[... rows from trade_log data]
+</table>
+</details>
+---
+# 8. 트레이딩 세션 분석 {color="blue"}
+## 세션 실행 결과
+<table fit-page-width="true" header-row="true">
+<tr color="blue_bg">
+<td>**세션**</td>
+<td>**전략**</td>
+<td>**초기 자본**</td>
+<td>**최종 자본**</td>
+<td>**수익률**</td>
+<td>**거래 횟수**</td>
+</tr>
+[... rows from session_details data]
+</table>
+## 세션별 분석
+[per-session analysis: strategy effectiveness, trades detail if any, comparison between sessions]
+## 전략 효과 평가
+::: callout {icon="📈" color="blue_bg"}
+	[evaluation of strategy effectiveness based on session results and market conditions]
+:::
+---
+# 9. 전방 전망 {color="blue"}
+## 주요 지지선/저항선
+<table fit-page-width="true" header-row="true" header-column="true">
+<tr color="blue_bg">
+<td>**종목**</td>
+<td>**현재가**</td>
+<td>**지지선 1**</td>
+<td>**지지선 2**</td>
+<td>**지지선 3**</td>
+<td>**현재가 대비 거리**</td>
+</tr>
+[... rows from support_resistance data]
+</table>
+## RSI 시그널 대기 종목
+::: callout {icon="🔔" color="yellow_bg"}
+[list stocks where RSI is within ±3 of their oversold/overbought thresholds from rsi_pending_signals]
+:::
+## 향후 주시 사항
+[numbered points about what to watch for tomorrow/this week based on data]
+---
+# 10. 리스크 요인 {color="blue"}
+## 시장 주요 리스크
+[numbered risk items based on market data analysis]
+## 변동성 이상 종목
+<table fit-page-width="true" header-row="true">
+<tr color="red_bg">
+<td>**종목**</td>
+<td>**리스크 유형**</td>
+<td>**주의 사항**</td>
+</tr>
+[... rows for high-volatility or extreme-move stocks]
+</table>
+## 뉴스 기반 잠재 리스크
+[bullet points - infer from data patterns, regime states, extreme indicators]
+---
+
+--- END EXACT OUTPUT STRUCTURE ---
