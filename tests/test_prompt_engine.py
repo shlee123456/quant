@@ -560,3 +560,44 @@ class TestFormatValidation:
         result, corrections = PromptEngine.auto_correct_format(content)
         assert 'color="red"' in result
         assert len(corrections) > 0
+
+
+# =========================================================================
+# Worker C 숏 트레이드 메트릭 테스트
+# =========================================================================
+
+
+class TestWorkerCShortTradeMetrics:
+    """Worker C 세션 메트릭에 숏 데이터 포함 테스트"""
+
+    def test_pnl_breakdown_includes_cover_trades(self):
+        """COVER 트레이드가 PnL breakdown에 포함되는지 확인"""
+        trades = [
+            {"type": "SELL", "symbol": "AAPL", "pnl": 50.0},
+            {"type": "COVER", "symbol": "AAPL", "pnl": 30.0},
+            {"type": "SELL", "symbol": "MSFT", "pnl": -20.0},
+        ]
+        result = _calculate_strategy_pnl_breakdown(trades)
+        # AAPL should have both SELL and COVER pnl summed
+        aapl = [r for r in result if r["symbol"] == "AAPL"][0]
+        assert aapl["total_pnl"] == 80.0
+        assert aapl["trade_count"] == 2
+        assert aapl["long_count"] == 1  # SELL
+        assert aapl["short_count"] == 1  # COVER
+
+    def test_pnl_breakdown_sell_close_counted_as_long(self):
+        """SELL (CLOSE) 트레이드가 롱으로 카운트되는지 확인"""
+        trades = [
+            {"type": "SELL (CLOSE)", "symbol": "NVDA", "pnl": 100.0},
+        ]
+        result = _calculate_strategy_pnl_breakdown(trades)
+        assert result[0]["long_count"] == 1
+        assert result[0]["short_count"] == 0
+
+    def test_pnl_breakdown_no_cover_trades(self):
+        """COVER 트레이드 없을 때 short_count=0"""
+        trades = [
+            {"type": "SELL", "symbol": "AAPL", "pnl": 50.0},
+        ]
+        result = _calculate_strategy_pnl_breakdown(trades)
+        assert result[0]["short_count"] == 0

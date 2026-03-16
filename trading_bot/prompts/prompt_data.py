@@ -311,17 +311,28 @@ def _calculate_strategy_pnl_breakdown(trades: List[Dict]) -> List[Dict]:
     if not trades:
         return []
 
-    sell_trades = [t for t in trades if t.get("type") == "SELL"]
-    if not sell_trades:
+    closing_trades = [
+        t for t in trades if t.get("type") in ("SELL", "SELL (CLOSE)", "COVER")
+    ]
+    if not closing_trades:
         return []
 
     symbol_pnl: Dict[str, List[float]] = {}
-    for t in sell_trades:
+    symbol_long_count: Dict[str, int] = {}
+    symbol_short_count: Dict[str, int] = {}
+    for t in closing_trades:
         symbol = t.get("symbol", "N/A")
         pnl = t.get("pnl", 0)
+        trade_type = t.get("type", "")
         if symbol not in symbol_pnl:
             symbol_pnl[symbol] = []
+            symbol_long_count[symbol] = 0
+            symbol_short_count[symbol] = 0
         symbol_pnl[symbol].append(pnl)
+        if trade_type == "COVER":
+            symbol_short_count[symbol] += 1
+        else:
+            symbol_long_count[symbol] += 1
 
     breakdown = []
     for symbol, pnls in sorted(symbol_pnl.items()):
@@ -338,6 +349,8 @@ def _calculate_strategy_pnl_breakdown(trades: List[Dict]) -> List[Dict]:
                 "avg_pnl": round(total_pnl / len(pnls), 2) if pnls else 0,
                 "max_win": round(max(wins), 2) if wins else 0,
                 "max_loss": round(min(losses), 2) if losses else 0,
+                "long_count": symbol_long_count.get(symbol, 0),
+                "short_count": symbol_short_count.get(symbol, 0),
             }
         )
 
