@@ -670,3 +670,185 @@ TSLA short 포지션이 적합합니다.
         output = "some output text"
         result = validator.validate_worker_b(output, fact_sheet)
         assert any("ranking 데이터가 없어" in w for w in result.warnings)
+
+
+# ──────────────────────────────────────────────────────────────
+# Bidirectional scenario analysis tests
+# ──────────────────────────────────────────────────────────────
+
+
+class TestBidirectionalScenario:
+    """양방향 시나리오 분석 관련 테스트"""
+
+    def test_ranking_fact_has_short_signal_counts(self):
+        """RankingFact에 short_signal_counts 필드 존재"""
+        rf = RankingFact(
+            ranked_symbols=["AAPL"],
+            scores={"AAPL": 80},
+            reasons={"AAPL": ["test"]},
+            directions={"AAPL": "long"},
+            short_signal_counts={"AAPL": 2},
+        )
+        assert rf.short_signal_counts["AAPL"] == 2
+
+    def test_signal_tag_bearish(self):
+        """약세시그널 3/5 이상이면 ⚠️ 태그"""
+        builder = FactSheetBuilder()
+        fact_sheet = {
+            "market": MarketFact(
+                analysis_date="2026-03-16",
+                total_symbols=1,
+                symbols_list=["TEST"],
+                intelligence_score=0,
+                intelligence_signal="neutral",
+                layer_scores={},
+                regime_counts={"BEARISH": 1},
+            ),
+            "stocks": [
+                StockFact(
+                    symbol="TEST",
+                    current_price=100,
+                    change_1d=-2,
+                    change_5d=-5,
+                    change_20d=-10,
+                    rsi_value=78,
+                    rsi_zone="overbought",
+                    macd_signal="bearish",
+                    regime="BEARISH",
+                    regime_confidence=0.7,
+                    short_signal_count=4,
+                    short_eligible=True,
+                    direction="short",
+                )
+            ],
+            "ranking": RankingFact(
+                ranked_symbols=["TEST"],
+                scores={"TEST": 80},
+                reasons={"TEST": ["RSI 78 과매수"]},
+                directions={"TEST": "short"},
+                short_signal_counts={"TEST": 4},
+            ),
+        }
+        block = builder.to_prompt_block(fact_sheet)
+        assert "⚠️ 약세시그널 4/5" in block
+
+    def test_signal_tag_bullish(self):
+        """약세시그널 2/5 이하이면 📈 태그"""
+        builder = FactSheetBuilder()
+        fact_sheet = {
+            "market": MarketFact(
+                analysis_date="2026-03-16",
+                total_symbols=1,
+                symbols_list=["AAPL"],
+                intelligence_score=10,
+                intelligence_signal="bullish",
+                layer_scores={},
+                regime_counts={"BULLISH": 1},
+            ),
+            "stocks": [
+                StockFact(
+                    symbol="AAPL",
+                    current_price=250,
+                    change_1d=1,
+                    change_5d=2,
+                    change_20d=5,
+                    rsi_value=55,
+                    rsi_zone="neutral",
+                    macd_signal="bullish",
+                    regime="BULLISH",
+                    regime_confidence=0.8,
+                    short_signal_count=0,
+                )
+            ],
+            "ranking": RankingFact(
+                ranked_symbols=["AAPL"],
+                scores={"AAPL": 75},
+                reasons={"AAPL": ["RSI 55 neutral"]},
+                directions={"AAPL": "long"},
+                short_signal_counts={"AAPL": 0},
+            ),
+        }
+        block = builder.to_prompt_block(fact_sheet)
+        assert "\U0001f4c8" in block
+        assert "⚠️ 약세시그널" not in block
+
+    def test_bidirectional_section_appears(self):
+        """약세 시그널 집중 종목이 있으면 양방향 분석 섹션 존재"""
+        builder = FactSheetBuilder()
+        fact_sheet = {
+            "market": MarketFact(
+                analysis_date="2026-03-16",
+                total_symbols=1,
+                symbols_list=["GOOGL"],
+                intelligence_score=-5,
+                intelligence_signal="neutral",
+                layer_scores={},
+                regime_counts={"BEARISH": 1},
+            ),
+            "stocks": [
+                StockFact(
+                    symbol="GOOGL",
+                    current_price=300,
+                    change_1d=-3,
+                    change_5d=-5,
+                    change_20d=-8,
+                    rsi_value=76,
+                    rsi_zone="overbought",
+                    macd_signal="bearish",
+                    regime="BEARISH",
+                    regime_confidence=0.6,
+                    short_signal_count=3,
+                    short_eligible=True,
+                    direction="short",
+                )
+            ],
+            "ranking": RankingFact(
+                ranked_symbols=["GOOGL"],
+                scores={"GOOGL": 70},
+                reasons={"GOOGL": ["BEARISH"]},
+                directions={"GOOGL": "short"},
+                short_signal_counts={"GOOGL": 3},
+            ),
+        }
+        block = builder.to_prompt_block(fact_sheet)
+        assert "양방향 시나리오 분석 필요" in block
+        assert "하락 시나리오" in block
+        assert "반등 시나리오" in block
+
+    def test_no_bidirectional_section_when_no_concentrated(self):
+        """약세 시그널 집중 종목 없으면 양방향 섹션 없음"""
+        builder = FactSheetBuilder()
+        fact_sheet = {
+            "market": MarketFact(
+                analysis_date="2026-03-16",
+                total_symbols=1,
+                symbols_list=["AAPL"],
+                intelligence_score=10,
+                intelligence_signal="bullish",
+                layer_scores={},
+                regime_counts={"BULLISH": 1},
+            ),
+            "stocks": [
+                StockFact(
+                    symbol="AAPL",
+                    current_price=250,
+                    change_1d=1,
+                    change_5d=2,
+                    change_20d=5,
+                    rsi_value=55,
+                    rsi_zone="neutral",
+                    macd_signal="bullish",
+                    regime="BULLISH",
+                    regime_confidence=0.8,
+                    short_signal_count=1,
+                )
+            ],
+            "ranking": RankingFact(
+                ranked_symbols=["AAPL"],
+                scores={"AAPL": 75},
+                reasons={"AAPL": ["neutral"]},
+                short_signal_counts={"AAPL": 1},
+            ),
+        }
+        block = builder.to_prompt_block(fact_sheet)
+        assert "양방향 시나리오 분석 필요" not in block

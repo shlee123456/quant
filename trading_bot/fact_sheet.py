@@ -56,6 +56,7 @@ class RankingFact:
     scores: Dict[str, float]
     reasons: Dict[str, List[str]]
     directions: Dict[str, str] = field(default_factory=dict)
+    short_signal_counts: Dict[str, int] = field(default_factory=dict)
 
 
 class FactSheetBuilder:
@@ -227,6 +228,9 @@ class FactSheetBuilder:
         scores: Dict[str, float] = {}
         reasons: Dict[str, List[str]] = {}
         directions: Dict[str, str] = {}
+        short_signal_counts: Dict[str, int] = {
+            r["symbol"]: r.get("short_signal_count", 0) for r in ranked
+        }
 
         for item in ranked:
             sym = item["symbol"]
@@ -240,6 +244,7 @@ class FactSheetBuilder:
             scores=scores,
             reasons=reasons,
             directions=directions,
+            short_signal_counts=short_signal_counts,
         )
 
     # ------------------------------------------------------------------
@@ -320,9 +325,26 @@ class FactSheetBuilder:
                 reason_list = ranking.reasons.get(sym, [])
                 reasons_str = ", ".join(reason_list[:3]) if reason_list else "변동 작음"
                 direction = ranking.directions.get(sym, "long")
+                ssc = ranking.short_signal_counts.get(sym, 0)
+                tag = f"\u26a0\ufe0f 약세시그널 {ssc}/5" if ssc >= 3 else "\U0001f4c8"
                 lines.append(
-                    f"{i}. **{sym}** (점수: {score:.0f}, {direction}) — {reasons_str}"
+                    f"{i}. **{sym}** {tag} (점수: {score:.0f}) — {reasons_str}"
                 )
+            lines.append("")
+
+        # Bidirectional scenario analysis targets
+        signal_concentrated = [s for s in stocks if s.short_signal_count >= 3]
+        if signal_concentrated:
+            lines.append("### \u26a0\ufe0f 약세 시그널 집중 종목 (양방향 시나리오 분석 필요)")
+            for s in signal_concentrated:
+                lines.append(
+                    f"- **{s.symbol}** ({s.short_signal_count}/5 시그널: "
+                    f"RSI {s.rsi_value:.1f}, {s.regime})"
+                )
+            lines.append("")
+            lines.append("위 종목은 약세 시그널이 집중되어 있습니다.")
+            lines.append("**하락 시나리오**와 **반등 시나리오**를 모두 분석하고,")
+            lines.append("각 시나리오의 트리거 조건(가격, 이벤트)을 명시하세요.")
             lines.append("")
 
         # Footer warnings
