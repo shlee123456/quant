@@ -260,8 +260,8 @@ class TestLayer5FinBERTIntegration:
             score, details = SentimentLayer._calc_news_sentiment([
                 {'title': 'Market rally continues with strong gains'},
             ])
-            # 키워드 분석 결과 (method 키가 없음)
-            assert 'method' not in details
+            # 키워드 분석 결과
+            assert details['method'] == 'keyword'
             assert 'positive_count' in details
 
     def test_finbert_not_set_uses_keywords(self):
@@ -274,7 +274,7 @@ class TestLayer5FinBERTIntegration:
             score, details = SentimentLayer._calc_news_sentiment([
                 {'title': 'Stock surge bullish rally'},
             ])
-            assert 'method' not in details
+            assert details['method'] == 'keyword'
 
     @patch('trading_bot.sentiment_analyzer.SentimentAnalyzer._ensure_loaded')
     def test_finbert_enabled_uses_finbert(self, mock_load):
@@ -309,7 +309,7 @@ class TestLayer5FinBERTIntegration:
                     {'title': 'Market rally strong gains'},
                 ])
                 # 키워드 폴백
-                assert 'method' not in details
+                assert details['method'] == 'keyword'
                 assert 'positive_count' in details
 
     def test_finbert_runtime_error_falls_back(self):
@@ -331,7 +331,7 @@ class TestLayer5FinBERTIntegration:
                     {'title': 'Market crash plunge fear'},
                 ])
                 # 키워드 폴백
-                assert 'method' not in details
+                assert details['method'] == 'keyword'
                 assert details['negative_count'] > 0
 
     def test_finbert_empty_news_still_returns(self):

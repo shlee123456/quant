@@ -258,6 +258,7 @@ class SentimentLayer(BaseIntelligenceLayer):
         """
         if not news_data:
             return 0.0, {
+                'method': 'keyword',
                 'positive_count': 0,
                 'negative_count': 0,
                 'total_headlines': 0,
@@ -293,6 +294,7 @@ class SentimentLayer(BaseIntelligenceLayer):
         total_words = positive_count + negative_count
         if total_words == 0:
             return 0.0, {
+                'method': 'keyword',
                 'positive_count': 0,
                 'negative_count': 0,
                 'total_headlines': total_headlines,
@@ -313,6 +315,7 @@ class SentimentLayer(BaseIntelligenceLayer):
         score = max(-100.0, min(100.0, net))
 
         return score, {
+            'method': 'keyword',
             'positive_count': positive_count,
             'negative_count': negative_count,
             'total_headlines': total_headlines,

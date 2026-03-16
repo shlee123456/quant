@@ -11,10 +11,25 @@ class SentimentAnalyzer:
 
     _instance = None
 
-    def __init__(self, model_name: str = "ProsusAI/finbert", device: str = "cpu"):
+    def __init__(self, model_name: str = "ProsusAI/finbert", device: str = "auto"):
         self.model_name = model_name
-        self.device = device
+        self.device = self._resolve_device(device)
         self._pipeline = None
+
+    @staticmethod
+    def _resolve_device(device: str) -> str:
+        """디바이스 자동 감지. 명시적 지정 시 그대로 반환."""
+        if device != "auto":
+            return device
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return "cuda"
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                return "mps"
+        except ImportError:
+            pass
+        return "cpu"
 
     @classmethod
     def get_instance(cls, **kwargs) -> 'SentimentAnalyzer':
@@ -29,6 +44,7 @@ class SentimentAnalyzer:
 
     def _ensure_loaded(self):
         if self._pipeline is None:
+            logger.info(f"FinBERT 모델 로딩 중... (model={self.model_name}, device={self.device})")
             from transformers import pipeline
             self._pipeline = pipeline(
                 "sentiment-analysis",
@@ -37,6 +53,7 @@ class SentimentAnalyzer:
                 truncation=True,
                 max_length=512,
             )
+            logger.info("FinBERT 모델 로딩 완료")
 
     def analyze_headlines(self, news_data: List[Dict]) -> Tuple[float, Dict]:
         """뉴스 헤드라인 감성 분석.

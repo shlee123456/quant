@@ -63,7 +63,7 @@ PINE_OUTPUT_DIR = PROJECT_ROOT / "data" / "pine_scripts"
 
 # LLM 설정
 LLM_MODEL = "claude-haiku-4-5-20251001"
-LLM_TIMEOUT = 60  # seconds
+LLM_TIMEOUT = 120  # seconds
 
 # 레짐별 기본 알림 유형 매핑
 _REGIME_ALERT_MAP = {

@@ -14,13 +14,18 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements file
+# Copy requirements files
 COPY requirements.txt .
+COPY requirements-ml.txt .
 
 # Install Python dependencies
 # --no-cache-dir: Don't cache pip packages (reduces image size)
 # --user: Install to user site-packages
-RUN pip install --no-cache-dir --user -r requirements.txt
+# CPU-only torch to reduce image size (~800MB vs ~2GB with CUDA)
+RUN pip install --no-cache-dir --user -r requirements.txt && \
+    pip install --no-cache-dir --user \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        -r requirements-ml.txt
 
 # ============================================
 # Stage 2: Runtime - Create final image

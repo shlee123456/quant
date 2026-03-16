@@ -77,11 +77,18 @@ if [ "$SKIP_NOTION" = true ]; then
 else
     log "INFO" "Step 2: 노션 작성"
 
-    if python scripts/notion_writer.py 2>&1 | tee -a "$LOG_FILE"; then
+    set +e  # 일시적으로 errexit 해제 (exit code 구분 필요)
+    python scripts/notion_writer.py 2>&1 | tee -a "$LOG_FILE"
+    NOTION_EXIT=${PIPESTATUS[0]}  # python 프로세스의 exit code (tee가 아닌)
+    set -e
+
+    if [ "$NOTION_EXIT" -eq 0 ]; then
         NOTION_OK=true
         log "INFO" "Step 2: 노션 작성 완료"
+    elif [ "$NOTION_EXIT" -eq 2 ]; then
+        log "WARN" "Step 2: 노션 작성 스킵 (이미 완료 또는 JSON 없음)"
     else
-        log "ERROR" "Step 2: 노션 작성 실패"
+        log "ERROR" "Step 2: 노션 작성 실패 (exit code=$NOTION_EXIT)"
     fi
 fi
 
@@ -108,6 +115,8 @@ log "INFO" "파이프라인 결과"
 log "INFO" "  시장분석: $( [ "$ANALYSIS_OK" = true ] && echo '✅' || echo '❌' )"
 if [ "$SKIP_NOTION" = true ]; then
     log "INFO" "  노션작성: ⏭️  스킵"
+elif [ "${NOTION_EXIT:-1}" -eq 2 ]; then
+    log "WARN" "  노션작성: ⚠️  스킵 (이미 완료 또는 JSON 없음)"
 else
     log "INFO" "  노션작성: $( [ "$NOTION_OK" = true ] && echo '✅' || echo '❌' )"
 fi

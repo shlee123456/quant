@@ -50,6 +50,8 @@ from trading_bot.parallel_prompt_builder import (
     build_notion_writer_prompt,
     assemble_sections,
     validate_assembly,
+    _load_previous_top3,
+    _save_top3_marker,
 )
 
 # 로깅 설정
@@ -332,6 +334,11 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
     except Exception as e:
         logger.warning(f"전일 변화 계산 실패 (무시): {e}")
 
+    # 2.7. 이전 TOP 3 로드 (중복 방지)
+    previous_top3 = _load_previous_top3(str(Path(json_path).parent), today)
+    if previous_top3:
+        logger.info(f"이전 TOP 3: {previous_top3}")
+
     # 3. 워커 프롬프트 빌드
     intelligence_data = data.get("intelligence")
 
@@ -350,6 +357,7 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
     )
 
     reflection_enabled = os.getenv('REFLECTION_ENABLED', 'true').lower() == 'true'
+    top3_symbols_code = []  # Will be set by build_worker_b_prompt
 
     # 4. 워커 설정
     worker_a_cfg = {"prompt": prompt_a, "tools": "WebSearch", "timeout": 600, "max_budget": 2.00}
@@ -383,10 +391,12 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
         worker_a_output = results["Worker-A"][1] if results["Worker-A"][0] else ""
         worker_a_context = worker_a_output[:3000] if worker_a_output else None
 
-        prompt_b = build_worker_b_prompt(
+        prompt_b, top3_symbols_code = build_worker_b_prompt(
             market_data, news_data, fear_greed_data, today,
             intelligence_data=intelligence_data,
             worker_a_context=worker_a_context,
+            daily_changes=daily_changes,
+            previous_top3=previous_top3,
         )
         logger.info(f"프롬프트 생성 완료 - A: {len(prompt_a)}자, B: {len(prompt_b)}자, C: {len(prompt_c)}자")
 
@@ -397,9 +407,11 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
             results["Worker-B"] = (False, "", None)
     else:
         # 기존 3개 병렬 실행
-        prompt_b = build_worker_b_prompt(
+        prompt_b, top3_symbols_code = build_worker_b_prompt(
             market_data, news_data, fear_greed_data, today,
             intelligence_data=intelligence_data,
+            daily_changes=daily_changes,
+            previous_top3=previous_top3,
         )
         logger.info(f"프롬프트 생성 완료 - A: {len(prompt_a)}자, B: {len(prompt_b)}자, C: {len(prompt_c)}자")
 
@@ -565,6 +577,35 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
         logger.error("Notion Writer 실패 - 마커 생성하지 않음 (다음 실행 시 재시도)")
         return False
 
+    # 14. Notion 페이지 생성 검증 (출력에 URL이 포함되어야 함)
+    import re
+    notion_url_match = re.search(r'NOTION_PAGE_URL:\s*(https?://\S+)', notion_output)
+    if not notion_url_match:
+        # URL 마커가 없으면 notion.so URL이라도 있는지 확인
+        notion_url_fallback = re.search(r'https://(?:www\.)?notion\.(?:so|site)/\S+', notion_output)
+        if not notion_url_fallback:
+            logger.error(
+                "Notion Writer가 성공을 반환했지만 페이지 URL이 출력에 없습니다. "
+                "실제 페이지 생성에 실패했을 가능성이 높습니다."
+            )
+            logger.error(f"Notion Writer 출력 (앞 500자): {notion_output[:500]}")
+            _notify_worker_failure("Notion-Writer", "페이지 URL 미확인 - 실제 생성 실패 가능성")
+            return False
+        else:
+            logger.info(f"Notion 페이지 URL (fallback): {notion_url_fallback.group()}")
+    else:
+        logger.info(f"Notion 페이지 URL: {notion_url_match.group(1)}")
+
+    # 15. TOP 3 마커 저장 (다음날 중복 방지용 — 코드 기반)
+    try:
+        if top3_symbols_code:
+            _save_top3_marker(json_path, top3_symbols_code)
+            logger.info(f"TOP 3 마커 저장 (코드 기반): {top3_symbols_code}")
+        else:
+            logger.warning("코드 기반 TOP 3가 비어있습니다.")
+    except Exception as e:
+        logger.warning(f"TOP 3 마커 저장 실패 (무시): {e}")
+
     logger.info("병렬 Notion 작성 성공!")
     return True
 
@@ -595,19 +636,19 @@ def main():
     # 오늘 JSON 파일 찾기
     json_path = find_today_json()
     if json_path is None:
-        logger.info("처리할 JSON 파일이 없습니다. 종료.")
-        return
+        logger.warning("처리할 JSON 파일이 없습니다. 종료.")
+        sys.exit(2)  # 구분된 exit code: no-op
 
     logger.info(f"대상 JSON: {json_path}")
-
-    # 이미 처리된 파일인지 확인
-    if is_already_done(json_path):
-        logger.info(f"이미 처리 완료된 파일입니다: {json_path}")
-        return
 
     if args.dry_run:
         logger.info("[DRY-RUN] 노션 작성을 건너뜁니다.")
         return
+
+    # 이미 처리된 파일인지 확인 (dry-run 모드에서는 스킵)
+    if not args.dry_run_prompts and is_already_done(json_path):
+        logger.warning(f"이미 처리 완료된 파일입니다: {json_path}")
+        sys.exit(2)  # 구분된 exit code: no-op (이미 완료)
 
     # 세션 리포트 디렉토리 찾기
     session_reports_dir = find_session_reports_dir()
@@ -655,9 +696,12 @@ def main():
             fear_greed_data=fear_greed_data,
             daily_changes=daily_changes_dry,
         )
-        prompt_b = build_worker_b_prompt(
+        previous_top3_dry = _load_previous_top3(str(Path(str(json_path)).parent), today)
+        prompt_b, _ = build_worker_b_prompt(
             market_data, news_data, fear_greed_data, today,
             intelligence_data=intelligence_data_dry,
+            daily_changes=daily_changes_dry,
+            previous_top3=previous_top3_dry,
         )
         prompt_c = build_worker_c_prompt(
             market_data, session_metrics or {}, today, has_sessions,
