@@ -351,6 +351,381 @@ class StrategyOptimizer:
 
         return regime_results
 
+    def walk_forward_optimize(
+        self,
+        strategy_class: Type,
+        df: pd.DataFrame,
+        param_grid: Dict[str, List[Any]],
+        n_splits: int = 5,
+        train_ratio: float = 0.7,
+        mode: str = 'anchored',
+        metric: str = 'total_return',
+        use_vbt: bool = True,
+    ) -> Dict:
+        """
+        Walk-Forward Optimization: IS 구간에서 최적화 후 OOS 구간에서 검증
+
+        데이터를 n_splits개 윈도우로 나누어 순차적으로 학습/검증하여
+        과적합을 방지하고 전략의 실전 성능을 추정합니다.
+
+        Args:
+            strategy_class: 최적화할 전략 클래스
+            df: OHLCV 데이터
+            param_grid: 파라미터 그리드 (예: {'period': [7, 14, 21]})
+            n_splits: 윈도우 분할 수
+            train_ratio: 학습 데이터 비율 (0.0~1.0)
+            mode: 'anchored' (시작 고정, 확장) 또는 'rolling' (고정 크기 슬라이딩)
+            metric: 최적화 기준 지표 (기본: 'total_return')
+            use_vbt: VBTBacktester 사용 여부
+
+        Returns:
+            Dict with:
+                - oos_results: 윈도우별 OOS 결과 리스트
+                - aggregate_oos_return: OOS 평균 수익률
+                - stability_ratio: mean(OOS) / mean(IS) (IS <= 0이면 None)
+                - is_oos_gap: mean(IS - OOS)
+                - parameter_stability: 파라미터 안정성 (0~1)
+                - best_params_per_window: 윈도우별 최적 파라미터
+                - windows: (train_start, train_end, test_start, test_end) 리스트
+        """
+        total_len = len(df)
+
+        # 데이터 부족 시 빈 결과 반환
+        if total_len < n_splits * 2:
+            print(f"[Walk-Forward] 데이터 부족: {total_len}행 (최소 {n_splits * 2}행 필요)")
+            return {
+                'oos_results': [],
+                'aggregate_oos_return': 0.0,
+                'stability_ratio': None,
+                'is_oos_gap': 0.0,
+                'parameter_stability': 0.0,
+                'best_params_per_window': [],
+                'windows': [],
+            }
+
+        # 윈도우 경계 계산
+        if mode == 'rolling':
+            window_size = total_len // n_splits
+            boundaries = [(i * window_size, (i + 1) * window_size) for i in range(n_splits)]
+            # 마지막 윈도우는 나머지 데이터 포함
+            boundaries[-1] = (boundaries[-1][0], total_len)
+        else:
+            # anchored: 균등 분할 지점 계산
+            step = total_len // (n_splits + 1)
+            boundaries = []
+            for i in range(n_splits):
+                end_idx = step * (i + 2)
+                if i == n_splits - 1:
+                    end_idx = total_len
+                boundaries.append((0, end_idx))
+
+        oos_results = []
+        is_returns = []
+        best_params_per_window = []
+        windows = []
+
+        for i in range(n_splits):
+            if mode == 'rolling':
+                window_start, window_end = boundaries[i]
+                split_point = window_start + int((window_end - window_start) * train_ratio)
+                train_start = window_start
+                train_end = split_point
+                test_start = split_point
+                test_end = window_end
+            else:
+                # anchored: 항상 처음부터 시작, 확장
+                _, window_end = boundaries[i]
+                split_point = int(window_end * train_ratio)
+                train_start = 0
+                train_end = split_point
+                test_start = split_point
+                test_end = window_end
+
+            train_df = df.iloc[train_start:train_end].copy()
+            test_df = df.iloc[test_start:test_end].copy()
+
+            # 학습/검증 데이터 최소 크기 확인
+            if len(train_df) < 30 or len(test_df) < 10:
+                print(f"[Walk-Forward] 윈도우 {i+1}/{n_splits}: 데이터 부족 (train={len(train_df)}, test={len(test_df)}) - 건너뜀")
+                continue
+
+            print(f"\n[Walk-Forward] 윈도우 {i+1}/{n_splits}: "
+                  f"Train[{train_start}:{train_end}]({len(train_df)}행) → "
+                  f"Test[{test_start}:{test_end}]({len(test_df)}행)")
+
+            # IS 최적화 (self.results 오염 방지)
+            saved_results = self.results
+            try:
+                is_best = self.optimize(strategy_class, train_df, param_grid, use_vbt=use_vbt)
+            except Exception as e:
+                print(f"  IS 최적화 실패: {e}")
+                self.results = saved_results
+                continue
+            self.results = saved_results
+
+            is_return = is_best[metric]
+            best_params = is_best['params']
+
+            # OOS 평가
+            try:
+                strategy = strategy_class(**best_params)
+                backtester = self._create_backtester(strategy, use_vbt=use_vbt)
+                oos_result = backtester.run(test_df)
+            except Exception as e:
+                print(f"  OOS 평가 실패: {e}")
+                continue
+
+            oos_return = oos_result[metric]
+
+            oos_results.append({
+                'window': i,
+                'is_return': is_return,
+                'oos_return': oos_return,
+                'best_params': best_params,
+                'oos_full_result': oos_result,
+            })
+            is_returns.append(is_return)
+            best_params_per_window.append(best_params)
+
+            train_start_ts = df.index[train_start] if hasattr(df.index, '__getitem__') else train_start
+            train_end_ts = df.index[train_end - 1] if hasattr(df.index, '__getitem__') else train_end
+            test_start_ts = df.index[test_start] if hasattr(df.index, '__getitem__') else test_start
+            test_end_ts = df.index[test_end - 1] if hasattr(df.index, '__getitem__') else test_end
+            windows.append((train_start_ts, train_end_ts, test_start_ts, test_end_ts))
+
+            print(f"  IS {metric}: {is_return:.2f}% → OOS {metric}: {oos_return:.2f}%")
+            print(f"  최적 파라미터: {best_params}")
+
+        # 집계
+        if not oos_results:
+            return {
+                'oos_results': [],
+                'aggregate_oos_return': 0.0,
+                'stability_ratio': None,
+                'is_oos_gap': 0.0,
+                'parameter_stability': 0.0,
+                'best_params_per_window': [],
+                'windows': [],
+            }
+
+        oos_returns = [r['oos_return'] for r in oos_results]
+        mean_oos = np.mean(oos_returns)
+        mean_is = np.mean(is_returns)
+
+        # stability_ratio: mean(OOS) / mean(IS)
+        stability_ratio = None
+        if mean_is > 0:
+            stability_ratio = mean_oos / mean_is
+
+        # is_oos_gap: mean(IS - OOS)
+        is_oos_gap = mean_is - mean_oos
+
+        # parameter_stability: 1 - mean((n_unique - 1) / (n_splits - 1)) per param
+        parameter_stability = self._calculate_parameter_stability(
+            best_params_per_window, n_splits
+        )
+
+        # 결과 출력
+        print(f"\n{'='*60}")
+        print("WALK-FORWARD OPTIMIZATION 결과")
+        print(f"{'='*60}")
+        print(f"모드: {mode} | 윈도우: {len(oos_results)}/{n_splits}")
+        print(f"평균 OOS 수익률: {mean_oos:.2f}%")
+        print(f"평균 IS 수익률: {mean_is:.2f}%")
+        print(f"IS-OOS 갭: {is_oos_gap:.2f}%")
+        if stability_ratio is not None:
+            print(f"안정성 비율 (OOS/IS): {stability_ratio:.2f}")
+        else:
+            print(f"안정성 비율 (OOS/IS): N/A (IS ≤ 0)")
+        print(f"파라미터 안정성: {parameter_stability:.2f}")
+        print(f"{'='*60}\n")
+
+        return {
+            'oos_results': oos_results,
+            'aggregate_oos_return': mean_oos,
+            'stability_ratio': stability_ratio,
+            'is_oos_gap': is_oos_gap,
+            'parameter_stability': parameter_stability,
+            'best_params_per_window': best_params_per_window,
+            'windows': windows,
+        }
+
+    def _calculate_parameter_stability(
+        self,
+        best_params_per_window: List[Dict],
+        n_splits: int,
+    ) -> float:
+        """
+        파라미터 안정성 계산
+
+        각 파라미터별로 윈도우 간 고유 값 수를 기반으로 안정성 측정.
+        1.0 = 모든 윈도우에서 동일 파라미터, 0.0 = 모든 윈도우에서 다른 파라미터
+
+        Args:
+            best_params_per_window: 윈도우별 최적 파라미터 리스트
+            n_splits: 전체 윈도우 수
+
+        Returns:
+            0.0 ~ 1.0 사이의 안정성 점수
+        """
+        if len(best_params_per_window) <= 1:
+            return 1.0
+
+        actual_windows = len(best_params_per_window)
+        if actual_windows <= 1:
+            return 1.0
+
+        param_names = best_params_per_window[0].keys()
+        instabilities = []
+
+        for param in param_names:
+            values = [p[param] for p in best_params_per_window]
+            n_unique = len(set(values))
+            instability = (n_unique - 1) / (actual_windows - 1)
+            instabilities.append(instability)
+
+        if not instabilities:
+            return 1.0
+
+        return 1.0 - np.mean(instabilities)
+
+    def walk_forward_regime_optimize(
+        self,
+        strategy_classes: List[Type],
+        df: pd.DataFrame,
+        param_grids: List[Dict[str, List[Any]]],
+        n_splits: int = 5,
+        train_ratio: float = 0.7,
+        mode: str = 'anchored',
+        regime_detector=None,
+        use_vbt: bool = True,
+    ) -> Dict:
+        """
+        Walk-Forward + Regime-Aware Optimization
+
+        각 윈도우를 레짐별로 분리하여 최적화한 뒤 OOS에서 검증합니다.
+
+        Args:
+            strategy_classes: 전략 클래스 리스트
+            df: OHLCV 데이터
+            param_grids: 전략별 파라미터 그리드 리스트
+            n_splits: 윈도우 분할 수
+            train_ratio: 학습 데이터 비율
+            mode: 'anchored' 또는 'rolling'
+            regime_detector: RegimeDetector 인스턴스 (None이면 자동 생성)
+            use_vbt: VBTBacktester 사용 여부
+
+        Returns:
+            Dict with:
+                - windows: 윈도우별 레짐 최적화 결과 리스트
+                - aggregate_oos_return: OOS 평균 수익률
+                - n_windows: 실제 처리된 윈도우 수
+        """
+        if regime_detector is None:
+            from .regime_detector import RegimeDetector
+            regime_detector = RegimeDetector()
+
+        total_len = len(df)
+
+        if total_len < n_splits * 2:
+            print(f"[WF-Regime] 데이터 부족: {total_len}행")
+            return {
+                'windows': [],
+                'aggregate_oos_return': 0.0,
+                'n_windows': 0,
+            }
+
+        # 윈도우 경계 계산 (walk_forward_optimize과 동일 로직)
+        if mode == 'rolling':
+            window_size = total_len // n_splits
+            boundaries = [(i * window_size, (i + 1) * window_size) for i in range(n_splits)]
+            boundaries[-1] = (boundaries[-1][0], total_len)
+        else:
+            step = total_len // (n_splits + 1)
+            boundaries = []
+            for i in range(n_splits):
+                end_idx = step * (i + 2)
+                if i == n_splits - 1:
+                    end_idx = total_len
+                boundaries.append((0, end_idx))
+
+        window_results = []
+        all_oos_returns = []
+
+        for i in range(n_splits):
+            if mode == 'rolling':
+                window_start, window_end = boundaries[i]
+                split_point = window_start + int((window_end - window_start) * train_ratio)
+                train_start = window_start
+                train_end = split_point
+                test_start = split_point
+                test_end = window_end
+            else:
+                _, window_end = boundaries[i]
+                split_point = int(window_end * train_ratio)
+                train_start = 0
+                train_end = split_point
+                test_start = split_point
+                test_end = window_end
+
+            train_df = df.iloc[train_start:train_end].copy()
+            test_df = df.iloc[test_start:test_end].copy()
+
+            if len(train_df) < 50 or len(test_df) < 10:
+                print(f"[WF-Regime] 윈도우 {i+1}/{n_splits}: 데이터 부족 - 건너뜀")
+                continue
+
+            print(f"\n[WF-Regime] 윈도우 {i+1}/{n_splits}: "
+                  f"Train({len(train_df)}행) → Test({len(test_df)}행)")
+
+            # IS 레짐별 최적화
+            saved_results = self.results
+            try:
+                regime_result = self.optimize_by_regime(
+                    strategy_classes, train_df, param_grids,
+                    regime_detector=regime_detector, use_vbt=use_vbt,
+                )
+            except Exception as e:
+                print(f"  레짐 최적화 실패: {e}")
+                self.results = saved_results
+                continue
+            self.results = saved_results
+
+            # OOS 평가: 테스트 데이터에 기본 전략 적용 (첫 번째 레짐 결과 사용)
+            oos_return = None
+            if regime_result:
+                # 가장 데이터가 많은 레짐의 최적 전략으로 OOS 평가
+                best_regime = next(iter(regime_result.values()))
+                try:
+                    strategy = best_regime['strategy_class'](**best_regime['best_params'])
+                    backtester = self._create_backtester(strategy, use_vbt=use_vbt)
+                    oos_result = backtester.run(test_df)
+                    oos_return = oos_result['total_return']
+                    all_oos_returns.append(oos_return)
+                except Exception as e:
+                    print(f"  OOS 평가 실패: {e}")
+
+            window_results.append({
+                'window': i,
+                'regime_results': regime_result,
+                'oos_return': oos_return,
+            })
+
+        aggregate_oos_return = float(np.mean(all_oos_returns)) if all_oos_returns else 0.0
+
+        print(f"\n{'='*60}")
+        print("WALK-FORWARD REGIME OPTIMIZATION 결과")
+        print(f"{'='*60}")
+        print(f"처리된 윈도우: {len(window_results)}/{n_splits}")
+        print(f"평균 OOS 수익률: {aggregate_oos_return:.2f}%")
+        print(f"{'='*60}\n")
+
+        return {
+            'windows': window_results,
+            'aggregate_oos_return': aggregate_oos_return,
+            'n_windows': len(window_results),
+        }
+
     def analyze_parameter_sensitivity(self, param_name: str, metric: str = 'total_return') -> pd.DataFrame:
         """
         Analyze how a single parameter affects performance
