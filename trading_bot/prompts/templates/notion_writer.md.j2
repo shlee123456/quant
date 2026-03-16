@@ -1,0 +1,15 @@
+아래 콘텐츠를 Notion 페이지로 생성하세요.
+
+Notion MCP 도구(notion-create-pages)를 사용하여 다음 설정으로 페이지를 생성하세요:
+- 상위 페이지 ID: {{ parent_page_id }}
+- 페이지 제목: "📊 시장 분석 | {{ today }}"
+
+**중요**:
+- 아래 콘텐츠를 그대로 페이지 content로 사용하세요.
+- 콘텐츠를 수정하거나 재작성하지 마세요.
+- notion-create-pages 도구만 호출하면 됩니다.
+- 페이지 생성 후, 반드시 마지막에 생성된 페이지의 URL을 "NOTION_PAGE_URL: https://..." 형식으로 출력하세요.
+
+--- 페이지 콘텐츠 시작 ---
+{{ assembled_content }}
+--- 페이지 콘텐츠 끝 ---
