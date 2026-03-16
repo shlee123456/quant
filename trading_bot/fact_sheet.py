@@ -277,6 +277,8 @@ class FactSheetBuilder:
                 f"- Fear & Greed: {market.fear_greed_value} "
                 f"({market.fear_greed_classification or 'N/A'})"
             )
+        else:
+            lines.append("- Fear & Greed: 데이터 없음")
         if market.regime_counts:
             regime_parts = [
                 f"{k}: {v}" for k, v in market.regime_counts.items()

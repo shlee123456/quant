@@ -47,6 +47,14 @@ class PromptEngine:
     # Public API
     # ------------------------------------------------------------------
 
+    # 템플릿별 필수 컨텍스트 변수
+    _REQUIRED_CONTEXT: Dict[str, List[str]] = {
+        "worker_a.md.j2": ["today", "json_str", "section_spec"],
+        "worker_b.md.j2": ["today", "stocks_json"],
+        "worker_c.md.j2": ["today", "has_sessions", "stocks_json"],
+        "notion_writer.md.j2": ["assembled_content", "today", "parent_page_id"],
+    }
+
     def render(self, template_name: str, context: dict) -> str:
         """템플릿을 렌더링합니다.
 
@@ -56,7 +64,16 @@ class PromptEngine:
 
         Returns:
             렌더링된 문자열
+
+        Raises:
+            ValueError: 필수 컨텍스트 변수가 누락된 경우
         """
+        required = self._REQUIRED_CONTEXT.get(template_name, [])
+        missing = [k for k in required if k not in context]
+        if missing:
+            raise ValueError(
+                f"템플릿 '{template_name}' 필수 변수 누락: {missing}"
+            )
         template = self.env.get_template(template_name)
         return template.render(**context)
 

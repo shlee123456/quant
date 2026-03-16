@@ -170,12 +170,14 @@ class TestPromptEngineRendersTemplate:
 
     def test_render_worker_c_with_sessions(self, engine):
         ctx = {
+            "today": "2026-03-16",
             "has_sessions": True,
             "intel_summary": "",
             "daily_changes_block": "",
             "metrics_json": "{}",
             "forward_json": "{}",
             "stocks_json": "{}",
+            "fact_sheet_block": "",
         }
         result = engine.render("worker_c.md.j2", ctx)
         assert "# 7. 성과 대시보드" in result
@@ -183,12 +185,14 @@ class TestPromptEngineRendersTemplate:
 
     def test_render_worker_c_without_sessions(self, engine):
         ctx = {
+            "today": "2026-03-16",
             "has_sessions": False,
             "intel_summary": "",
             "daily_changes_block": "",
             "metrics_json": "",
             "forward_json": "{}",
             "stocks_json": "{}",
+            "fact_sheet_block": "",
         }
         result = engine.render("worker_c.md.j2", ctx)
         assert "# 7. 전방 전망" in result
@@ -403,12 +407,14 @@ class TestTemplateIncludes:
 
     def test_worker_c_includes_format_rules(self, engine):
         ctx = {
+            "today": "2026-03-16",
             "has_sessions": False,
             "intel_summary": "",
             "daily_changes_block": "",
             "metrics_json": "",
             "forward_json": "{}",
             "stocks_json": "{}",
+            "fact_sheet_block": "",
         }
         result = engine.render("worker_c.md.j2", ctx)
         assert "FORMAT RULES (MANDATORY)" in result

@@ -460,7 +460,8 @@ def _extract_forward_look_data(market_data: Dict) -> Dict[str, Any]:
             }
 
         indicators = data.get("indicators", {})
-        rsi_val = indicators.get("rsi", {}).get("value")
+        rsi_dict = indicators.get("rsi", {})
+        rsi_val = rsi_dict.get("value") if isinstance(rsi_dict, dict) else None
         if rsi_val is not None:
             diagnosis = data.get("signal_diagnosis", {})
             optimal = diagnosis.get("optimal_rsi_range", {})
@@ -734,6 +735,7 @@ class PromptDataBuilder:
             fact_sheet_block = FactSheetBuilder().to_prompt_block(fact_sheet)
         except Exception as e:
             logger.warning(f"Worker A 팩트시트 빌드 실패 (무시): {e}")
+            fact_sheet_block = "(⚠️ 팩트시트 생성 실패 — 데이터 기반으로 직접 분석하세요)"
 
         return {
             "today": today,
@@ -896,6 +898,7 @@ class PromptDataBuilder:
             fact_sheet_block = FactSheetBuilder().to_prompt_block(fact_sheet)
         except Exception as e:
             logger.warning(f"Worker B 팩트시트 빌드 실패 (무시): {e}")
+            fact_sheet_block = "(⚠️ 팩트시트 생성 실패 — 데이터 기반으로 직접 분석하세요)"
 
         ctx = {
             "today": today,
@@ -960,6 +963,7 @@ class PromptDataBuilder:
             fact_sheet_block = FactSheetBuilder().to_prompt_block(fact_sheet)
         except Exception as e:
             logger.warning(f"Worker C 팩트시트 빌드 실패 (무시): {e}")
+            fact_sheet_block = "(⚠️ 팩트시트 생성 실패 — 데이터 기반으로 직접 분석하세요)"
 
         return {
             "today": today,
