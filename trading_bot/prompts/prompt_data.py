@@ -612,6 +612,45 @@ def get_notion_page_id() -> str:
 class PromptDataBuilder:
     """각 워커 프롬프트에 주입할 Jinja2 컨텍스트를 생성합니다."""
 
+    def build_fact_sheet(
+        self,
+        market_data: Dict,
+        today: str,
+        *,
+        intelligence_data: Optional[Dict] = None,
+        fear_greed_data: Optional[Dict] = None,
+        daily_changes: Optional[Dict] = None,
+        previous_top3: Optional[list] = None,
+    ) -> Dict[str, Any]:
+        """FactSheetBuilder를 사용하여 팩트 시트를 생성합니다.
+
+        Returns:
+            {'market': MarketFact, 'stocks': [StockFact], 'ranking': RankingFact}
+        """
+        from trading_bot.fact_sheet import FactSheetBuilder
+        from trading_bot.stock_ranker import StockRanker
+
+        stocks = market_data.get("stocks", {})
+        ranked: list = []
+        if stocks:
+            ranker = StockRanker()
+            ranked = ranker.rank(
+                stocks_data=stocks,
+                intelligence_data=intelligence_data,
+                daily_changes=daily_changes,
+                previous_top3=previous_top3,
+            )
+
+        builder = FactSheetBuilder()
+        return builder.build(
+            market_data=market_data,
+            intelligence_data=intelligence_data,
+            fear_greed_data=fear_greed_data,
+            ranked=ranked,
+            daily_changes=daily_changes,
+            today=today,
+        )
+
     def build_worker_a_context(
         self,
         market_data: Dict,
@@ -682,6 +721,20 @@ class PromptDataBuilder:
             section_spec = "**섹션 1과 섹션 2만**"
             section_note = "섹션 1과 2만 출력합니다"
 
+        # Fact sheet block
+        fact_sheet_block = ""
+        try:
+            fact_sheet = self.build_fact_sheet(
+                market_data, today,
+                intelligence_data=intelligence_data,
+                fear_greed_data=fear_greed_data,
+                daily_changes=daily_changes,
+            )
+            from trading_bot.fact_sheet import FactSheetBuilder
+            fact_sheet_block = FactSheetBuilder().to_prompt_block(fact_sheet)
+        except Exception as e:
+            logger.warning(f"Worker A 팩트시트 빌드 실패 (무시): {e}")
+
         return {
             "today": today,
             "symbols": symbols,
@@ -698,6 +751,7 @@ class PromptDataBuilder:
             "macro_section_template": macro_section_template,
             "section_spec": section_spec,
             "section_note": section_note,
+            "fact_sheet_block": fact_sheet_block,
         }
 
     def build_worker_b_context(
@@ -828,6 +882,21 @@ class PromptDataBuilder:
                 "\n## 공포/탐욕 지수 (Fear & Greed Index)\n" + "\n".join(fg_lines)
             )
 
+        # Fact sheet block
+        fact_sheet_block = ""
+        try:
+            fact_sheet = self.build_fact_sheet(
+                market_data, today,
+                intelligence_data=intelligence_data,
+                fear_greed_data=fear_greed_data,
+                daily_changes=daily_changes,
+                previous_top3=previous_top3,
+            )
+            from trading_bot.fact_sheet import FactSheetBuilder
+            fact_sheet_block = FactSheetBuilder().to_prompt_block(fact_sheet)
+        except Exception as e:
+            logger.warning(f"Worker B 팩트시트 빌드 실패 (무시): {e}")
+
         ctx = {
             "today": today,
             "intel_summary": intel_summary,
@@ -838,6 +907,7 @@ class PromptDataBuilder:
             "stocks_json": stocks_json,
             "news_block": news_block,
             "fg_block": fg_block,
+            "fact_sheet_block": fact_sheet_block,
         }
 
         return ctx, top3_symbols
@@ -878,6 +948,19 @@ class PromptDataBuilder:
         forward_data = _extract_forward_look_data(market_data)
         forward_json = json.dumps(forward_data, ensure_ascii=False, indent=2)
 
+        # Fact sheet block
+        fact_sheet_block = ""
+        try:
+            fact_sheet = self.build_fact_sheet(
+                market_data, today,
+                intelligence_data=intelligence_data,
+                daily_changes=daily_changes,
+            )
+            from trading_bot.fact_sheet import FactSheetBuilder
+            fact_sheet_block = FactSheetBuilder().to_prompt_block(fact_sheet)
+        except Exception as e:
+            logger.warning(f"Worker C 팩트시트 빌드 실패 (무시): {e}")
+
         return {
             "today": today,
             "has_sessions": has_sessions,
@@ -886,6 +969,7 @@ class PromptDataBuilder:
             "stocks_json": stocks_json,
             "metrics_json": metrics_json,
             "forward_json": forward_json,
+            "fact_sheet_block": fact_sheet_block,
         }
 
     def build_notion_writer_context(
