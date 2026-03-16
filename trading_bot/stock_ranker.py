@@ -175,7 +175,10 @@ class StockRanker:
         """
         state = regime_data.get('state', 'SIDEWAYS')
         conf = regime_data.get('confidence', 0) or 0
-        adx = adx_data.get('value', 0) or 0
+        if isinstance(adx_data, (int, float)):
+            adx = float(adx_data)
+        else:
+            adx = adx_data.get('value', 0) or 0
 
         state_score = 50 if state != 'SIDEWAYS' else 0
         conf_score = conf * 30

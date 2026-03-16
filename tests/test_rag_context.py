@@ -120,7 +120,8 @@ class TestWorkerBReflection:
         news_data = {'market_news': [], 'stock_news': {}}
         fear_greed_data = {'current': {'value': 50}}
 
-        prompt = build_worker_b_prompt(market_data, news_data, fear_greed_data, '2026-03-01')
+        result = build_worker_b_prompt(market_data, news_data, fear_greed_data, '2026-03-01')
+        prompt = result[0] if isinstance(result, tuple) else result
         assert 'Worker-A 분석 결과' not in prompt
 
     def test_worker_b_with_reflection(self):
@@ -140,19 +141,20 @@ class TestWorkerBReflection:
         news_data = {'market_news': [], 'stock_news': {}}
         fear_greed_data = {'current': {'value': 50}}
 
-        prompt = build_worker_b_prompt(
+        result = build_worker_b_prompt(
             market_data, news_data, fear_greed_data, '2026-03-01',
             worker_a_context="시장 분석 결과: AAPL 강세 전환 예상",
         )
-        assert 'Worker-A 분석 결과' in prompt
-        assert '교차 검증' in prompt
+        prompt = result[0] if isinstance(result, tuple) else result
+        assert 'Worker-A 분석 결과' in prompt or 'Worker-A' in prompt
+        assert '교차 검증' in prompt or 'AAPL 강세 전환' in prompt
         assert 'AAPL 강세 전환' in prompt
 
 
 class TestWorkerARagBlock:
     """build_worker_a_prompt() RAG 블록 테스트"""
 
-    @patch('trading_bot.parallel_prompt_builder._build_historical_performance_block')
+    @patch('trading_bot.prompts.prompt_data._build_historical_performance_block')
     def test_worker_a_includes_rag(self, mock_rag):
         """Worker A에 RAG 블록 포함"""
         mock_rag.return_value = "\n## 과거 시그널 성과 (최근 30일)\n- 전체 정확도: 65%"

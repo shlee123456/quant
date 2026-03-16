@@ -46,7 +46,7 @@ def _make_worker_result(success: bool, output: str = "", cost: float = 0.01):
 WORKER_A_OUTPUT = "# 1. 시장 요약\n내용\n# 2. 종목별 분석\n내용"
 WORKER_B_OUTPUT = "# 3. Top 3\n내용\n# 4. 공포/탐욕\n내용\n# 5. 뉴스\n내용"
 WORKER_C_OUTPUT = "# 6. 전략 파라미터\n내용\n# 7. 전방 전망\n내용\n# 8. 리스크\n내용"
-NOTION_WRITER_OUTPUT = "페이지 작성 완료"
+NOTION_WRITER_OUTPUT = "페이지 작성 완료\nNOTION_PAGE_URL: https://www.notion.so/test-page-12345"
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ class TestWorkerCRetryOnTimeout:
     @patch("scripts.notion_writer.validate_assembly", return_value=True)
     @patch("scripts.notion_writer.assemble_sections", return_value="assembled_content")
     @patch("scripts.notion_writer.build_worker_c_prompt", return_value="prompt_c")
-    @patch("scripts.notion_writer.build_worker_b_prompt", return_value="prompt_b")
+    @patch("scripts.notion_writer.build_worker_b_prompt", return_value=("prompt_b", ["AAPL", "MSFT", "NVDA"]))
     @patch("scripts.notion_writer.build_worker_a_prompt", return_value="prompt_a")
     @patch("scripts.notion_writer.precompute_session_metrics", return_value=None)
     def test_worker_c_retry_succeeds(
@@ -121,7 +121,7 @@ class TestWorkerCRetryOnTimeout:
     @patch("scripts.notion_writer._run_legacy_fallback", return_value=True)
     @patch("scripts.notion_writer.run_claude_worker")
     @patch("scripts.notion_writer.build_worker_c_prompt", return_value="prompt_c")
-    @patch("scripts.notion_writer.build_worker_b_prompt", return_value="prompt_b")
+    @patch("scripts.notion_writer.build_worker_b_prompt", return_value=("prompt_b", ["AAPL", "MSFT", "NVDA"]))
     @patch("scripts.notion_writer.build_worker_a_prompt", return_value="prompt_a")
     @patch("scripts.notion_writer.precompute_session_metrics", return_value=None)
     def test_worker_c_retry_fails_triggers_legacy_fallback(
@@ -168,7 +168,7 @@ class TestWorkerCValidationNotSkipped:
     @patch("scripts.notion_writer.validate_assembly", return_value=False)
     @patch("scripts.notion_writer.assemble_sections", return_value="bad_content")
     @patch("scripts.notion_writer.build_worker_c_prompt", return_value="prompt_c")
-    @patch("scripts.notion_writer.build_worker_b_prompt", return_value="prompt_b")
+    @patch("scripts.notion_writer.build_worker_b_prompt", return_value=("prompt_b", ["AAPL", "MSFT", "NVDA"]))
     @patch("scripts.notion_writer.build_worker_a_prompt", return_value="prompt_a")
     @patch("scripts.notion_writer.precompute_session_metrics", return_value=None)
     def test_validation_runs_when_all_workers_succeed(
@@ -233,7 +233,7 @@ class TestAllWorkersFailLegacyFallback:
     @patch("scripts.notion_writer._run_legacy_fallback", return_value=True)
     @patch("scripts.notion_writer.run_claude_worker", return_value=_make_worker_result(False))
     @patch("scripts.notion_writer.build_worker_c_prompt", return_value="prompt_c")
-    @patch("scripts.notion_writer.build_worker_b_prompt", return_value="prompt_b")
+    @patch("scripts.notion_writer.build_worker_b_prompt", return_value=("prompt_b", ["AAPL", "MSFT", "NVDA"]))
     @patch("scripts.notion_writer.build_worker_a_prompt", return_value="prompt_a")
     @patch("scripts.notion_writer.precompute_session_metrics", return_value=None)
     def test_all_workers_fail_notifies_and_falls_back(
