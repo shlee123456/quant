@@ -190,6 +190,30 @@ class MarketDataCache:
                 result[sym] = df
         return result
 
+    def freshness_multiplier(self, symbol: str) -> float:
+        """데이터 신선도 멀티플라이어.
+
+        당일 데이터=1.0, 하루 경과마다 -0.1, 최소 0.3.
+
+        Args:
+            symbol: 심볼명
+
+        Returns:
+            0.0 (데이터 없음) ~ 1.0 (당일 데이터)
+        """
+        df = self._data.get(symbol)
+        if df is None or df.empty:
+            return 0.0
+
+        latest = df.index[-1]
+        now = pd.Timestamp.now(tz='UTC')
+
+        if latest.tzinfo is None:
+            latest = latest.tz_localize('UTC')
+
+        days_stale = max(0, (now - latest).days)
+        return max(0.3, 1.0 - 0.1 * days_stale)
+
     @property
     def available_symbols(self) -> List[str]:
         """캐시에 저장된 심볼 목록."""
