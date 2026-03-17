@@ -127,6 +127,7 @@ def main():
         logger.warning(f"Market Intelligence failed (analysis continues): {e}")
 
     # Step 2.8: 시그널 성과 추적
+    tracker = None
     if os.getenv('SIGNAL_TRACKING_ENABLED', 'true').lower() == 'true':
         try:
             from trading_bot.signal_tracker import SignalTracker
@@ -141,6 +142,28 @@ def main():
             )
         except Exception as e:
             logger.warning(f"시그널 추적 실패 (분석 계속): {e}")
+
+    # Step 2.9: 멀티데이 트렌드 분석
+    try:
+        from trading_bot.trend_reader import TrendReader
+        reader = TrendReader(analysis_dir=args.output_dir)
+        trend_data = reader.analyze_trends(n_days=5)
+        results['trend'] = trend_data
+        logger.info(f"트렌드 분석 완료: {trend_data['period']['start']}~{trend_data['period']['end']}")
+    except Exception as e:
+        logger.warning(f"트렌드 분석 실패 (분석 계속): {e}")
+
+    # Step 2.10: 시그널 성적표
+    if tracker is not None:
+        try:
+            scorecard = tracker.generate_scorecard(
+                results.get('date', datetime.now().strftime('%Y-%m-%d'))
+            )
+            results['scorecard'] = scorecard
+            coverage = scorecard.get('data_coverage', {})
+            logger.info(f"성적표: {coverage.get('with_outcomes', 0)}/{coverage.get('total_signals', 0)}건 채점완료, sufficient={coverage.get('sufficient', False)}")
+        except Exception as e:
+            logger.warning(f"성적표 생성 실패 (분석 계속): {e}")
 
     # Step 3: JSON 저장
     json_path = analyzer.save_json(results, output_dir=args.output_dir)

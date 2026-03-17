@@ -14,6 +14,8 @@ from trading_bot.market_analysis_prompt import (
     get_notion_page_id,
     _load_session_reports,
     _build_session_data_block,
+    _build_trend_data_block,
+    _build_scorecard_data_block,
     DEFAULT_NOTION_PAGE_ID,
 )
 
@@ -276,6 +278,284 @@ class TestBuildAnalysisPrompt:
         prompt = build_analysis_prompt(sample_market_json)
         assert "NOTION ENHANCED MARKDOWN" in prompt
         assert "table_of_contents" in prompt
+
+
+class TestBuildTrendDataBlock:
+    """_build_trend_data_block 테스트"""
+
+    def test_build_trend_data_block(self):
+        """정상 트렌드 데이터로 블록 생성"""
+        trend_data = {
+            'period': {'start': '2026-03-11', 'end': '2026-03-17', 'days': 6},
+            'fear_greed_trend': {
+                'values': [
+                    {'date': '2026-03-11', 'value': 20.0, 'classification': 'Extreme Fear'},
+                    {'date': '2026-03-17', 'value': 27.2, 'classification': 'Fear'},
+                ],
+                'direction': 'improving',
+                'change': 7.2,
+            },
+            'symbol_trends': {
+                'AAPL': {
+                    'prices': [
+                        {'date': '2026-03-11', 'price': 150.0},
+                        {'date': '2026-03-17', 'price': 155.0},
+                    ],
+                    'price_change_pct': 3.33,
+                    'rsi_values': [
+                        {'date': '2026-03-11', 'rsi': 40.0},
+                        {'date': '2026-03-17', 'rsi': 50.0},
+                    ],
+                    'rsi_trend': 'rising',
+                    'regime_transitions': [
+                        {'date': '2026-03-14', 'from': 'VOLATILE', 'to': 'SIDEWAYS'},
+                    ],
+                    'current_regime': 'SIDEWAYS',
+                },
+            },
+            'regime_summary': {
+                'transitions_count': 1,
+                'notable_transitions': ['AAPL: VOLATILE→SIDEWAYS (03-14)'],
+            },
+            'intelligence_trend': {
+                'scores': [
+                    {'date': '2026-03-11', 'score': -0.5, 'signal': 'neutral'},
+                    {'date': '2026-03-17', 'score': -0.3, 'signal': 'neutral'},
+                ],
+                'direction': 'stable',
+            },
+            'summary_text': '분석 기간: 2026-03-11 ~ 2026-03-17 (6일간)',
+        }
+
+        result = _build_trend_data_block(trend_data)
+
+        assert "멀티데이 트렌드 분석" in result
+        assert "2026-03-11" in result
+        assert "2026-03-17" in result
+        assert "F&G 추세" in result
+        assert "개선" in result
+        assert "레짐 전환" in result
+        assert "AAPL" in result
+        assert "Intelligence 추세" in result
+
+    def test_build_trend_data_block_empty(self):
+        """빈 데이터에서 빈 문자열 반환"""
+        assert _build_trend_data_block({}) == ""
+        assert _build_trend_data_block(None) == ""
+
+    def test_build_trend_data_block_no_period(self):
+        """period가 비어있을 때 빈 문자열 반환"""
+        trend_data = {
+            'period': {'start': None, 'end': None, 'days': 0},
+            'fear_greed_trend': {'values': [], 'direction': 'stable', 'change': 0.0},
+            'symbol_trends': {},
+            'regime_summary': {'transitions_count': 0, 'notable_transitions': []},
+            'intelligence_trend': {'scores': [], 'direction': 'stable'},
+            'summary_text': '분석 데이터가 없습니다.',
+        }
+        assert _build_trend_data_block(trend_data) == ""
+
+
+class TestBuildScorecardDataBlock:
+    """_build_scorecard_data_block 테스트"""
+
+    def test_build_scorecard_data_block(self):
+        """충분한 데이터가 있을 때 상세 성적표 반환"""
+        scorecard = {
+            'date': '2026-03-17',
+            'lookback_days': 30,
+            'data_coverage': {
+                'total_signals': 95,
+                'with_outcomes': 15,
+                'coverage_pct': 15.8,
+                'sufficient': True,
+            },
+            'overall_accuracy_pct': 60.0,
+            'by_fear_greed_zone': {
+                '0-25': {'total': 10, 'correct': 7, 'accuracy_pct': 70.0, 'avg_return_5d': 1.5},
+                '25-50': {'total': 5, 'correct': 2, 'accuracy_pct': 40.0, 'avg_return_5d': -0.5},
+                '50-75': {'total': 0, 'correct': 0, 'accuracy_pct': None, 'avg_return_5d': None},
+                '75-100': {'total': 0, 'correct': 0, 'accuracy_pct': None, 'avg_return_5d': None},
+            },
+            'by_signal_type': {
+                'strong_bullish': {'total': 0, 'correct': 0, 'accuracy_pct': None, 'avg_return_5d': None},
+                'bullish': {'total': 3, 'correct': 2, 'accuracy_pct': 66.7, 'avg_return_5d': 2.0},
+                'neutral': {'total': 12, 'correct': 7, 'accuracy_pct': 58.3, 'avg_return_5d': 0.5},
+                'bearish': {'total': 0, 'correct': 0, 'accuracy_pct': None, 'avg_return_5d': None},
+                'strong_bearish': {'total': 0, 'correct': 0, 'accuracy_pct': None, 'avg_return_5d': None},
+            },
+            'by_symbol': {
+                'AAPL': {'total': 5, 'correct': 4, 'accuracy_pct': 80.0, 'avg_return_5d': 2.0},
+                'MSFT': {'total': 5, 'correct': 2, 'accuracy_pct': 40.0, 'avg_return_5d': -1.0},
+                'NVDA': {'total': 5, 'correct': 3, 'accuracy_pct': 60.0, 'avg_return_5d': 0.5},
+            },
+            'best_conditions': 'F&G 0-25구간 70.0% (10건)',
+            'worst_conditions': 'F&G 25-50구간 40.0% (5건)',
+        }
+
+        result = _build_scorecard_data_block(scorecard)
+
+        assert "시그널 성적표" in result
+        assert "15/95건 채점 완료" in result
+        assert "전체 적중률" in result
+        assert "60.0%" in result
+        assert "F&G 구간별 적중률" in result
+        assert "시그널별 적중률" in result
+        assert "적중률 상위" in result
+        assert "AAPL" in result
+
+    def test_build_scorecard_data_block_empty(self):
+        """빈 데이터에서 빈 문자열 반환"""
+        assert _build_scorecard_data_block({}) == ""
+        assert _build_scorecard_data_block(None) == ""
+
+    def test_build_scorecard_data_block_insufficient(self):
+        """데이터 부족 시 간단 메시지 반환"""
+        scorecard = {
+            'date': '2026-03-17',
+            'lookback_days': 30,
+            'data_coverage': {
+                'total_signals': 95,
+                'with_outcomes': 3,
+                'coverage_pct': 3.2,
+                'sufficient': False,
+            },
+            'overall_accuracy_pct': None,
+            'by_fear_greed_zone': {},
+            'by_signal_type': {},
+            'by_symbol': {},
+            'best_conditions': None,
+            'worst_conditions': None,
+        }
+
+        result = _build_scorecard_data_block(scorecard)
+
+        assert "시그널 성적표" in result
+        assert "데이터 축적 중" in result
+        assert "3/최소10건" in result
+        # 상세 정보는 없어야 함
+        assert "F&G 구간별" not in result
+
+    def test_build_scorecard_data_block_zero_total(self):
+        """total_signals가 0이면 빈 문자열 반환"""
+        scorecard = {
+            'data_coverage': {
+                'total_signals': 0,
+                'with_outcomes': 0,
+                'coverage_pct': 0.0,
+                'sufficient': False,
+            },
+        }
+
+        result = _build_scorecard_data_block(scorecard)
+        assert result == ""
+
+
+class TestBuildAnalysisPromptWithTrendScorecard:
+    """build_analysis_prompt에 trend/scorecard 데이터 포함 테스트"""
+
+    def test_build_analysis_prompt_with_trend(self, tmp_path):
+        """trend 데이터가 있을 때 프롬프트에 포함"""
+        data = {
+            "date": "2026-03-17",
+            "symbols": ["AAPL"],
+            "stocks": {"AAPL": {"current_price": 150.0}},
+            "trend": {
+                "period": {"start": "2026-03-11", "end": "2026-03-17", "days": 6},
+                "fear_greed_trend": {
+                    "values": [
+                        {"date": "2026-03-11", "value": 20.0, "classification": "Fear"},
+                        {"date": "2026-03-17", "value": 27.0, "classification": "Fear"},
+                    ],
+                    "direction": "improving",
+                    "change": 7.0,
+                },
+                "symbol_trends": {},
+                "regime_summary": {"transitions_count": 0, "notable_transitions": []},
+                "intelligence_trend": {"scores": [], "direction": "stable"},
+                "summary_text": "테스트 요약",
+            },
+        }
+
+        json_file = tmp_path / "trend_test.json"
+        with open(json_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+
+        prompt = build_analysis_prompt(str(json_file))
+        assert "멀티데이 트렌드 분석" in prompt
+        assert "F&G 추세" in prompt
+
+    def test_build_analysis_prompt_with_scorecard(self, tmp_path):
+        """scorecard 데이터가 있을 때 프롬프트에 포함"""
+        data = {
+            "date": "2026-03-17",
+            "symbols": ["AAPL"],
+            "stocks": {"AAPL": {"current_price": 150.0}},
+            "scorecard": {
+                "date": "2026-03-17",
+                "lookback_days": 30,
+                "data_coverage": {
+                    "total_signals": 50,
+                    "with_outcomes": 3,
+                    "coverage_pct": 6.0,
+                    "sufficient": False,
+                },
+                "overall_accuracy_pct": None,
+                "by_fear_greed_zone": {},
+                "by_signal_type": {},
+                "by_symbol": {},
+                "best_conditions": None,
+                "worst_conditions": None,
+            },
+        }
+
+        json_file = tmp_path / "scorecard_test.json"
+        with open(json_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+
+        prompt = build_analysis_prompt(str(json_file))
+        assert "시그널 성적표" in prompt
+        assert "데이터 축적 중" in prompt
+
+    def test_build_analysis_prompt_without_trend_scorecard(self, tmp_path):
+        """trend/scorecard 없을 때 기존 동작 유지"""
+        data = {
+            "date": "2026-03-17",
+            "symbols": ["AAPL"],
+            "stocks": {"AAPL": {"current_price": 150.0}},
+        }
+
+        json_file = tmp_path / "no_trend_test.json"
+        with open(json_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+
+        prompt = build_analysis_prompt(str(json_file))
+        # 기존 동작과 동일해야 함
+        assert "AAPL" in prompt
+        assert "멀티데이 트렌드 분석" not in prompt
+        assert "시그널 성적표" not in prompt
+
+    def test_trend_scorecard_excluded_from_json_dump(self, tmp_path):
+        """trend/scorecard가 JSON 덤프에서 제외됨"""
+        data = {
+            "date": "2026-03-17",
+            "symbols": ["AAPL"],
+            "stocks": {"AAPL": {"current_price": 150.0}},
+            "trend": {"period": {"start": "2026-03-11", "end": "2026-03-17", "days": 6}},
+            "scorecard": {"data_coverage": {"total_signals": 0, "with_outcomes": 0, "coverage_pct": 0, "sufficient": False}},
+        }
+
+        json_file = tmp_path / "exclude_test.json"
+        with open(json_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+
+        prompt = build_analysis_prompt(str(json_file))
+        # JSON 블록 내부에는 trend/scorecard가 없어야 함
+        json_block_start = prompt.find("```json")
+        json_block_end = prompt.find("```", json_block_start + 7)
+        json_block = prompt[json_block_start:json_block_end]
+        assert '"trend"' not in json_block
+        assert '"scorecard"' not in json_block
 
 
 # --- Helper ---

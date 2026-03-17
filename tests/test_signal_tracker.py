@@ -341,3 +341,311 @@ class TestYfPriceFetcher:
 
         price = _yf_price_fetcher('AAPL', '2026-02-20')
         assert price is None
+
+
+class TestSignalTrackerScorecard:
+    """generate_scorecard() 테스트"""
+
+    def _setup_diverse_signals(self, tracker, n_signals=20):
+        """다양한 조건의 시그널 + 수익률 데이터 생성.
+
+        - 여러 종목 (AAPL, MSFT, NVDA)
+        - 여러 시그널 타입 (bullish, bearish, neutral, strong_bullish)
+        - 여러 F&G 값 (15, 35, 55, 80)
+        - 일부는 outcome_correct=1, 일부는 0
+        """
+        conn = tracker._get_connection()
+        cursor = conn.cursor()
+
+        # 시그널 데이터 정의 (symbol, signal, fg_value, correct, return_5d)
+        test_data = [
+            # AAPL - bullish, F&G=15 (0-25 구간)
+            ('AAPL', 'bullish', 15.0, 1, 2.5),
+            ('AAPL', 'bullish', 18.0, 1, 3.0),
+            ('AAPL', 'bullish', 20.0, 0, -1.5),
+            ('AAPL', 'bullish', 22.0, 1, 1.8),
+            # MSFT - bearish, F&G=35 (25-50 구간)
+            ('MSFT', 'bearish', 35.0, 1, -2.0),
+            ('MSFT', 'bearish', 38.0, 0, 1.5),
+            ('MSFT', 'bearish', 40.0, 1, -3.0),
+            ('MSFT', 'bearish', 42.0, 0, 0.5),
+            # NVDA - neutral, F&G=55 (50-75 구간)
+            ('NVDA', 'neutral', 55.0, 1, 0.5),
+            ('NVDA', 'neutral', 60.0, 0, 6.0),
+            ('NVDA', 'neutral', 65.0, 1, -1.0),
+            ('NVDA', 'neutral', 70.0, 1, 0.3),
+            # AAPL - strong_bullish, F&G=80 (75-100 구간)
+            ('AAPL', 'strong_bullish', 80.0, 1, 5.0),
+            ('AAPL', 'strong_bullish', 85.0, 0, -2.0),
+            ('AAPL', 'strong_bullish', 90.0, 1, 4.0),
+            # MSFT - neutral, F&G=55 (50-75 구간)
+            ('MSFT', 'neutral', 55.0, 0, 7.0),
+            ('MSFT', 'neutral', 58.0, 1, 0.2),
+            # NVDA - bullish, F&G=35 (25-50 구간)
+            ('NVDA', 'bullish', 35.0, 1, 3.5),
+            ('NVDA', 'bullish', 45.0, 0, -0.5),
+            ('NVDA', 'bullish', 48.0, 1, 2.0),
+        ]
+
+        for i, (symbol, signal, fg_val, correct, ret_5d) in enumerate(test_data):
+            date = (datetime.now() - timedelta(days=25 - i)).strftime('%Y-%m-%d')
+            cursor.execute("""
+                INSERT INTO daily_market_signals
+                    (date, symbol, overall_score, overall_signal, layer_scores,
+                     indicators, market_price, fear_greed_value)
+                VALUES (?, ?, 10.0, ?, '{}', '{}', 100.0, ?)
+            """, (date, symbol, signal, fg_val))
+
+            signal_id = cursor.lastrowid
+            cursor.execute("""
+                INSERT INTO signal_outcomes
+                    (signal_id, return_1d, return_5d, return_20d,
+                     outcome_correct, measured_at)
+                VALUES (?, ?, ?, ?, ?, datetime('now'))
+            """, (signal_id, ret_5d * 0.3, ret_5d, ret_5d * 2, correct))
+
+        conn.commit()
+        conn.close()
+
+    def test_generate_scorecard_basic(self, tracker):
+        """기본 성적표 구조 및 전체 정확도 검증"""
+        self._setup_diverse_signals(tracker)
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        scorecard = tracker.generate_scorecard(today, lookback_days=60)
+
+        # 구조 확인
+        assert 'date' in scorecard
+        assert 'lookback_days' in scorecard
+        assert 'data_coverage' in scorecard
+        assert 'overall_accuracy_pct' in scorecard
+        assert 'by_fear_greed_zone' in scorecard
+        assert 'by_signal_type' in scorecard
+        assert 'by_symbol' in scorecard
+        assert 'best_conditions' in scorecard
+        assert 'worst_conditions' in scorecard
+
+        # data_coverage
+        dc = scorecard['data_coverage']
+        assert dc['total_signals'] == 20
+        assert dc['with_outcomes'] == 20
+        assert dc['coverage_pct'] == 100.0
+        assert dc['sufficient'] is True
+
+        # overall_accuracy: 20개 중 13개 correct
+        assert scorecard['overall_accuracy_pct'] is not None
+        assert abs(scorecard['overall_accuracy_pct'] - 65.0) < 0.1
+
+    def test_generate_scorecard_by_fear_greed_zone(self, tracker):
+        """F&G 구간별 적중률 검증"""
+        self._setup_diverse_signals(tracker)
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        scorecard = tracker.generate_scorecard(today, lookback_days=60)
+
+        fg = scorecard['by_fear_greed_zone']
+
+        # 4개 구간 존재
+        assert '0-25' in fg
+        assert '25-50' in fg
+        assert '50-75' in fg
+        assert '75-100' in fg
+
+        # 0-25 구간: 4건 (AAPL bullish, fg=15,18,20,22), 3 correct
+        zone_0_25 = fg['0-25']
+        assert zone_0_25['total'] == 4
+        assert zone_0_25['correct'] == 3
+        assert abs(zone_0_25['accuracy_pct'] - 75.0) < 0.1
+        assert zone_0_25['avg_return_5d'] is not None
+
+        # 75-100 구간: 3건 (AAPL strong_bullish, fg=80,85,90), 2 correct
+        zone_75_100 = fg['75-100']
+        assert zone_75_100['total'] == 3
+        assert zone_75_100['correct'] == 2
+
+    def test_generate_scorecard_by_signal_type(self, tracker):
+        """시그널 타입별 적중률 검증"""
+        self._setup_diverse_signals(tracker)
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        scorecard = tracker.generate_scorecard(today, lookback_days=60)
+
+        st = scorecard['by_signal_type']
+
+        # 5개 타입 존재
+        assert 'strong_bullish' in st
+        assert 'bullish' in st
+        assert 'neutral' in st
+        assert 'bearish' in st
+        assert 'strong_bearish' in st
+
+        # bullish: AAPL 4건 + NVDA 3건 = 7건, 5 correct
+        assert st['bullish']['total'] == 7
+        assert st['bullish']['correct'] == 5
+
+        # bearish: MSFT 4건, 2 correct
+        assert st['bearish']['total'] == 4
+        assert st['bearish']['correct'] == 2
+        assert abs(st['bearish']['accuracy_pct'] - 50.0) < 0.1
+
+        # neutral: NVDA 4건 + MSFT 2건 = 6건, 4 correct
+        assert st['neutral']['total'] == 6
+        assert st['neutral']['correct'] == 4
+
+        # strong_bullish: AAPL 3건, 2 correct
+        assert st['strong_bullish']['total'] == 3
+        assert st['strong_bullish']['correct'] == 2
+
+        # strong_bearish: 0건
+        assert st['strong_bearish']['total'] == 0
+
+    def test_generate_scorecard_by_symbol(self, tracker):
+        """종목별 적중률 검증"""
+        self._setup_diverse_signals(tracker)
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        scorecard = tracker.generate_scorecard(today, lookback_days=60)
+
+        by_sym = scorecard['by_symbol']
+
+        # 3개 종목
+        assert 'AAPL' in by_sym
+        assert 'MSFT' in by_sym
+        assert 'NVDA' in by_sym
+
+        # AAPL: 7건 (bullish 4 + strong_bullish 3), 5 correct
+        assert by_sym['AAPL']['total'] == 7
+        assert by_sym['AAPL']['correct'] == 5
+
+        # MSFT: 6건 (bearish 4 + neutral 2), 3 correct
+        assert by_sym['MSFT']['total'] == 6
+        assert by_sym['MSFT']['correct'] == 3
+        assert abs(by_sym['MSFT']['accuracy_pct'] - 50.0) < 0.1
+
+        # NVDA: 7건 (neutral 4 + bullish 3), 5 correct
+        assert by_sym['NVDA']['total'] == 7
+        assert by_sym['NVDA']['correct'] == 5
+
+        # avg_return_5d 존재
+        assert by_sym['AAPL']['avg_return_5d'] is not None
+
+    def test_generate_scorecard_no_data(self, tracker):
+        """데이터 없을 때 빈 성적표 반환"""
+        today = datetime.now().strftime('%Y-%m-%d')
+        scorecard = tracker.generate_scorecard(today)
+
+        assert scorecard['data_coverage']['total_signals'] == 0
+        assert scorecard['data_coverage']['with_outcomes'] == 0
+        assert scorecard['data_coverage']['sufficient'] is False
+        assert scorecard['overall_accuracy_pct'] is None
+        assert scorecard['best_conditions'] is None
+        assert scorecard['worst_conditions'] is None
+
+        # F&G 구간은 빈 상태
+        for zone in ['0-25', '25-50', '50-75', '75-100']:
+            assert scorecard['by_fear_greed_zone'][zone]['total'] == 0
+
+        # 시그널 타입도 빈 상태
+        for sig in ['strong_bullish', 'bullish', 'neutral', 'bearish', 'strong_bearish']:
+            assert scorecard['by_signal_type'][sig]['total'] == 0
+
+        # 종목별은 빈 딕셔너리
+        assert scorecard['by_symbol'] == {}
+
+    def test_generate_scorecard_insufficient_data(self, tracker):
+        """데이터 부족 시 sufficient=False"""
+        conn = tracker._get_connection()
+        cursor = conn.cursor()
+
+        # 5건만 생성 (< 10건)
+        for i in range(5):
+            date = (datetime.now() - timedelta(days=10 - i)).strftime('%Y-%m-%d')
+            cursor.execute("""
+                INSERT INTO daily_market_signals
+                    (date, symbol, overall_score, overall_signal,
+                     indicators, market_price, fear_greed_value)
+                VALUES (?, 'AAPL', 10.0, 'bullish', '{}', 100.0, 30.0)
+            """, (date,))
+            signal_id = cursor.lastrowid
+            cursor.execute("""
+                INSERT INTO signal_outcomes
+                    (signal_id, return_5d, outcome_correct, measured_at)
+                VALUES (?, 2.0, 1, datetime('now'))
+            """, (signal_id,))
+
+        conn.commit()
+        conn.close()
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        scorecard = tracker.generate_scorecard(today, lookback_days=30)
+
+        assert scorecard['data_coverage']['with_outcomes'] == 5
+        assert scorecard['data_coverage']['sufficient'] is False
+        assert scorecard['overall_accuracy_pct'] == 100.0  # 5/5 correct
+
+    def test_generate_scorecard_best_worst_conditions(self, tracker):
+        """best/worst conditions 텍스트 검증"""
+        self._setup_diverse_signals(tracker)
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        scorecard = tracker.generate_scorecard(today, lookback_days=60)
+
+        # best/worst 존재
+        assert scorecard['best_conditions'] is not None
+        assert scorecard['worst_conditions'] is not None
+
+        # 텍스트에 적중률 포함
+        assert '적중률' in scorecard['best_conditions']
+        assert '적중률' in scorecard['worst_conditions']
+
+        # best의 적중률 >= worst의 적중률
+        # best/worst에서 숫자 추출
+        import re
+        best_pct = float(re.search(r'(\d+\.\d+)%', scorecard['best_conditions']).group(1))
+        worst_pct = float(re.search(r'(\d+\.\d+)%', scorecard['worst_conditions']).group(1))
+        assert best_pct >= worst_pct
+
+    def test_generate_scorecard_null_fear_greed(self, tracker):
+        """fear_greed_value가 NULL인 행은 F&G 구간 분류에서 제외"""
+        conn = tracker._get_connection()
+        cursor = conn.cursor()
+
+        # F&G가 NULL인 시그널 15건 생성
+        for i in range(15):
+            date = (datetime.now() - timedelta(days=20 - i)).strftime('%Y-%m-%d')
+            cursor.execute("""
+                INSERT INTO daily_market_signals
+                    (date, symbol, overall_score, overall_signal,
+                     indicators, market_price, fear_greed_value)
+                VALUES (?, 'AAPL', 10.0, 'bullish', '{}', 100.0, NULL)
+            """, (date,))
+            signal_id = cursor.lastrowid
+            correct = 1 if i % 2 == 0 else 0
+            cursor.execute("""
+                INSERT INTO signal_outcomes
+                    (signal_id, return_5d, outcome_correct, measured_at)
+                VALUES (?, 2.0, ?, datetime('now'))
+            """, (signal_id, correct))
+
+        conn.commit()
+        conn.close()
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        scorecard = tracker.generate_scorecard(today, lookback_days=30)
+
+        # 전체 15건
+        assert scorecard['data_coverage']['with_outcomes'] == 15
+        assert scorecard['data_coverage']['sufficient'] is True
+
+        # F&G 구간에는 0건 (모두 NULL이므로)
+        for zone in ['0-25', '25-50', '50-75', '75-100']:
+            assert scorecard['by_fear_greed_zone'][zone]['total'] == 0
+
+        # overall_accuracy는 정상
+        assert scorecard['overall_accuracy_pct'] is not None
+
+        # by_signal_type에는 bullish 15건
+        assert scorecard['by_signal_type']['bullish']['total'] == 15
+
+        # by_symbol에는 AAPL 15건
+        assert scorecard['by_symbol']['AAPL']['total'] == 15

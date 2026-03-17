@@ -2,6 +2,7 @@
 Paper trading simulator for live trading without real money
 """
 
+import os
 import pandas as pd
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Union
@@ -151,10 +152,17 @@ class PaperTrader:
         # Share the same lock
         self._portfolio._lock = self._lock
 
+        context_filter_config = {
+            'enabled': os.getenv('CONTEXT_FILTER_ENABLED', 'false').lower() == 'true',
+            'min_accuracy': float(os.getenv('CONTEXT_FILTER_MIN_ACCURACY', '35')),
+            'min_sample_size': int(os.getenv('CONTEXT_FILTER_MIN_SAMPLE_SIZE', '5')),
+        }
+
         self._signal_pipeline = SignalPipeline(
             regime_detector=regime_detector,
             llm_client=llm_client,
             enable_verification=enable_verification,
+            context_filter_config=context_filter_config,
         )
 
         self._performance_calculator = PerformanceCalculator(timeframe='1h')
@@ -247,6 +255,9 @@ class PaperTrader:
         """
         self._intelligence_report = report
         self._fear_greed_value = fear_greed_value
+        # context filter에도 현재 F&G 값 주입
+        if self._signal_pipeline._context_filter_config.get('enabled'):
+            self._signal_pipeline._context_filter_config['current_fear_greed'] = fear_greed_value
 
     def get_portfolio_value(self, current_prices: Optional[Dict[str, float]] = None) -> float:
         """

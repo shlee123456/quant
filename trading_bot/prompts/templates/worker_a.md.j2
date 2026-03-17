@@ -15,6 +15,9 @@
 {{ fg_block }}
 {{ daily_changes_block }}
 {{ fact_sheet_block }}
+{% if trend_block %}
+{{ trend_block }}
+{% endif %}
 ## 대상 종목
 {{ symbols_str }} ({{ symbols_count }}개)
 
