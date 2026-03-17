@@ -180,3 +180,25 @@ except ImportError:
 
 if _has_limit_order:
     __all__.extend(['LimitOrderManager', 'PendingOrder'])
+
+# Trend reader
+try:
+    from .trend_reader import TrendReader
+    _has_trend_reader = True
+except ImportError:
+    TrendReader = None
+    _has_trend_reader = False
+
+if _has_trend_reader:
+    __all__.append('TrendReader')
+
+# Intelligence backtester
+try:
+    from .intelligence_backtest import IntelligenceBacktester, BacktestResult
+    _has_intelligence_backtest = True
+except ImportError:
+    IntelligenceBacktester = BacktestResult = None
+    _has_intelligence_backtest = False
+
+if _has_intelligence_backtest:
+    __all__.extend(['IntelligenceBacktester', 'BacktestResult'])
