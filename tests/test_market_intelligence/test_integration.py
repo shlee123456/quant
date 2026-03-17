@@ -467,7 +467,10 @@ class TestBackwardCompatibility:
         mi.cache.fetch = MagicMock(return_value=True)
 
         report = mi.analyze()
-        assert report['layer_weights'] == LAYER_WEIGHTS
+        # 동적 가중치 적용 후에도 모든 레이어 키가 존재하고 합이 ~1.0
+        weights = report['layer_weights']
+        assert set(weights.keys()) == set(LAYER_WEIGHTS.keys())
+        assert abs(sum(weights.values()) - 1.0) < 0.01
 
 
 # ─── Export from trading_bot ───
