@@ -155,31 +155,38 @@ class MarketIntelligence:
                     details={'error': str(e)},
                 )
 
-        # Step 4: 종합 점수 계산
+        # Step 4: 동적 가중치 계산
+        dynamic_weights = self._compute_dynamic_weights(layer_results)
+
+        # Step 5: 종합 점수 계산
         layer_scores = {
             layer_key: result.score
             for layer_key, result in layer_results.items()
         }
-        composite = weighted_composite(layer_scores, self.weights)
+        composite = weighted_composite(layer_scores, dynamic_weights)
         overall_signal = BaseIntelligenceLayer.classify_score(composite)
         interpretation = self._build_overall_interpretation(
             composite, overall_signal, layer_results
         )
 
-        # Step 5: 리포트 구성
+        # Step 6: 리포트 구성
         report: Dict[str, Any] = {
             'generated_at': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
             'overall': {
                 'score': round(composite, 1),
                 'signal': overall_signal,
                 'interpretation': interpretation,
+                'weights_mode': 'dynamic',
             },
             'layers': {
                 layer_key: result.to_dict()
                 for layer_key, result in layer_results.items()
             },
-            'layer_weights': self.weights,
+            'layer_weights': dynamic_weights,
         }
+
+        # Meta-confidence 계산
+        report['overall']['meta_confidence'] = self._compute_meta_confidence(layer_results)
 
         logger.info(
             f"5-Layer Intelligence 분석 완료: "
@@ -187,6 +194,68 @@ class MarketIntelligence:
         )
 
         return report
+
+    def _compute_dynamic_weights(self, layer_results: Dict[str, LayerResult]) -> Dict[str, float]:
+        """레짐에 따라 레이어 가중치를 동적으로 조절.
+
+        Layer 1의 cycle_phase와 Layer 2의 VIX 점수를 기반으로
+        시장 상황에 맞게 가중치를 재조정합니다.
+        """
+        import math
+        weights = dict(self.weights)  # copy
+
+        # Layer 1에서 cycle_phase 추출
+        l1 = layer_results.get('macro_regime')
+        cycle = 'unknown'
+        if l1 and l1.details and not math.isnan(l1.score):
+            cycle = l1.details.get('cycle_phase', 'unknown')
+
+        # Layer 2에서 VIX 점수 추출
+        l2 = layer_results.get('market_structure')
+        vix_score = 0
+        if l2 and l2.metrics and not math.isnan(l2.score):
+            vix_score = l2.metrics.get('vix_level', 0)
+
+        if cycle == 'contraction' or vix_score < -30:
+            # 위기/고변동성: 매크로 + 센티먼트 중시
+            weights['macro_regime'] = 0.30
+            weights['sentiment'] = 0.25
+            weights['enhanced_technicals'] = 0.15
+            weights['market_structure'] = 0.15
+            weights['sector_rotation'] = 0.15
+        elif cycle == 'expansion' and vix_score > 20:
+            # 안정적 확장: 기술적 + 섹터 중시
+            weights['enhanced_technicals'] = 0.30
+            weights['sector_rotation'] = 0.20
+            weights['macro_regime'] = 0.15
+            weights['market_structure'] = 0.20
+            weights['sentiment'] = 0.15
+        # else: 기본 가중치 유지
+
+        return weights
+
+    def _compute_meta_confidence(self, layer_results: Dict[str, LayerResult]) -> float:
+        """레이어 간 의견 일치도를 측정.
+
+        Returns:
+            0.0 (완전 불일치) ~ 1.0 (완전 합의)
+        """
+        import math
+        import numpy as np
+
+        scores = [r.score for r in layer_results.values()
+                  if not math.isnan(r.score)]
+        if len(scores) < 2:
+            return 0.5
+
+        score_std = float(np.std(scores))
+        agreement = max(0.0, 1.0 - (score_std / 80.0))
+
+        confidences = [r.confidence for r in layer_results.values()
+                       if not math.isnan(r.score)]
+        avg_confidence = float(np.mean(confidences)) if confidences else 0.5
+
+        return round(min(1.0, agreement * avg_confidence), 2)
 
     @staticmethod
     def _normalize_news(news_data: Optional[Any]) -> Optional[List[Dict]]:
@@ -348,6 +417,12 @@ class MarketIntelligence:
         elif score < -30:
             multiplier += 0.10
             adjustments.append(f"역발상 매수({score:+.1f}): +10%")
+
+        # Meta-confidence 기반 조정
+        meta_conf = overall.get('meta_confidence', 1.0)
+        if meta_conf < 0.4:
+            multiplier *= 0.7
+            adjustments.append(f'레이어 불일치(meta_confidence={meta_conf:.2f}): -30%')
 
         # Clamp to [0.5, 1.5]
         multiplier = max(0.5, min(1.5, multiplier))
