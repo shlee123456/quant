@@ -395,29 +395,7 @@ class SentimentLayer(BaseIntelligenceLayer):
     # ──────────────────────────────────────────────────────────────
     # Helpers
     # ──────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _get_close(
-        cache: Any, symbol: str
-    ) -> Optional[pd.Series]:
-        """캐시에서 종가 시리즈를 안전하게 추출.
-
-        Args:
-            cache: MarketDataCache 인스턴스
-            symbol: 티커 심볼
-
-        Returns:
-            Close 시리즈 또는 None
-        """
-        if cache is None:
-            return None
-        df = cache.get(symbol)
-        if df is None or (hasattr(df, 'empty') and df.empty):
-            return None
-        for col in ['Close', 'close', 'Adj Close']:
-            if col in df.columns:
-                return df[col].dropna()
-        return None
+    # _get_close() is inherited from BaseIntelligenceLayer
 
     def _build_interpretation(
         self,

@@ -169,36 +169,22 @@ class MarketStructureLayer(BaseIntelligenceLayer):
 
     @staticmethod
     def _vix_nonlinear_score(vix_value: float) -> float:
-        """VIX 값을 비선형 스코어로 변환.
-
-        - VIX 12-18: 가장 bullish (+40 ~ +60)
-        - VIX < 12: 지나친 안도감 (+10 ~ +30)
-        - VIX 18-25: 약간 bearish (-10 ~ -30)
-        - VIX 25-35: bearish (-30 ~ -60)
-        - VIX > 35: 극도의 공포 → 역발상 bullish (-20 ~ +20)
-        """
-        if vix_value <= 12:
-            # 너무 낮음: 약간 bullish but 주의
-            return 20.0
-        elif vix_value <= 15:
-            # 건강한 낮은 범위
-            return 50.0
-        elif vix_value <= 18:
-            # 최적
-            return 40.0
-        elif vix_value <= 22:
-            # 약간 높음
-            return -10.0
-        elif vix_value <= 25:
-            return -30.0
-        elif vix_value <= 30:
-            return -50.0
-        elif vix_value <= 35:
-            # 공포
-            return -40.0
-        else:
-            # 극도의 공포 → 역발상 (패닉 매도 후 반등 가능)
-            return -10.0
+        """VIX 연속 점수 (구간선형 보간)."""
+        control_points = [
+            (10, 30), (15, 50), (18, 30), (22, -10),
+            (25, -30), (30, -50), (35, -30), (45, 0),
+        ]
+        if vix_value <= control_points[0][0]:
+            return float(control_points[0][1])
+        if vix_value >= control_points[-1][0]:
+            return float(control_points[-1][1])
+        for i in range(len(control_points) - 1):
+            x0, y0 = control_points[i]
+            x1, y1 = control_points[i + 1]
+            if x0 <= vix_value <= x1:
+                t = (vix_value - x0) / (x1 - x0)
+                return float(y0 + t * (y1 - y0))
+        return 0.0
 
     @staticmethod
     def _vix_percentile_score(pct_rank: float) -> float:
@@ -423,15 +409,4 @@ class MarketStructureLayer(BaseIntelligenceLayer):
         return f"{direction} (VIX {vix_val}, {breadth_pct}% > 50MA)"
 
     # ─── Helpers ───
-
-    @staticmethod
-    def _get_close(cache: Any, symbol: str) -> Optional[pd.Series]:
-        """캐시에서 종가 시리즈를 안전하게 추출."""
-        if cache is None:
-            return None
-        df = cache.get(symbol)
-        if df is None or df.empty:
-            return None
-        if 'Close' in df.columns:
-            return df['Close'].dropna()
-        return None
+    # _get_close() is inherited from BaseIntelligenceLayer

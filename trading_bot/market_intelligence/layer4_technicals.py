@@ -6,10 +6,10 @@ OBV, MFI, ATR, MA Cross, Volume Analysis를 계산하여
 개별 종목의 기술적 건강성을 종합 평가합니다.
 
 Indicator weights:
-    - rsi (0.12), macd (0.12), bollinger (0.10)
-    - stochastic (0.10), adx (0.08)
-    - obv (0.10), mfi (0.10), atr (0.08)
-    - ma_cross (0.10), volume (0.10)
+    - momentum_oscillator (0.14): merged RSI + Stochastic
+    - macd (0.12), bollinger (0.10)
+    - adx (0.10), obv (0.12), mfi (0.12)
+    - atr (0.08), ma_cross (0.12), volume (0.10)
 """
 
 import logging
@@ -28,15 +28,14 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────────
 
 INDICATOR_WEIGHTS: Dict[str, float] = {
-    'rsi': 0.12,
+    'momentum_oscillator': 0.14,  # merged RSI + Stochastic
     'macd': 0.12,
     'bollinger': 0.10,
-    'stochastic': 0.10,
-    'adx': 0.08,
-    'obv': 0.10,
-    'mfi': 0.10,
+    'adx': 0.10,         # was 0.08
+    'obv': 0.12,         # was 0.10
+    'mfi': 0.12,         # was 0.10
     'atr': 0.08,
-    'ma_cross': 0.10,
+    'ma_cross': 0.12,    # was 0.10
     'volume': 0.10,
 }
 
@@ -152,10 +151,19 @@ class TechnicalsLayer(BaseIntelligenceLayer):
         scores: Dict[str, float] = {}
 
         # ── 기존 5개 지표 점수 (pass-through) ──
-        scores['rsi'] = self._score_rsi(indicators.get('rsi', {}))
-        scores['macd'] = self._score_macd(indicators.get('macd', {}))
+        # RSI + Stochastic → merged momentum_oscillator
+        rsi_score = self._score_rsi(indicators.get('rsi', {}))
+        stoch_score = self._score_stochastic(indicators.get('stochastic', {}))
+        scores['momentum_oscillator'] = (rsi_score + stoch_score) / 2
+
+        # MACD with price normalization
+        macd_data = indicators.get('macd', {})
+        if isinstance(macd_data, dict):
+            macd_data = dict(macd_data)  # copy to avoid mutating original
+            macd_data['price'] = stock_data.get('price', {}).get('last')
+        scores['macd'] = self._score_macd(macd_data)
+
         scores['bollinger'] = self._score_bollinger(indicators.get('bollinger', {}))
-        scores['stochastic'] = self._score_stochastic(indicators.get('stochastic', {}))
         scores['adx'] = self._score_adx(indicators.get('adx', {}))
 
         # ── 새 5개 지표 계산 (OHLCV 데이터 필요) ──
@@ -234,9 +242,10 @@ class TechnicalsLayer(BaseIntelligenceLayer):
 
     @staticmethod
     def _score_macd(macd_data: Dict[str, Any]) -> float:
-        """MACD 히스토그램 기반 점수.
+        """MACD 히스토그램 기반 점수 (가격 정규화).
 
         histogram > 0 -> positive, < 0 -> negative.
+        가격 대비 히스토그램 비율로 정규화하여 고가/저가 종목 간 일관성 확보.
         """
         histogram = macd_data.get('histogram')
         if histogram is None:
@@ -247,8 +256,13 @@ class TechnicalsLayer(BaseIntelligenceLayer):
         except (TypeError, ValueError):
             return 0.0
 
-        # 히스토그램을 점수로 변환 (일반적으로 -5 ~ +5 범위)
-        score = histogram * 20.0
+        price = macd_data.get('price')
+        if price and float(price) > 0:
+            normalized = histogram / float(price) * 100
+            score = normalized * 200.0
+        else:
+            score = histogram * 20.0  # fallback
+
         return max(-100.0, min(100.0, score))
 
     @staticmethod

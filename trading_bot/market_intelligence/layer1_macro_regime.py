@@ -428,15 +428,4 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
             return "매크로 환경 침체 우려"
 
     # ─── Helpers ───
-
-    @staticmethod
-    def _get_close(cache: Any, symbol: str) -> Optional[pd.Series]:
-        """캐시에서 종가 시리즈를 안전하게 추출."""
-        if cache is None:
-            return None
-        df = cache.get(symbol)
-        if df is None or df.empty:
-            return None
-        if 'Close' in df.columns:
-            return df['Close'].dropna()
-        return None
+    # _get_close() is inherited from BaseIntelligenceLayer
