@@ -11,6 +11,24 @@ import numpy as np
 import pandas as pd
 
 
+def winsorize(series: pd.Series, lower_pct: float = 0.01, upper_pct: float = 0.99) -> pd.Series:
+    """극단값을 지정 백분위로 클리핑.
+
+    Args:
+        series: 입력 시리즈
+        lower_pct: 하위 백분위 (기본 1%)
+        upper_pct: 상위 백분위 (기본 99%)
+
+    Returns:
+        클리핑된 시리즈
+    """
+    if len(series) < 10:
+        return series
+    lower = series.quantile(lower_pct)
+    upper = series.quantile(upper_pct)
+    return series.clip(lower=lower, upper=upper)
+
+
 def percentile_rank(value: float, series: pd.Series) -> float:
     """시리즈 내에서 값의 백분위 순위를 계산.
 
@@ -38,8 +56,9 @@ def rolling_z_score(series: pd.Series, window: int = 60) -> pd.Series:
     Returns:
         Z-score 시리즈 (NaN은 0.0으로 채움)
     """
-    rolling_mean = series.rolling(window=window, min_periods=max(1, window // 2)).mean()
-    rolling_std = series.rolling(window=window, min_periods=max(1, window // 2)).std()
+    clean = winsorize(series)
+    rolling_mean = clean.rolling(window=window, min_periods=max(1, window // 2)).mean()
+    rolling_std = clean.rolling(window=window, min_periods=max(1, window // 2)).std()
     # std가 0인 경우 division by zero 방지
     z = (series - rolling_mean) / rolling_std.replace(0, np.nan)
     return z.fillna(0.0)
@@ -61,7 +80,7 @@ def momentum_score(series: pd.Series, periods: Optional[List[int]] = None) -> fl
     if periods is None:
         periods = [5, 10, 20]
 
-    clean = series.dropna()
+    clean = winsorize(series.dropna())
     if len(clean) < 2:
         return 0.0
 

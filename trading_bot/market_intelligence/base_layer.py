@@ -6,7 +6,7 @@ Base layer for the 5-Layer Market Intelligence system.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 import logging
 
 
@@ -107,3 +107,17 @@ class BaseIntelligenceLayer(ABC):
         elif score < -20:
             return "bearish"
         return "neutral"
+
+    @staticmethod
+    def _get_close(cache: Any, symbol: str) -> Optional["pd.Series"]:
+        """캐시에서 종가 시리즈를 추출. 없으면 None."""
+        if cache is None:
+            return None
+        df = cache.get(symbol)
+        if df is None or (hasattr(df, 'empty') and df.empty):
+            return None
+        for col in ('close', 'Close', 'Adj Close'):
+            if col in df.columns:
+                series = df[col].dropna()
+                return series if len(series) > 0 else None
+        return None
