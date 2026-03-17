@@ -563,6 +563,27 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
 
     costs["Notion-Writer"] = notion_cost or 0.0
 
+    # 12.5. Notion Writer 실패 시 1회 재시도 (budget 2배)
+    if not notion_ok:
+        logger.warning("[Notion-Writer] 실패 → 재시도 (budget 2배, timeout 2배)")
+        _notify_worker_failure("Notion-Writer", "Notion Writer 실패 - 재시도 중 (budget=$0.60, timeout=600s)")
+        retry_ok, retry_output, retry_cost = run_claude_worker(
+            worker_name="Notion-Writer",
+            prompt=notion_prompt,
+            tools="mcp__claude_ai_Notion__*",
+            timeout=600,
+            max_budget=0.60,
+        )
+        costs["Notion-Writer"] = costs.get("Notion-Writer", 0) + (retry_cost or 0.0)
+        if retry_ok:
+            notion_ok = True
+            notion_output = retry_output
+            logger.info("[Notion-Writer] 재시도 성공")
+        else:
+            logger.error("[Notion-Writer] 재시도 실패 → 레거시 폴백")
+            _notify_worker_failure("Notion-Writer", "Notion Writer 재시도도 실패하여 레거시 폴백으로 전환합니다.")
+            return _run_legacy_fallback(json_path, session_reports_dir)
+
     # 13. 비용 요약 로깅
     total_cost = sum(costs.values())
     logger.info(
@@ -572,10 +593,6 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
         f"C=${costs.get('Worker-C', 0):.4f}, "
         f"Writer=${costs.get('Notion-Writer', 0):.4f})"
     )
-
-    if not notion_ok:
-        logger.error("Notion Writer 실패 - 마커 생성하지 않음 (다음 실행 시 재시도)")
-        return False
 
     # 14. Notion 페이지 생성 검증 (출력에 URL이 포함되어야 함)
     import re

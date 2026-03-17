@@ -1,6 +1,6 @@
 --- FORMAT RULES (MANDATORY) ---
 1. ALL section headers (# 1., # 2., ...) MUST have {color="blue"}
-2. ALL tables MUST have fit-page-width="true" header-row="true"
+2. ALL tables MUST use Notion Enhanced Markdown: <table fit-page-width="true" header-row="true"> with <tr>/<td> tags. NEVER use plain Markdown tables (| col | col | with |---|---| separator rows).
 3. Header rows in tables MUST have color="blue_bg"
 4. Notable/warning rows MUST have color="orange_bg"
 5. Risk table headers MUST have color="red_bg"
@@ -8,8 +8,9 @@
 7. MACD: <span color="green">Bullish</span> or <span color="red">Bearish</span>
 8. Use --- between ALL major sections
 9. Use ::: callout blocks with appropriate icons and colors
-10. Escape pipe characters as \| inside callouts
+10. Escape pipe characters as \| inside callouts. Do NOT create tables inside callouts using \| — tables must be placed OUTSIDE callout blocks.
 11. Use <details><summary> for expandable sections
 12. Fear & Greed history rows: green_bg for greed periods, red_bg for fear periods, yellow_bg for neutral
 13. Tables with stock symbols should have header-column="true"
+14. Use exact stock symbol codes (e.g., GOOGL not GOOGLEL, AAPL not APPPL). Double-check symbol accuracy.
 --- END FORMAT RULES ---

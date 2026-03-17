@@ -220,6 +220,35 @@ def _save_top3_marker(json_path: str, top3_symbols: list) -> None:
     marker.write_text(json.dumps(top3_symbols))
 
 
+def _build_trend_block(analysis_dir: str = 'data/market_analysis') -> str:
+    """TrendReader에서 최근 5일 트렌드를 읽어 프롬프트 텍스트로 변환합니다.
+
+    Args:
+        analysis_dir: 분석 JSON 파일이 저장된 디렉토리 경로.
+
+    Returns:
+        트렌드 분석 프롬프트 블록 텍스트. 실패 시 빈 문자열.
+    """
+    try:
+        from trading_bot.trend_reader import TrendReader
+
+        reader = TrendReader(analysis_dir=analysis_dir)
+        trend_data = reader.analyze_trends(n_days=5)
+
+        if not trend_data or trend_data.get('period', {}).get('days', 0) == 0:
+            return ""
+
+        from trading_bot.market_analysis_prompt import (
+            _build_trend_data_block,
+        )
+
+        return _build_trend_data_block(trend_data)
+
+    except Exception as e:
+        logger.debug(f"트렌드 블록 빌드 실패: {e}")
+        return ""
+
+
 def _build_historical_performance_block() -> str:
     """SignalTracker 에서 최근 30일 시그널 정확도 → 프롬프트 텍스트."""
     if os.getenv("SIGNAL_TRACKING_ENABLED", "true").lower() != "true":
@@ -275,6 +304,33 @@ def _build_historical_performance_block() -> str:
                     f"- 가장 부정확한 레이어: {worst_layer[0]} "
                     f"({worst_layer[1]['accuracy_pct']:.0f}%)"
                 )
+
+        # 성적표(scorecard) 추가: sufficient==True일 때 F&G 구간별 적중률 표시
+        try:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            scorecard = tracker.generate_scorecard(today_str, lookback_days=30)
+            if scorecard and scorecard.get("data_coverage", {}).get("sufficient"):
+                by_fg = scorecard.get("by_fear_greed_zone", {})
+                fg_parts = []
+                for zone, stats in by_fg.items():
+                    if stats.get("total", 0) > 0 and stats.get("accuracy_pct") is not None:
+                        fg_parts.append(
+                            f"{zone}: {stats['accuracy_pct']:.0f}%({stats['total']}건)"
+                        )
+                if fg_parts:
+                    lines.append(f"- F&G 구간별 적중률: {', '.join(fg_parts)}")
+
+                by_signal = scorecard.get("by_signal_type", {})
+                sig_parts = []
+                for sig, stats in by_signal.items():
+                    if stats.get("total", 0) > 0 and stats.get("accuracy_pct") is not None:
+                        sig_parts.append(
+                            f"{sig}: {stats['accuracy_pct']:.0f}%({stats['total']}건)"
+                        )
+                if sig_parts:
+                    lines.append(f"- 시그널별 적중률: {', '.join(sig_parts)}")
+        except Exception as e:
+            logger.debug(f"성적표 확장 실패 (무시): {e}")
 
         lines.append(
             "**이 과거 데이터를 참고하여 오늘의 분석 신뢰도를 판단하세요.**"
@@ -447,9 +503,19 @@ def precompute_session_metrics(session_reports_dir: str) -> Dict[str, Any]:
     strategy_pnl = _calculate_strategy_pnl_breakdown(all_trades)
     trade_log = _format_trade_log(all_trades)
 
+    # 모든 세션이 거래 0건인지 감지
+    all_zero_trades = all(
+        sd.get("total_trades", 0) == 0 for sd in session_details
+    )
+    if all_zero_trades and session_details:
+        logger.info(
+            f"모든 세션 거래 0건 ({len(session_details)}개 세션) — 간략 출력 모드"
+        )
+
     return {
         "sessions": sessions,
         "has_sessions": True,
+        "all_zero_trades": all_zero_trades,
         "var_95": overall_var_95,
         "strategy_pnl_breakdown": strategy_pnl,
         "trade_log": trade_log,
@@ -528,11 +594,22 @@ def assemble_sections(
     )
     footer = footer_template.format(date=today)
 
+    # 각 워커 출력이 ---로 끝나지 않으면 구분선 추가 (포맷 규칙 8번)
+    def _ensure_trailing_separator(text: str) -> str:
+        stripped = text.strip()
+        if not stripped.endswith("---"):
+            return stripped + "\n---"
+        return stripped
+
+    worker_a = _ensure_trailing_separator(worker_a_output)
+    worker_b = _ensure_trailing_separator(worker_b_output)
+    worker_c = worker_c_output.strip()  # 마지막 워커는 푸터 직전이므로 구분선 불필요
+
     content = (
         f"<table_of_contents/>\n---\n"
-        f"{worker_a_output.strip()}\n"
-        f"{worker_b_output.strip()}\n"
-        f"{worker_c_output.strip()}\n"
+        f"{worker_a}\n"
+        f"{worker_b}\n"
+        f"{worker_c}\n"
         f"{footer}"
     )
 
@@ -750,6 +827,8 @@ class PromptDataBuilder:
             logger.warning(f"Worker A 팩트시트 빌드 실패 (무시): {e}")
             fact_sheet_block = "(⚠️ 팩트시트 생성 실패 — 데이터 기반으로 직접 분석하세요)"
 
+        trend_block = _build_trend_block()
+
         return {
             "today": today,
             "symbols": symbols,
@@ -767,6 +846,7 @@ class PromptDataBuilder:
             "section_spec": section_spec,
             "section_note": section_note,
             "fact_sheet_block": fact_sheet_block,
+            "trend_block": trend_block,
         }
 
     def build_worker_b_context(
@@ -978,9 +1058,14 @@ class PromptDataBuilder:
             logger.warning(f"Worker C 팩트시트 빌드 실패 (무시): {e}")
             fact_sheet_block = "(⚠️ 팩트시트 생성 실패 — 데이터 기반으로 직접 분석하세요)"
 
+        all_zero_trades = session_metrics.get("all_zero_trades", False)
+        session_count = len(session_metrics.get("session_details", []))
+
         return {
             "today": today,
             "has_sessions": has_sessions,
+            "all_zero_trades": all_zero_trades,
+            "session_count": session_count,
             "intel_summary": intel_summary,
             "daily_changes_block": daily_changes_block,
             "stocks_json": stocks_json,
@@ -996,10 +1081,20 @@ class PromptDataBuilder:
         parent_page_id: str,
     ) -> Dict[str, Any]:
         """Notion Writer 프롬프트용 컨텍스트를 생성합니다."""
+        from datetime import datetime as _dt
+
+        # 월별 폴더명 생성 (예: "26-03월")
+        try:
+            dt = _dt.strptime(today, "%Y-%m-%d")
+            month_folder_name = f"{dt.strftime('%y')}-{dt.strftime('%m')}월"
+        except ValueError:
+            month_folder_name = today[:7]  # fallback
+
         return {
             "assembled_content": assembled_content,
             "today": today,
             "parent_page_id": parent_page_id,
+            "month_folder_name": month_folder_name,
         }
 
     # ------------------------------------------------------------------

@@ -140,10 +140,12 @@ class TestPromptEngineRendersTemplate:
             "assembled_content": "test content",
             "today": "2026-03-16",
             "parent_page_id": "abc-123",
+            "month_folder_name": "26-03월",
         })
         assert "abc-123" in result
         assert "test content" in result
         assert "2026-03-16" in result
+        assert "26-03월" in result
 
     def test_render_worker_a(self, engine):
         ctx = {

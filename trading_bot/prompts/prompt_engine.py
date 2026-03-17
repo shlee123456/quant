@@ -52,7 +52,7 @@ class PromptEngine:
         "worker_a.md.j2": ["today", "json_str", "section_spec"],
         "worker_b.md.j2": ["today", "stocks_json"],
         "worker_c.md.j2": ["today", "has_sessions", "stocks_json"],
-        "notion_writer.md.j2": ["assembled_content", "today", "parent_page_id"],
+        "notion_writer.md.j2": ["assembled_content", "today", "parent_page_id", "month_folder_name"],
     }
 
     def render(self, template_name: str, context: dict) -> str:
@@ -153,6 +153,74 @@ class PromptEngine:
             result = result.replace("\n---\n---", "\n---")
             if "이중 구분선 정리" not in corrections:
                 corrections.append("이중 구분선 정리")
+
+        # 과다 이스케이프 교정 (\\\\| → \\|, \\\\\\| → \\|)
+        over_escaped = re.findall(r"\\{3,}\|", result)
+        if over_escaped:
+            result = re.sub(r"\\{2,}\|", r"\\|", result)
+            corrections.append(
+                f"파이프 과다 이스케이프 교정 ({len(over_escaped)}건)"
+            )
+
+        # 알려진 심볼 오타 교정
+        _SYMBOL_TYPOS = {
+            "GOOGLEL": "GOOGL",
+            "APPPL": "AAPL",
+            "NVIDA": "NVDA",
+            "TESLAS": "TSLA",
+        }
+        for typo, correct in _SYMBOL_TYPOS.items():
+            if typo in result:
+                result = result.replace(typo, correct)
+                corrections.append(f"심볼 오타 교정: {typo} → {correct}")
+
+        # 일반 Markdown 테이블을 Notion Enhanced Markdown으로 변환
+        # | col1 | col2 | 패턴 + |---| 구분선 행이 있으면 변환
+        md_table_pattern = re.compile(
+            r"^(\|[^\n]+\|\n)"           # 헤더행
+            r"(\|[\s:*-]+\|\n)"          # 구분선행 (|---|---|)
+            r"((?:\|[^\n]+\|\n)*)",      # 데이터행들
+            re.MULTILINE,
+        )
+        md_tables = list(md_table_pattern.finditer(result))
+        if md_tables:
+            for match in reversed(md_tables):  # 뒤에서부터 치환
+                header_line = match.group(1).strip()
+                data_lines = match.group(3).strip()
+
+                # 헤더 셀 추출
+                header_cells = [
+                    c.strip() for c in header_line.strip("|").split("|")
+                ]
+                header_row = (
+                    '<tr color="blue_bg">\n'
+                    + "".join(f"<td>{c}</td>\n" for c in header_cells)
+                    + "</tr>"
+                )
+
+                # 데이터 행 변환
+                data_rows = []
+                for line in data_lines.split("\n"):
+                    line = line.strip()
+                    if not line or not line.startswith("|"):
+                        continue
+                    cells = [c.strip() for c in line.strip("|").split("|")]
+                    row = "<tr>\n" + "".join(
+                        f"<td>{c}</td>\n" for c in cells
+                    ) + "</tr>"
+                    data_rows.append(row)
+
+                table_html = (
+                    '<table fit-page-width="true" header-row="true">\n'
+                    + header_row + "\n"
+                    + "\n".join(data_rows) + "\n"
+                    + "</table>"
+                )
+                result = result[: match.start()] + table_html + result[match.end():]
+
+            corrections.append(
+                f"일반 Markdown 테이블 → Enhanced Markdown 변환 ({len(md_tables)}건)"
+            )
 
         return result, corrections
 
