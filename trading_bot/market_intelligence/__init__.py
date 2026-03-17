@@ -36,6 +36,7 @@ from .scoring import (
     pct_change,
 )
 from .data_fetcher import MarketDataCache, LAYER_SYMBOLS
+from .fred_fetcher import FREDDataFetcher
 from .layer1_macro_regime import MacroRegimeLayer
 from .layer2_market_structure import MarketStructureLayer
 from .layer3_sector_rotation import SectorRotationLayer
@@ -72,8 +73,17 @@ class MarketIntelligence:
         period: str = '6mo',
         interval: str = '1d',
         layer_weights: Optional[Dict[str, float]] = None,
+        fred_api_key: Optional[str] = None,
     ):
-        self.cache = MarketDataCache(period=period, interval=interval)
+        # FRED 초기화
+        from .fred_fetcher import FREDDataFetcher
+        self._fred_fetcher = FREDDataFetcher(api_key=fred_api_key)
+
+        # 데이터 캐시에 FRED 연결
+        self.cache = MarketDataCache(
+            period=period, interval=interval,
+            fred_fetcher=self._fred_fetcher,
+        )
         self.weights = layer_weights or LAYER_WEIGHTS.copy()
 
         # 5개 레이어 초기화
@@ -453,6 +463,8 @@ __all__ = [
     # Data
     'MarketDataCache',
     'LAYER_SYMBOLS',
+    # FRED
+    'FREDDataFetcher',
     # Layers
     'MacroRegimeLayer',
     'MarketStructureLayer',

@@ -66,10 +66,12 @@ class MarketDataCache:
         interval: yfinance 조회 간격 (기본 '1d')
     """
 
-    def __init__(self, period: str = '6mo', interval: str = '1d'):
+    def __init__(self, period: str = '6mo', interval: str = '1d', fred_fetcher=None):
         self.period = period
         self.interval = interval
         self._data: Dict[str, pd.DataFrame] = {}
+        self._fred_data: Dict[str, pd.Series] = {}
+        self._fred_fetcher = fred_fetcher
         self._fetched = False
 
     def fetch(self, stock_symbols: Optional[List[str]] = None) -> bool:
@@ -111,6 +113,15 @@ class MarketDataCache:
             self._parse_download_result(raw, all_symbols)
             self._fetched = True
             logger.info(f"MarketDataCache: {len(self._data)}개 심볼 캐시 완료")
+
+            # FRED 데이터 로드 (선택적)
+            if self._fred_fetcher and self._fred_fetcher.is_available:
+                try:
+                    self._fred_data = self._fred_fetcher.fetch_all()
+                    logger.info(f"FRED 데이터 로드: {len(self._fred_data)}개 시리즈")
+                except Exception as e:
+                    logger.warning(f"FRED 데이터 로드 실패 (ETF 프록시 사용): {e}")
+
             return True
 
         except Exception as e:
@@ -189,6 +200,10 @@ class MarketDataCache:
             if df is not None:
                 result[sym] = df
         return result
+
+    def get_fred(self, key: str) -> Optional[pd.Series]:
+        """FRED 시리즈를 키로 조회. 없으면 None."""
+        return self._fred_data.get(key)
 
     def freshness_multiplier(self, symbol: str) -> float:
         """데이터 신선도 멀티플라이어.

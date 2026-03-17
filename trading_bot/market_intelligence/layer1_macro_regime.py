@@ -119,16 +119,23 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
     def _score_yield_curve(self, cache: Any) -> tuple:
         """수익률 곡선 기울기를 평가.
 
-        우선 ^TNX(10년 국채 금리)와 ^FVX(5년 국채 금리)를 직접 사용하여
-        yield spread = TNX - FVX를 계산합니다.
-        ^TNX/^FVX 데이터가 없으면 TLT/SHY ETF 비율로 폴백합니다.
+        우선순위:
+        1. FRED T10Y2Y (가장 정확한 10Y-2Y 스프레드)
+        2. ^TNX - ^FVX (야후 파이낸스 국채 금리)
+        3. TLT/SHY ETF 비율 (최종 폴백)
 
         spread 상승(steepening) → 경기 확장 시그널.
 
         Returns:
             (score, details_dict)
         """
-        # 우선: ^TNX / ^FVX 직접 사용 (yield 값, % 단위)
+        # 최우선: FRED T10Y2Y
+        if cache is not None and hasattr(cache, 'get_fred'):
+            fred_spread = cache.get_fred('yield_spread')
+            if fred_spread is not None and len(fred_spread) > 25:
+                return self._score_yield_curve_fred(fred_spread)
+
+        # 폴백 1: ^TNX / ^FVX 직접 사용 (yield 값, % 단위)
         tnx = self._get_close(cache, '^TNX')
         fvx = self._get_close(cache, '^FVX')
 
@@ -209,15 +216,22 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
         }
 
     def _score_credit_spread(self, cache: Any) -> tuple:
-        """HYG vs IEI 스프레드로 신용 위험을 평가.
+        """신용 스프레드를 평가.
 
-        HYG (하이일드채 ETF)가 IEI (3-7년 국채 ETF) 대비 outperform하면
-        리스크 온 → 경기 긍정적.
-        IEI는 HYG와 듀레이션이 유사하여 금리 변동 효과를 제거합니다.
+        우선순위:
+        1. FRED BAMLH0A0HYM2 (ICE BofA High Yield OAS)
+        2. HYG vs IEI ETF 스프레드 (폴백)
 
         Returns:
             (score, details_dict)
         """
+        # 최우선: FRED OAS
+        if cache is not None and hasattr(cache, 'get_fred'):
+            fred_oas = cache.get_fred('credit_spread')
+            if fred_oas is not None and len(fred_oas) > 25:
+                return self._score_credit_spread_fred(fred_oas)
+
+        # 폴백: HYG vs IEI
         hyg = self._get_close(cache, 'HYG')
         iei = self._get_close(cache, 'IEI')
 
@@ -280,14 +294,22 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
         }
 
     def _score_manufacturing(self, cache: Any) -> tuple:
-        """XLI 모멘텀 + IWM/SPY 비율로 제조업 경기를 평가.
+        """제조업 경기를 평가.
 
-        XLI (산업재 ETF) 상승 + IWM/SPY (소형주/대형주) 비율 상승
-        → 제조업/경기 확장 시그널.
+        우선순위:
+        1. FRED NAPM (ISM Manufacturing PMI)
+        2. XLI 모멘텀 + IWM/SPY 비율 (폴백)
 
         Returns:
             (score, details_dict)
         """
+        # 최우선: FRED ISM PMI
+        if cache is not None and hasattr(cache, 'get_fred'):
+            fred_pmi = cache.get_fred('manufacturing')
+            if fred_pmi is not None and len(fred_pmi) > 3:
+                return self._score_manufacturing_fred(fred_pmi)
+
+        # 폴백: XLI + IWM/SPY
         xli = self._get_close(cache, 'XLI')
         iwm = self._get_close(cache, 'IWM')
         spy = self._get_close(cache, 'SPY')
@@ -338,14 +360,22 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
         return score, details
 
     def _score_fed_expectations(self, cache: Any) -> tuple:
-        """SHY 가격 변동으로 연준 금리 기대를 평가.
+        """연준 금리 기대를 평가.
 
-        SHY (1-3년 국채 ETF) 가격 상승 = 단기 금리 하락 기대
-        = 연준 비둘기파 (dovish) = 주식에 긍정적.
+        우선순위:
+        1. FRED DGS2 (2년물 국채 금리)
+        2. SHY ETF 가격 변동 (폴백)
 
         Returns:
             (score, details_dict)
         """
+        # 최우선: FRED 2년물 금리
+        if cache is not None and hasattr(cache, 'get_fred'):
+            fred_dgs2 = cache.get_fred('fed_rate_2y')
+            if fred_dgs2 is not None and len(fred_dgs2) > 25:
+                return self._score_fed_expectations_fred(fred_dgs2)
+
+        # 폴백: SHY ETF
         shy = self._get_close(cache, 'SHY')
 
         if shy is None or len(shy) < 25:
@@ -364,6 +394,101 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
             'shy_momentum': round(mom, 2),
             'shy_ret_5d': round(ret_5d or 0.0, 4),
             'shy_ret_20d': round(ret_20d or 0.0, 4),
+        }
+
+    # ─── FRED helper methods ───
+
+    def _score_yield_curve_fred(self, spread: pd.Series) -> tuple:
+        """FRED T10Y2Y 스프레드 기반 수익률 곡선 점수."""
+        current = float(spread.iloc[-1])
+        ma20 = float(spread.rolling(20).mean().iloc[-1])
+
+        if abs(ma20) > 0.01:
+            trend_pct = (current - ma20) / abs(ma20)
+        else:
+            trend_pct = 0.0
+
+        # 5일 변화 (percentage points)
+        ret_5d = float(spread.iloc[-1] - spread.iloc[-6]) if len(spread) > 5 else 0.0
+
+        raw_score = (trend_pct * 1500) + (ret_5d * 3000)
+        score = float(max(-100.0, min(100.0, raw_score)))
+
+        return score, {
+            'source': 'FRED_T10Y2Y',
+            'current_spread': round(current, 4),
+            'ma20_spread': round(ma20, 4),
+            'trend_pct': round(trend_pct, 4),
+            'ret_5d': round(ret_5d, 4),
+        }
+
+    def _score_credit_spread_fred(self, oas: pd.Series) -> tuple:
+        """FRED High Yield OAS 기반 신용 스프레드 점수.
+
+        OAS 하락 = 신용 개선 = bullish
+        OAS 상승 = 신용 악화 = bearish
+        """
+        current = float(oas.iloc[-1])
+        ma20 = float(oas.rolling(20).mean().iloc[-1])
+
+        # OAS 하락 = positive signal (inverted)
+        if abs(ma20) > 0.01:
+            trend_pct = -(current - ma20) / abs(ma20)  # negate: OAS down = good
+        else:
+            trend_pct = 0.0
+
+        ret_5d = -(pct_change(oas, 5) or 0.0)  # negate
+        ret_20d = -(pct_change(oas, 20) or 0.0)
+
+        raw_score = (ret_5d * 2500) + (ret_20d * 1500)
+        score = float(max(-100.0, min(100.0, raw_score)))
+
+        return score, {
+            'source': 'FRED_BAMLH0A0HYM2',
+            'current_oas': round(current, 2),
+            'ma20_oas': round(ma20, 2),
+            'trend_pct': round(trend_pct, 4),
+        }
+
+    def _score_manufacturing_fred(self, pmi: pd.Series) -> tuple:
+        """FRED ISM PMI 기반 제조업 점수.
+
+        PMI > 50 = 확장, < 50 = 수축
+        """
+        current = float(pmi.iloc[-1])
+        prev = float(pmi.iloc[-2]) if len(pmi) > 1 else current
+
+        # PMI 50 기준: 50이면 0점, 60이면 +100, 40이면 -100
+        score = (current - 50.0) * 10.0
+
+        # 방향성 보너스
+        if current > prev:
+            score += 10.0
+        elif current < prev:
+            score -= 10.0
+
+        score = float(max(-100.0, min(100.0, score)))
+
+        return score, {
+            'source': 'FRED_NAPM',
+            'current_pmi': round(current, 1),
+            'previous_pmi': round(prev, 1),
+            'direction': 'improving' if current > prev else 'declining',
+        }
+
+    def _score_fed_expectations_fred(self, dgs2: pd.Series) -> tuple:
+        """FRED 2년물 금리 기반 연준 기대 점수.
+
+        금리 하락 = 비둘기파 기대 = bullish
+        """
+        mom = momentum_score(dgs2, periods=[5, 10, 20])
+        score = -mom  # negate: rate down = dovish = bullish
+        score = float(max(-100.0, min(100.0, score)))
+
+        return score, {
+            'source': 'FRED_DGS2',
+            'current_yield': round(float(dgs2.iloc[-1]), 3),
+            'momentum': round(mom, 2),
         }
 
     # ─── Cycle phase detection ───
