@@ -180,10 +180,13 @@ class TestPromptEngineRendersTemplate:
             "forward_json": "{}",
             "stocks_json": "{}",
             "fact_sheet_block": "",
+            "trend_block": "",
+            "scorecard_block": "",
         }
         result = engine.render("worker_c.md.j2", ctx)
-        assert "# 7. 성과 대시보드" in result
-        assert "# 10. 리스크 요인" in result
+        assert "# 7. 주간 트렌드 & 시그널 성과" in result
+        assert "# 8. 성과 대시보드" in result
+        assert "# 11. 리스크 요인" in result
 
     def test_render_worker_c_without_sessions(self, engine):
         ctx = {
@@ -195,11 +198,13 @@ class TestPromptEngineRendersTemplate:
             "forward_json": "{}",
             "stocks_json": "{}",
             "fact_sheet_block": "",
+            "trend_block": "",
+            "scorecard_block": "",
         }
         result = engine.render("worker_c.md.j2", ctx)
-        assert "# 7. 전방 전망" in result
-        assert "# 8. 리스크 요인" in result
-        assert "# 10." not in result
+        assert "# 7. 주간 트렌드 & 시그널 성과" in result
+        assert "# 8. 전방 전망" in result
+        assert "# 9. 리스크 요인" in result
 
 
 # =========================================================================

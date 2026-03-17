@@ -6,6 +6,12 @@
 {{ intel_summary }}
 {{ fact_sheet_block }}
 {{ daily_changes_block }}
+{% if trend_block %}
+{{ trend_block }}
+{% endif %}
+{% if scorecard_block %}
+{{ scorecard_block }}
+{% endif %}
 
 {% include "format_rules.md.j2" %}
 

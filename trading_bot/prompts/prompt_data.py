@@ -249,6 +249,26 @@ def _build_trend_block(analysis_dir: str = 'data/market_analysis') -> str:
         return ""
 
 
+def _build_scorecard_block() -> str:
+    """SignalTracker에서 시그널 성적표를 읽어 프롬프트 텍스트로 변환합니다."""
+    try:
+        from trading_bot.signal_tracker import SignalTracker
+        from trading_bot.market_analysis_prompt import (
+            _build_scorecard_data_block,
+        )
+
+        tracker = SignalTracker()
+        today = datetime.now().strftime('%Y-%m-%d')
+        scorecard = tracker.generate_scorecard(today, lookback_days=30)
+        if not scorecard:
+            return ""
+        return _build_scorecard_data_block(scorecard)
+
+    except Exception as e:
+        logger.debug(f"성적표 블록 빌드 실패: {e}")
+        return ""
+
+
 def _build_historical_performance_block() -> str:
     """SignalTracker 에서 최근 30일 시그널 정확도 → 프롬프트 텍스트."""
     if os.getenv("SIGNAL_TRACKING_ENABLED", "true").lower() != "true":
@@ -1061,6 +1081,9 @@ class PromptDataBuilder:
         all_zero_trades = session_metrics.get("all_zero_trades", False)
         session_count = len(session_metrics.get("session_details", []))
 
+        trend_block = _build_trend_block()
+        scorecard_block = _build_scorecard_block()
+
         return {
             "today": today,
             "has_sessions": has_sessions,
@@ -1072,6 +1095,8 @@ class PromptDataBuilder:
             "metrics_json": metrics_json,
             "forward_json": forward_json,
             "fact_sheet_block": fact_sheet_block,
+            "trend_block": trend_block,
+            "scorecard_block": scorecard_block,
         }
 
     def build_notion_writer_context(
