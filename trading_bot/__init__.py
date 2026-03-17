@@ -202,3 +202,14 @@ except ImportError:
 
 if _has_intelligence_backtest:
     __all__.extend(['IntelligenceBacktester', 'BacktestResult'])
+
+# Weight optimizer
+try:
+    from .weight_optimizer import WeightOptimizer, OptimizationResult
+    _has_weight_optimizer = True
+except ImportError:
+    WeightOptimizer = OptimizationResult = None
+    _has_weight_optimizer = False
+
+if _has_weight_optimizer:
+    __all__.extend(['WeightOptimizer', 'OptimizationResult'])
