@@ -450,16 +450,16 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
             'trend_pct': round(trend_pct, 4),
         }
 
-    def _score_manufacturing_fred(self, pmi: pd.Series) -> tuple:
-        """FRED ISM PMI 기반 제조업 점수.
+    def _score_manufacturing_fred(self, ipman: pd.Series) -> tuple:
+        """FRED IPMAN (산업생산 제조업) 기반 제조업 점수.
 
-        PMI > 50 = 확장, < 50 = 수축
+        IPMAN > 100 = 확장, < 100 = 수축 (2017=100 기준)
         """
-        current = float(pmi.iloc[-1])
-        prev = float(pmi.iloc[-2]) if len(pmi) > 1 else current
+        current = float(ipman.iloc[-1])
+        prev = float(ipman.iloc[-2]) if len(ipman) > 1 else current
 
-        # PMI 50 기준: 50이면 0점, 60이면 +100, 40이면 -100
-        score = (current - 50.0) * 10.0
+        # 100 기준: 100이면 0점, 105이면 +50, 95이면 -50
+        score = (current - 100.0) * 10.0
 
         # 방향성 보너스
         if current > prev:
@@ -470,9 +470,9 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
         score = float(max(-100.0, min(100.0, score)))
 
         return score, {
-            'source': 'FRED_NAPM',
-            'current_pmi': round(current, 1),
-            'previous_pmi': round(prev, 1),
+            'source': 'FRED_IPMAN',
+            'current_ipman': round(current, 1),
+            'previous_ipman': round(prev, 1),
             'direction': 'improving' if current > prev else 'declining',
         }
 

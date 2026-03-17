@@ -4,6 +4,7 @@ Tests for FRED data integration (Phase 4).
 FRED API를 primary 데이터 소스로 사용하고, ETF 프록시로 폴백하는 로직을 검증합니다.
 """
 
+import os
 import numpy as np
 import pandas as pd
 import pytest
@@ -71,6 +72,7 @@ class TestFREDDataFetcherInit:
 class TestFREDFetchSeries:
     """fetch_series() 테스트."""
 
+    @patch.dict(os.environ, {'FRED_API_KEY': ''}, clear=False)
     def test_returns_none_when_unavailable(self):
         """비활성 상태에서 None 반환."""
         fetcher = FREDDataFetcher(api_key=None)
@@ -111,6 +113,7 @@ class TestFREDFetchSeries:
 class TestFREDFetchAll:
     """fetch_all() 테스트."""
 
+    @patch.dict(os.environ, {'FRED_API_KEY': ''}, clear=False)
     def test_returns_empty_when_unavailable(self):
         """비활성 상태에서 빈 dict 반환."""
         fetcher = FREDDataFetcher(api_key=None)
@@ -253,34 +256,34 @@ class TestCreditSpreadFRED:
 class TestManufacturingFRED:
     """제조업: FRED primary, ETF fallback."""
 
-    def test_fred_pmi_expanding(self):
-        """PMI > 50 → 양의 점수."""
+    def test_fred_ipman_expanding(self):
+        """IPMAN > 100 → 양의 점수."""
         layer = MacroRegimeLayer()
 
-        # PMI가 52에서 55로 상승
+        # IPMAN 100 기준, 102에서 105로 상승
         dates = pd.date_range(end=pd.Timestamp.now().normalize(), periods=10, freq='MS')
-        pmi = pd.Series([50, 51, 52, 53, 54, 53, 52, 53, 54, 55], index=dates)
+        ipman = pd.Series([100, 101, 102, 103, 104, 103, 102, 103, 104, 105], index=dates)
 
-        cache = FREDMockCache(fred_data={'manufacturing': pmi})
+        cache = FREDMockCache(fred_data={'manufacturing': ipman})
 
         score, detail = layer._score_manufacturing(cache)
         assert score > 0
-        assert detail['source'] == 'FRED_NAPM'
-        assert detail['current_pmi'] == 55.0
+        assert detail['source'] == 'FRED_IPMAN'
+        assert detail['current_ipman'] == 105.0
         assert detail['direction'] == 'improving'
 
-    def test_fred_pmi_contracting(self):
-        """PMI < 50 → 음의 점수."""
+    def test_fred_ipman_contracting(self):
+        """IPMAN < 100 → 음의 점수."""
         layer = MacroRegimeLayer()
 
         dates = pd.date_range(end=pd.Timestamp.now().normalize(), periods=10, freq='MS')
-        pmi = pd.Series([50, 49, 48, 47, 46, 47, 46, 45, 44, 43], index=dates)
+        ipman = pd.Series([100, 99, 98, 97, 96, 97, 96, 95, 94, 93], index=dates)
 
-        cache = FREDMockCache(fred_data={'manufacturing': pmi})
+        cache = FREDMockCache(fred_data={'manufacturing': ipman})
 
         score, detail = layer._score_manufacturing(cache)
         assert score < 0
-        assert detail['source'] == 'FRED_NAPM'
+        assert detail['source'] == 'FRED_IPMAN'
         assert detail['direction'] == 'declining'
 
     def test_etf_fallback(self):
@@ -298,7 +301,7 @@ class TestManufacturingFRED:
 
         score, detail = layer._score_manufacturing(cache)
         assert not np.isnan(score)
-        assert detail.get('source') != 'FRED_NAPM'
+        assert detail.get('source') != 'FRED_IPMAN'
 
 
 class TestFedExpectationsFRED:
@@ -370,12 +373,12 @@ class TestFREDHelperMethods:
         assert -100.0 <= score <= 100.0
         assert 'current_oas' in detail
 
-    def test_manufacturing_fred_at_50(self):
-        """PMI = 50 → 점수 ~ 0."""
+    def test_manufacturing_fred_at_100(self):
+        """IPMAN = 100 → 점수 ~ 0."""
         layer = MacroRegimeLayer()
         dates = pd.date_range(end=pd.Timestamp.now().normalize(), periods=5, freq='MS')
-        pmi = pd.Series([50.0, 50.0, 50.0, 50.0, 50.0], index=dates)
-        score, detail = layer._score_manufacturing_fred(pmi)
+        ipman = pd.Series([100.0, 100.0, 100.0, 100.0, 100.0], index=dates)
+        score, detail = layer._score_manufacturing_fred(ipman)
         assert -15.0 <= score <= 15.0  # 약간의 방향성 영향
 
     def test_fed_expectations_fred_score_range(self):

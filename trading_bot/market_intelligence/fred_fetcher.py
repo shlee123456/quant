@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 FRED_SERIES: Dict[str, str] = {
     'yield_spread': 'T10Y2Y',        # 10Y-2Y Treasury Spread (bp)
     'credit_spread': 'BAMLH0A0HYM2', # ICE BofA US High Yield OAS (bp)
-    'manufacturing': 'NAPM',          # ISM Manufacturing PMI
+    'manufacturing': 'IPMAN',          # Industrial Production: Manufacturing (100=기준, >100 확장)
     'fed_rate_2y': 'DGS2',           # 2-Year Treasury Yield (%)
     'unemployment': 'ICSA',           # Initial Jobless Claims
     'consumer_sentiment': 'UMCSENT',  # U of Michigan Consumer Sentiment
