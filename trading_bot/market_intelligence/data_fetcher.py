@@ -23,7 +23,7 @@ except ImportError:
 
 LAYER_SYMBOLS: Dict[str, List[str]] = {
     'yield_curve': ['^TNX', '^FVX', 'TLT', 'SHY', 'IEF'],
-    'credit_spread': ['HYG', 'LQD'],
+    'credit_spread': ['HYG', 'LQD', 'IEI'],
     'dollar': ['UUP'],
     'manufacturing': ['XLI'],
     'vix': ['^VIX', '^VIX3M'],

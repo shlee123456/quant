@@ -68,10 +68,11 @@ class MockCache:
 
 def _build_sentiment_cache(
     vix_level: float = 20.0,
-    hyg_trend: float = 0.001,
+    gld_trend: float = 0.001,
+    spy_trend: float = 0.002,
     n: int = 200,
 ) -> MockCache:
-    """Build a mock cache with VIX and HYG data."""
+    """Build a mock cache with VIX, GLD, and SPY data."""
     # VIX-like data (stays around vix_level)
     rng = np.random.RandomState(42)
     dates = pd.date_range(end=pd.Timestamp.now(), periods=n, freq='B')
@@ -89,12 +90,15 @@ def _build_sentiment_cache(
         index=dates,
     )
 
-    hyg_df = _make_ohlcv(n=n, start_price=75.0, trend=hyg_trend, seed=99)
+    gld_df = _make_ohlcv(n=n, start_price=180.0, trend=gld_trend, seed=99)
+    spy_df = _make_ohlcv(n=n, start_price=450.0, trend=spy_trend, seed=100)
+    spy_df.index = gld_df.index  # 동일 인덱스로 ratio 계산 보장
 
     return MockCache({
         '^VIX': vix_df,
         'VIXY': vix_df.copy(),
-        'HYG': hyg_df,
+        'GLD': gld_df,
+        'SPY': spy_df,
     })
 
 
@@ -197,33 +201,45 @@ class TestFearGreedScoring:
     """Fear & Greed Index scoring tests."""
 
     def test_extreme_fear_is_contrarian_bullish(self, layer):
-        """극단적 공포 (< 25) -> 역발상 매수 (+50)."""
+        """극단적 공포 (< 20) -> 역발상 매수 (+80)."""
         score, details = layer._calc_fear_greed({'value': 10})
-        assert score == 50.0
+        assert score == 80.0
         assert details['zone'] == 'extreme_fear'
 
     def test_fear_zone(self, layer):
-        """공포 (25-45) -> -25."""
-        score, details = layer._calc_fear_greed({'value': 35})
-        assert score == -25.0
+        """공포 (20-35) -> +40."""
+        score, details = layer._calc_fear_greed({'value': 30})
+        assert score == 40.0
         assert details['zone'] == 'fear'
 
+    def test_mild_fear_zone(self, layer):
+        """약한 공포 (35-50) -> +10."""
+        score, details = layer._calc_fear_greed({'value': 40})
+        assert score == 10.0
+        assert details['zone'] == 'mild_fear'
+
     def test_neutral_zone(self, layer):
-        """중립 (45-55) -> 0."""
-        score, details = layer._calc_fear_greed({'value': 50})
+        """중립 (50-55) -> 0."""
+        score, details = layer._calc_fear_greed({'value': 52})
         assert score == 0.0
         assert details['zone'] == 'neutral'
 
+    def test_mild_greed_zone(self, layer):
+        """약한 탐욕 (55-65) -> -10."""
+        score, details = layer._calc_fear_greed({'value': 60})
+        assert score == -10.0
+        assert details['zone'] == 'mild_greed'
+
     def test_greed_zone(self, layer):
-        """탐욕 (55-75) -> +25."""
-        score, details = layer._calc_fear_greed({'value': 65})
-        assert score == 25.0
+        """탐욕 (65-80) -> -40."""
+        score, details = layer._calc_fear_greed({'value': 70})
+        assert score == -40.0
         assert details['zone'] == 'greed'
 
     def test_extreme_greed_is_contrarian_bearish(self, layer):
-        """극단적 탐욕 (> 75) -> 역발상 매도 (-50)."""
+        """극단적 탐욕 (> 80) -> 역발상 매도 (-80)."""
         score, details = layer._calc_fear_greed({'value': 85})
-        assert score == -50.0
+        assert score == -80.0
         assert details['zone'] == 'extreme_greed'
 
     def test_none_data(self, layer):
@@ -237,14 +253,19 @@ class TestFearGreedScoring:
         score, details = layer._calc_fear_greed({})
         assert score == 0.0
 
-    def test_boundary_25(self, layer):
-        """경계값 25 테스트."""
-        score, details = layer._calc_fear_greed({'value': 25})
+    def test_boundary_20(self, layer):
+        """경계값 20 테스트."""
+        score, details = layer._calc_fear_greed({'value': 20})
         assert details['zone'] == 'fear'
 
-    def test_boundary_45(self, layer):
-        """경계값 45 테스트."""
-        score, details = layer._calc_fear_greed({'value': 45})
+    def test_boundary_35(self, layer):
+        """경계값 35 테스트."""
+        score, details = layer._calc_fear_greed({'value': 35})
+        assert details['zone'] == 'mild_fear'
+
+    def test_boundary_50(self, layer):
+        """경계값 50 테스트."""
+        score, details = layer._calc_fear_greed({'value': 50})
         assert details['zone'] == 'neutral'
 
     def test_boundary_55(self, layer):
@@ -252,9 +273,14 @@ class TestFearGreedScoring:
         score, details = layer._calc_fear_greed({'value': 55})
         assert details['zone'] == 'neutral'
 
-    def test_boundary_75(self, layer):
-        """경계값 75 테스트."""
-        score, details = layer._calc_fear_greed({'value': 75})
+    def test_boundary_65(self, layer):
+        """경계값 65 테스트."""
+        score, details = layer._calc_fear_greed({'value': 65})
+        assert details['zone'] == 'mild_greed'
+
+    def test_boundary_80(self, layer):
+        """경계값 80 테스트."""
+        score, details = layer._calc_fear_greed({'value': 80})
         assert details['zone'] == 'greed'
 
 
@@ -414,42 +440,60 @@ class TestNewsSentiment:
 
 
 class TestSmartMoney:
-    """HYG momentum (smart money proxy) tests."""
+    """GLD/SPY ratio momentum (smart money proxy) tests."""
 
-    def test_rising_hyg_is_risk_on(self, layer):
-        """HYG 상승 -> risk_on."""
-        cache = _build_sentiment_cache(hyg_trend=0.005)
+    def test_spy_outperform_gld_is_risk_on(self, layer):
+        """SPY가 GLD 대비 outperform -> risk_on (GLD/SPY 하락 = 반전 후 양수)."""
+        # 같은 인덱스 사용하여 ratio 계산 시 NaN 방지
+        gld = _make_ohlcv(n=200, start_price=180.0, trend=-0.001, seed=60)
+        spy = _make_ohlcv(n=200, start_price=450.0, trend=0.005, seed=61)
+        spy.index = gld.index  # 동일 인덱스 보장
+        cache = MockCache({'GLD': gld, 'SPY': spy})
         score, details = layer._calc_smart_money(cache)
-        assert score > 0 or details['direction'] in ('risk_on', 'neutral')
+        assert score > 0 or details.get('direction') in ('risk_on', 'neutral')
 
-    def test_falling_hyg_is_risk_off(self, layer):
-        """HYG 하락 -> risk_off."""
-        cache = _build_sentiment_cache(hyg_trend=-0.005)
+    def test_gld_outperform_spy_is_risk_off(self, layer):
+        """GLD가 SPY 대비 outperform -> risk_off."""
+        gld = _make_ohlcv(n=200, start_price=180.0, trend=0.005, seed=62)
+        spy = _make_ohlcv(n=200, start_price=450.0, trend=-0.001, seed=63)
+        spy.index = gld.index  # 동일 인덱스 보장
+        cache = MockCache({'GLD': gld, 'SPY': spy})
         score, details = layer._calc_smart_money(cache)
-        assert score < 0 or details['direction'] in ('risk_off', 'neutral')
+        assert score < 0 or details.get('direction') in ('risk_off', 'neutral')
 
-    def test_no_hyg_data(self, layer):
-        """HYG 데이터 없으면 0을 반환해야 한다."""
+    def test_no_gld_spy_data(self, layer):
+        """GLD/SPY 데이터 없으면 0을 반환해야 한다."""
         score, details = layer._calc_smart_money(MockCache({}))
         assert score == 0.0
         assert 'error' in details or details.get('direction') == 'neutral'
 
-    def test_short_hyg_data(self, layer):
-        """짧은 HYG 데이터 -> 0."""
-        cache = MockCache({'HYG': _make_ohlcv(n=10)})
+    def test_short_gld_data(self, layer):
+        """짧은 GLD 데이터 -> 0."""
+        cache = MockCache({
+            'GLD': _make_ohlcv(n=10),
+            'SPY': _make_ohlcv(n=200, seed=100),
+        })
         score, details = layer._calc_smart_money(cache)
         assert score == 0.0
 
-    def test_score_in_range(self, layer, sentiment_cache):
+    def test_score_in_range(self, layer):
         """점수가 -100 ~ +100 범위여야 한다."""
-        score, _ = layer._calc_smart_money(sentiment_cache)
+        gld = _make_ohlcv(n=200, start_price=180.0, trend=0.001, seed=70)
+        spy = _make_ohlcv(n=200, start_price=450.0, trend=0.002, seed=71)
+        spy.index = gld.index
+        cache = MockCache({'GLD': gld, 'SPY': spy})
+        score, _ = layer._calc_smart_money(cache)
         assert -100.0 <= score <= 100.0
 
-    def test_details_contain_returns(self, layer, sentiment_cache):
-        """details에 수익률 정보가 포함되어야 한다."""
-        score, details = layer._calc_smart_money(sentiment_cache)
-        assert 'ret_5d_pct' in details
-        assert 'ret_20d_pct' in details
+    def test_details_contain_gld_spy_returns(self, layer):
+        """details에 GLD/SPY 수익률 정보가 포함되어야 한다."""
+        gld = _make_ohlcv(n=200, start_price=180.0, trend=0.001, seed=70)
+        spy = _make_ohlcv(n=200, start_price=450.0, trend=0.002, seed=71)
+        spy.index = gld.index
+        cache = MockCache({'GLD': gld, 'SPY': spy})
+        score, details = layer._calc_smart_money(cache)
+        assert 'gld_spy_ret_5d_pct' in details
+        assert 'gld_spy_ret_20d_pct' in details
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -471,7 +515,7 @@ class TestSentimentMissingData:
         """Fear & Greed만 있을 때도 분석 가능해야 한다."""
         result = layer.analyze({'fear_greed': {'value': 20}})
         assert isinstance(result, LayerResult)
-        assert result.metrics.get('fear_greed', 0.0) == 50.0
+        assert result.metrics.get('fear_greed', 0.0) == 40.0  # fear zone (20-35) = +40
 
     def test_only_news(self, layer):
         """뉴스만 있을 때도 분석 가능해야 한다."""
@@ -515,10 +559,10 @@ class TestSentimentConsistency:
         assert abs(total - 1.0) < 0.001
 
     def test_extreme_fear_bullish_overall(self, layer):
-        """극단적 공포 + 높은 VIX + HYG 하락 -> 역발상 신호."""
+        """극단적 공포 + 높은 VIX + GLD 강세 -> 역발상 신호."""
         result = layer.analyze({
-            'fear_greed': {'value': 10},  # extreme fear (+50)
-            'cache': _build_sentiment_cache(vix_level=35.0, hyg_trend=-0.003),
+            'fear_greed': {'value': 10},  # extreme fear (+80)
+            'cache': _build_sentiment_cache(vix_level=35.0, gld_trend=0.005, spy_trend=-0.003),
             'news': [{'title': 'Market crash panic sell fear decline'}],
         })
         # 극단적 공포는 역발상 매수이므로 점수가 양수일 수 있음
@@ -527,8 +571,8 @@ class TestSentimentConsistency:
     def test_extreme_greed_bearish_overall(self, layer):
         """극단적 탐욕 + 낮은 VIX -> 역발상 약세 신호."""
         result = layer.analyze({
-            'fear_greed': {'value': 90},  # extreme greed (-50)
-            'cache': _build_sentiment_cache(vix_level=11.0, hyg_trend=0.003),
+            'fear_greed': {'value': 90},  # extreme greed (-80)
+            'cache': _build_sentiment_cache(vix_level=11.0, gld_trend=-0.001, spy_trend=0.003),
             'news': [{'title': 'Everything is bullish rally surge record'}],
         })
         assert isinstance(result, LayerResult)

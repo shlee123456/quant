@@ -135,7 +135,7 @@ class TestYieldCurveScoring:
 
         assert not np.isnan(score)
         assert score > 0  # steepening = positive
-        assert 'current_ratio' in detail
+        assert 'current_ratio' in detail or 'current_spread' in detail
 
     def test_flattening_negative(self):
         """TLT/SHY 비율 하락 → 음의 점수."""
@@ -173,13 +173,13 @@ class TestCreditSpreadScoring:
     """신용 스프레드 서브 메트릭 테스트."""
 
     def test_hyg_outperform_positive(self):
-        """HYG가 LQD 대비 outperform → 양의 점수."""
+        """HYG가 IEI 대비 outperform → 양의 점수."""
         layer = MacroRegimeLayer()
 
         hyg = make_ohlcv(n=100, start_price=80, trend=0.005, volatility=0.005, seed=10)
-        lqd = make_ohlcv(n=100, start_price=110, trend=0.0, volatility=0.005, seed=11)
+        iei = make_ohlcv(n=100, start_price=110, trend=0.0, volatility=0.005, seed=11)
 
-        cache = MockCache({'HYG': hyg, 'LQD': lqd})
+        cache = MockCache({'HYG': hyg, 'IEI': iei})
         score, detail = layer._score_credit_spread(cache)
 
         assert not np.isnan(score)
@@ -187,13 +187,13 @@ class TestCreditSpreadScoring:
         assert 'spread_5d' in detail
 
     def test_hyg_underperform_negative(self):
-        """HYG가 LQD 대비 underperform → 음의 점수."""
+        """HYG가 IEI 대비 underperform → 음의 점수."""
         layer = MacroRegimeLayer()
 
         hyg = make_ohlcv(n=100, start_price=80, trend=-0.005, volatility=0.005, seed=10)
-        lqd = make_ohlcv(n=100, start_price=110, trend=0.005, volatility=0.005, seed=11)
+        iei = make_ohlcv(n=100, start_price=110, trend=0.005, volatility=0.005, seed=11)
 
-        cache = MockCache({'HYG': hyg, 'LQD': lqd})
+        cache = MockCache({'HYG': hyg, 'IEI': iei})
         score, detail = layer._score_credit_spread(cache)
 
         assert not np.isnan(score)

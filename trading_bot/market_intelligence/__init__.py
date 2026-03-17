@@ -20,8 +20,11 @@ Usage:
 """
 
 import logging
+import math
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+import numpy as np
 
 from .base_layer import BaseIntelligenceLayer, LayerResult
 from .scoring import (
@@ -141,10 +144,10 @@ class MarketIntelligence:
                     f"confidence={result.confidence:.0%}"
                 )
             except Exception as e:
-                logger.warning(f"Layer [{layer_key}] 실패 (중립 점수 할당): {e}")
+                logger.warning(f"Layer [{layer_key}] 실패 (NaN 점수 할당): {e}")
                 layer_results[layer_key] = LayerResult(
                     layer_name=layer_key,
-                    score=0.0,
+                    score=float('nan'),
                     signal="neutral",
                     confidence=0.0,
                     metrics={},
@@ -271,14 +274,15 @@ class MarketIntelligence:
             f"(점수: {composite:+.1f})"
         ]
 
-        # 가장 강/약한 레이어 언급
-        layer_scores = {
+        # 가장 강/약한 레이어 언급 (NaN 제외)
+        valid_scores = {
             k: r.score for k, r in layer_results.items()
+            if not math.isnan(r.score)
         }
 
-        if layer_scores:
-            strongest = max(layer_scores, key=layer_scores.get)  # type: ignore
-            weakest = min(layer_scores, key=layer_scores.get)  # type: ignore
+        if valid_scores:
+            strongest = max(valid_scores, key=valid_scores.get)  # type: ignore
+            weakest = min(valid_scores, key=valid_scores.get)  # type: ignore
 
             layer_names_kr = {
                 'macro_regime': '매크로',
@@ -291,14 +295,16 @@ class MarketIntelligence:
             strongest_name = layer_names_kr.get(strongest, strongest)
             weakest_name = layer_names_kr.get(weakest, weakest)
 
-            if layer_scores[strongest] > 20:
+            if valid_scores[strongest] > 20:
                 parts.append(
-                    f"{strongest_name} 긍정적({layer_scores[strongest]:+.0f})"
+                    f"{strongest_name} 긍정적({valid_scores[strongest]:+.0f})"
                 )
-            if layer_scores[weakest] < -20:
+            if valid_scores[weakest] < -20:
                 parts.append(
-                    f"{weakest_name} 부정적({layer_scores[weakest]:+.0f})"
+                    f"{weakest_name} 부정적({valid_scores[weakest]:+.0f})"
                 )
+        else:
+            parts.append("레이어 데이터 부족")
 
         return ". ".join(parts)
 
