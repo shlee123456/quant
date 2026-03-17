@@ -160,9 +160,10 @@ class TestGracefulDegradation:
 
         report = mi.analyze()
 
-        # 실패한 레이어: 중립 점수
+        # 실패한 레이어: NaN 점수 + 중립 시그널
         macro = report['layers']['macro_regime']
-        assert macro['score'] == 0.0
+        import math
+        assert math.isnan(macro['score'])
         assert macro['signal'] == 'neutral'
         assert macro['confidence'] == 0.0
         assert 'error' in macro.get('details', {})

@@ -8,7 +8,7 @@ Sub-metrics:
     - fear_greed (0.30): CNN Fear & Greed Index 기반 역발상 시그널
     - vix_sentiment (0.20): VIX 수준 기반 심리 판단
     - news_sentiment (0.20): 뉴스 헤드라인 키워드 감성 분석
-    - smart_money (0.30): HYG 모멘텀 기반 기관 리스크 선호도
+    - smart_money (0.30): GLD/SPY 비율 모멘텀 기반 기관 리스크 선호도
 """
 
 import logging
@@ -126,14 +126,20 @@ class SentimentLayer(BaseIntelligenceLayer):
     def _calc_fear_greed(
         fg_data: Optional[Dict[str, Any]],
     ) -> Tuple[float, Dict[str, Any]]:
-        """Fear & Greed Index 역발상 점수.
+        """Fear & Greed Index 일관된 역발상(contrarian) 점수.
 
-        0-100 값을 역발상 시그널로 매핑:
-        < 25: 극단적 공포 -> 역발상 매수 (+50)
-        25-45: 공포 -> 약간 부정적 (-25)
-        45-55: 중립 (0)
-        55-75: 탐욕 -> 약간 긍정적 (+25)
-        > 75: 극단적 탐욕 -> 역발상 매도 (-50)
+        0-100 값을 완전한 역발상 시그널로 매핑:
+        - 공포가 클수록 매수 시그널 (양수 점수)
+        - 탐욕이 클수록 매도 시그널 (음수 점수)
+
+        매핑:
+        < 20: 극단적 공포 → +80 (강한 역발상 매수)
+        20-35: 공포 → +40
+        35-50: 약한 공포 → +10
+        50-55: 중립 → 0
+        55-65: 약한 탐욕 → -10
+        65-80: 탐욕 → -40
+        > 80: 극단적 탐욕 → -80 (강한 역발상 매도)
 
         Args:
             fg_data: Fear & Greed 데이터 {'value': int, ...}
@@ -153,21 +159,27 @@ class SentimentLayer(BaseIntelligenceLayer):
         except (TypeError, ValueError):
             return 0.0, {'value': None, 'zone': 'unknown'}
 
-        # 역발상 매핑
-        if value < 25:
-            score = 50.0
+        # 일관된 역발상 매핑
+        if value < 20:
+            score = 80.0
             zone = 'extreme_fear'
-        elif value < 45:
-            score = -25.0
+        elif value < 35:
+            score = 40.0
             zone = 'fear'
+        elif value < 50:
+            score = 10.0
+            zone = 'mild_fear'
         elif value <= 55:
             score = 0.0
             zone = 'neutral'
-        elif value <= 75:
-            score = 25.0
+        elif value <= 65:
+            score = -10.0
+            zone = 'mild_greed'
+        elif value <= 80:
+            score = -40.0
             zone = 'greed'
         else:
-            score = -50.0
+            score = -80.0
             zone = 'extreme_greed'
 
         return score, {
@@ -326,10 +338,13 @@ class SentimentLayer(BaseIntelligenceLayer):
     def _calc_smart_money(
         self, cache: Any
     ) -> Tuple[float, Dict[str, Any]]:
-        """HYG 모멘텀 기반 기관 리스크 선호도.
+        """GLD/SPY 비율 모멘텀 기반 기관 리스크 선호도.
 
-        HYG (High Yield Bond ETF) 상승 = 기관이 리스크 자산 선호 = 강세.
-        HYG 하락 = 기관이 안전자산 선호 = 약세.
+        GLD (Gold ETF) / SPY (S&P 500 ETF) 비율이 상승하면
+        기관이 안전자산(금) 선호 = risk-off = 주식에 약세.
+        비율 하락 = 기관이 주식 선호 = risk-on = 강세.
+
+        스코어는 반전(negate)하여 GLD 강세 = 부정적으로 매핑합니다.
 
         Args:
             cache: MarketDataCache
@@ -337,31 +352,43 @@ class SentimentLayer(BaseIntelligenceLayer):
         Returns:
             (score, details) 튜플
         """
-        hyg_close = self._get_close(cache, 'HYG')
+        gld_close = self._get_close(cache, 'GLD')
+        spy_close = self._get_close(cache, 'SPY')
 
-        if hyg_close is None or len(hyg_close) < 25:
-            return 0.0, {'error': 'HYG 데이터 없음'}
+        if (gld_close is None or spy_close is None
+                or len(gld_close) < 25 or len(spy_close) < 25):
+            return 0.0, {'error': 'GLD/SPY 데이터 없음'}
+
+        # GLD/SPY 비율
+        ratio = gld_close / spy_close
+        ratio = ratio.dropna()
+
+        if len(ratio) < 25:
+            return 0.0, {'error': 'GLD/SPY 비율 데이터 부족'}
 
         # 5d/20d 모멘텀
-        mom = momentum_score(hyg_close, periods=[5, 20])
+        mom = momentum_score(ratio, periods=[5, 20])
 
-        ret_5d = pct_change(hyg_close, 5)
-        ret_20d = pct_change(hyg_close, 20)
+        ret_5d = pct_change(ratio, 5)
+        ret_20d = pct_change(ratio, 20)
 
-        # 방향 판단
-        if mom > 10:
+        # GLD outperforming SPY = risk-off = bearish for equities → negate
+        negated_mom = -mom
+
+        # 방향 판단 (반전 후 기준)
+        if negated_mom > 10:
             direction = 'risk_on'
-        elif mom < -10:
+        elif negated_mom < -10:
             direction = 'risk_off'
         else:
             direction = 'neutral'
 
-        score = max(-100.0, min(100.0, mom))
+        score = max(-100.0, min(100.0, negated_mom))
 
         return score, {
-            'momentum': round(mom, 2),
-            'ret_5d_pct': round((ret_5d or 0.0) * 100, 2),
-            'ret_20d_pct': round((ret_20d or 0.0) * 100, 2),
+            'gld_spy_momentum': round(mom, 2),
+            'gld_spy_ret_5d_pct': round((ret_5d or 0.0) * 100, 2),
+            'gld_spy_ret_20d_pct': round((ret_20d or 0.0) * 100, 2),
             'direction': direction,
         }
 
@@ -417,9 +444,11 @@ class SentimentLayer(BaseIntelligenceLayer):
 
         zone_labels = {
             'extreme_fear': '극단적 공포, 역발상 매수 시그널',
-            'fear': '공포 구간',
+            'fear': '공포, 역발상 매수',
+            'mild_fear': '약한 공포',
             'neutral': '중립',
-            'greed': '탐욕 구간',
+            'mild_greed': '약한 탐욕',
+            'greed': '탐욕, 역발상 매도',
             'extreme_greed': '극단적 탐욕, 역발상 매도 시그널',
         }
 

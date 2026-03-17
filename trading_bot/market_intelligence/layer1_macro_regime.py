@@ -3,7 +3,7 @@ Layer 1: Macro Regime - 경제 사이클 + 금리 + 유동성
 
 ETF 프록시를 사용하여 거시 경제 환경을 수치화합니다:
 - yield_curve (0.25): TLT/SHY 비율로 수익률 곡선 기울기 대리
-- credit_spread (0.20): HYG vs LQD 스프레드로 신용 위험 측정
+- credit_spread (0.20): HYG vs IEI 스프레드로 신용 위험 측정 (듀레이션 매칭)
 - dollar (0.15): UUP 모멘텀으로 달러 강도 측정
 - manufacturing (0.20): XLI 모멘텀 + IWM/SPY 비율로 제조업 경기 측정
 - fed_expectations (0.20): SHY 가격 변동으로 금리 기대 측정
@@ -117,14 +117,56 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
     # ─── Sub-metric scoring ───
 
     def _score_yield_curve(self, cache: Any) -> tuple:
-        """TLT/SHY 비율로 수익률 곡선 기울기를 평가.
+        """수익률 곡선 기울기를 평가.
 
-        TLT (장기채 ETF) / SHY (단기채 ETF) 비율이 상승하면
-        수익률 곡선이 가파르게(steepening) → 경기 확장 시그널.
+        우선 ^TNX(10년 국채 금리)와 ^FVX(5년 국채 금리)를 직접 사용하여
+        yield spread = TNX - FVX를 계산합니다.
+        ^TNX/^FVX 데이터가 없으면 TLT/SHY ETF 비율로 폴백합니다.
+
+        spread 상승(steepening) → 경기 확장 시그널.
 
         Returns:
             (score, details_dict)
         """
+        # 우선: ^TNX / ^FVX 직접 사용 (yield 값, % 단위)
+        tnx = self._get_close(cache, '^TNX')
+        fvx = self._get_close(cache, '^FVX')
+
+        if (tnx is not None and fvx is not None
+                and len(tnx) >= 25 and len(fvx) >= 25):
+            # spread = 10Y yield - 5Y yield (percentage points)
+            spread = tnx - fvx
+            spread = spread.dropna()
+
+            if len(spread) >= 25:
+                current_spread = float(spread.iloc[-1])
+                ma20 = float(spread.rolling(20).mean().iloc[-1])
+
+                # 트렌드: 현재 spread가 20MA 대비 차이 (percentage points)
+                if ma20 != 0:
+                    trend_pct = (current_spread - ma20) / abs(ma20)
+                else:
+                    trend_pct = 0.0
+
+                # 5일 변화 (spread 변화를 pct_change 대신 직접 계산)
+                ret_5d = pct_change(spread, 5)
+                if ret_5d is None:
+                    ret_5d = 0.0
+
+                # spread는 pp 단위로 작은 값이므로 스케일 조정
+                # trend_pct * 1500 + ret_5d * 3000
+                raw_score = (trend_pct * 1500) + (ret_5d * 3000)
+                score = float(max(-100.0, min(100.0, raw_score)))
+
+                return score, {
+                    'source': 'TNX_FVX',
+                    'current_spread': round(current_spread, 4),
+                    'ma20_spread': round(ma20, 4),
+                    'trend_pct': round(trend_pct, 4),
+                    'ret_5d': round(ret_5d, 4),
+                }
+
+        # 폴백: TLT/SHY 비율
         tlt = self._get_close(cache, 'TLT')
         shy = self._get_close(cache, 'SHY')
 
@@ -159,6 +201,7 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
         score = float(max(-100.0, min(100.0, raw_score)))
 
         return score, {
+            'source': 'TLT_SHY',
             'current_ratio': round(current_ratio, 4),
             'ma20_ratio': round(ma20, 4),
             'trend_pct': round(trend_pct, 4),
@@ -166,32 +209,33 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
         }
 
     def _score_credit_spread(self, cache: Any) -> tuple:
-        """HYG vs LQD 스프레드로 신용 위험을 평가.
+        """HYG vs IEI 스프레드로 신용 위험을 평가.
 
-        HYG (하이일드채 ETF)가 LQD (투자등급채 ETF) 대비 outperform하면
+        HYG (하이일드채 ETF)가 IEI (3-7년 국채 ETF) 대비 outperform하면
         리스크 온 → 경기 긍정적.
+        IEI는 HYG와 듀레이션이 유사하여 금리 변동 효과를 제거합니다.
 
         Returns:
             (score, details_dict)
         """
         hyg = self._get_close(cache, 'HYG')
-        lqd = self._get_close(cache, 'LQD')
+        iei = self._get_close(cache, 'IEI')
 
-        if hyg is None or lqd is None or len(hyg) < 25 or len(lqd) < 25:
+        if hyg is None or iei is None or len(hyg) < 25 or len(iei) < 25:
             return float('nan'), {'error': 'insufficient data'}
 
         # 수익률 계산
         hyg_ret_5d = pct_change(hyg, 5)
-        lqd_ret_5d = pct_change(lqd, 5)
+        iei_ret_5d = pct_change(iei, 5)
         hyg_ret_20d = pct_change(hyg, 20)
-        lqd_ret_20d = pct_change(lqd, 20)
+        iei_ret_20d = pct_change(iei, 20)
 
-        if hyg_ret_5d is None or lqd_ret_5d is None:
+        if hyg_ret_5d is None or iei_ret_5d is None:
             return float('nan'), {'error': 'insufficient return data'}
 
-        # 스프레드 수익률 (HYG - LQD)
-        spread_5d = hyg_ret_5d - lqd_ret_5d
-        spread_20d = (hyg_ret_20d or 0.0) - (lqd_ret_20d or 0.0)
+        # 스프레드 수익률 (HYG - IEI)
+        spread_5d = hyg_ret_5d - iei_ret_5d
+        spread_20d = (hyg_ret_20d or 0.0) - (iei_ret_20d or 0.0)
 
         # HYG outperforming = risk-on (bullish)
         # 5일 스프레드: 보통 -2% ~ +2%
@@ -201,10 +245,10 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
 
         return score, {
             'hyg_ret_5d': round(hyg_ret_5d, 4),
-            'lqd_ret_5d': round(lqd_ret_5d, 4),
+            'iei_ret_5d': round(iei_ret_5d, 4),
             'spread_5d': round(spread_5d, 4),
             'hyg_ret_20d': round(hyg_ret_20d or 0.0, 4),
-            'lqd_ret_20d': round(lqd_ret_20d or 0.0, 4),
+            'iei_ret_20d': round(iei_ret_20d or 0.0, 4),
             'spread_20d': round(spread_20d, 4),
         }
 
