@@ -150,6 +150,15 @@ class SectorRotationLayer(BaseIntelligenceLayer):
         total_needed = len(SECTOR_ETFS) + len(FACTOR_ETFS)
         confidence = min(1.0, available / total_needed)
 
+        # 데이터 신선도 계산
+        if cache is not None and hasattr(cache, 'avg_freshness_for_symbols'):
+            all_syms = list(sector_data.keys()) + list(factor_data.keys())
+            avg_freshness = cache.avg_freshness_for_symbols(all_syms)
+        else:
+            avg_freshness = 1.0
+
+        confidence = min(1.0, confidence * avg_freshness)
+
         interpretation = self._build_interpretation(
             composite, details, metrics
         )
@@ -162,6 +171,9 @@ class SectorRotationLayer(BaseIntelligenceLayer):
             metrics={k: round(v, 1) for k, v in metrics.items()},
             interpretation=interpretation,
             details=details,
+            avg_freshness=round(avg_freshness, 2),
+            data_symbols_used=available,
+            data_symbols_expected=total_needed,
         )
 
     # ──────────────────────────────────────────────────────────────

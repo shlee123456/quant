@@ -30,6 +30,9 @@ class LayerResult:
     metrics: Dict[str, Any] = field(default_factory=dict)
     interpretation: str = ""   # One-line Korean summary
     details: Dict[str, Any] = field(default_factory=dict)
+    avg_freshness: float = 1.0        # 0.0~1.0 데이터 신선도
+    data_symbols_used: int = 0        # 실제 사용된 데이터 소스 수
+    data_symbols_expected: int = 0    # 기대 데이터 소스 수
 
     def to_dict(self) -> Dict[str, Any]:
         """딕셔너리 직렬화."""
@@ -41,6 +44,10 @@ class LayerResult:
             'metrics': self.metrics,
             'interpretation': self.interpretation,
             'details': self.details,
+            'avg_freshness': round(self.avg_freshness, 2),
+            'data_completeness': round(
+                self.data_symbols_used / max(self.data_symbols_expected, 1), 2
+            ),
         }
 
 

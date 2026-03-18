@@ -63,8 +63,9 @@ class MockCache:
     MarketDataCache와 동일한 get()/get_many() 인터페이스를 제공합니다.
     """
 
-    def __init__(self, data: Optional[Dict[str, pd.DataFrame]] = None):
+    def __init__(self, data: Optional[Dict[str, pd.DataFrame]] = None, fred_data: Optional[Dict[str, pd.Series]] = None):
         self._data = data or {}
+        self._fred_data = fred_data or {}
 
     def get(self, symbol: str) -> Optional[pd.DataFrame]:
         return self._data.get(symbol)
@@ -75,6 +76,29 @@ class MockCache:
     @property
     def available_symbols(self) -> List[str]:
         return list(self._data.keys())
+
+    def freshness_multiplier(self, symbol: str) -> float:
+        """테스트용 신선도: 데이터 있으면 1.0, 없으면 0.0."""
+        if symbol not in self._data:
+            return 0.0
+        return 1.0
+
+    def avg_freshness_for_symbols(self, symbols: list) -> float:
+        """테스트용 벌크 신선도."""
+        vals = [1.0 for s in symbols if s in self._data]
+        return sum(vals) / len(vals) if vals else 1.0
+
+    def fred_freshness(self, key: str) -> float:
+        """테스트용 FRED 신선도."""
+        return 1.0
+
+    def avg_fred_freshness(self, keys: list) -> float:
+        """테스트용 FRED 벌크 신선도."""
+        return 1.0
+
+    def get_fred(self, key: str):
+        """테스트용 FRED 데이터 조회."""
+        return self._fred_data.get(key)
 
 
 def make_trending_cache(

@@ -198,6 +198,26 @@ class MarketIntelligence:
         # Meta-confidence 계산
         report['overall']['meta_confidence'] = self._compute_meta_confidence(layer_results)
 
+        # 데이터 품질 메타데이터
+        import math as _math
+        valid_layers = [k for k, r in layer_results.items()
+                        if not _math.isnan(r.score)]
+        freshness_vals = [r.avg_freshness for r in layer_results.values()
+                          if not _math.isnan(r.score)]
+
+        report['data_quality'] = {
+            'layer_completeness': round(len(valid_layers) / len(layer_results), 2),
+            'avg_freshness': round(
+                float(np.mean(freshness_vals)) if freshness_vals else 1.0, 2
+            ),
+            'layers_contributing': valid_layers,
+            'layers_missing': [k for k in layer_results if k not in valid_layers],
+            'per_layer_freshness': {
+                k: round(r.avg_freshness, 2) for k, r in layer_results.items()
+                if not _math.isnan(r.score)
+            },
+        }
+
         logger.info(
             f"5-Layer Intelligence 분석 완료: "
             f"score={composite:+.1f}, signal={overall_signal}"
@@ -245,10 +265,10 @@ class MarketIntelligence:
         return weights
 
     def _compute_meta_confidence(self, layer_results: Dict[str, LayerResult]) -> float:
-        """레이어 간 의견 일치도를 측정.
+        """레이어 간 의견 일치도 + 데이터 신선도 + 완전성을 종합 측정.
 
         Returns:
-            0.0 (완전 불일치) ~ 1.0 (완전 합의)
+            0.0 (완전 불일치/저품질) ~ 1.0 (완전 합의/고품질)
         """
         import math
         import numpy as np
@@ -258,6 +278,7 @@ class MarketIntelligence:
         if len(scores) < 2:
             return 0.5
 
+        # 기존: 레이어 간 합의도
         score_std = float(np.std(scores))
         agreement = max(0.0, 1.0 - (score_std / 80.0))
 
@@ -265,7 +286,15 @@ class MarketIntelligence:
                        if not math.isnan(r.score)]
         avg_confidence = float(np.mean(confidences)) if confidences else 0.5
 
-        return round(min(1.0, agreement * avg_confidence), 2)
+        # 신규: 평균 데이터 신선도
+        freshness_vals = [r.avg_freshness for r in layer_results.values()
+                          if not math.isnan(r.score)]
+        avg_freshness = float(np.mean(freshness_vals)) if freshness_vals else 1.0
+
+        # 신규: 레이어 완전성 (5/5=1.0, 4/5=0.92, 3/5=0.84, 2/5=0.76)
+        completeness_factor = min(1.0, 0.6 + 0.08 * len(scores))
+
+        return round(min(1.0, agreement * avg_confidence * avg_freshness * completeness_factor), 2)
 
     @staticmethod
     def _normalize_news(news_data: Optional[Any]) -> Optional[List[Dict]]:

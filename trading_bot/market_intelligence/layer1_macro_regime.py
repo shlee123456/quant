@@ -91,6 +91,29 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
         valid_count = sum(1 for v in sub_scores.values() if not np.isnan(v))
         confidence = valid_count / len(self.weights)
 
+        # 데이터 신선도 계산
+        avg_freshness = 1.0
+        if cache is not None:
+            freshness_vals = []
+            # FRED 소스
+            fred_keys = ['yield_spread', 'credit_spread', 'manufacturing', 'fed_rate_2y']
+            if hasattr(cache, 'fred_freshness'):
+                for k in fred_keys:
+                    f = cache.fred_freshness(k)
+                    if f > 0:
+                        freshness_vals.append(f)
+            # ETF 소스
+            etf_syms = ['^TNX', '^FVX', 'TLT', 'SHY', 'HYG', 'IEI', 'UUP', 'XLI', 'IWM', 'SPY']
+            if hasattr(cache, 'freshness_multiplier'):
+                for s in etf_syms:
+                    f = cache.freshness_multiplier(s)
+                    if f > 0:
+                        freshness_vals.append(f)
+            if freshness_vals:
+                avg_freshness = sum(freshness_vals) / len(freshness_vals)
+
+        confidence = confidence * avg_freshness
+
         # 사이클 국면 감지
         cycle_phase = self._detect_cycle_phase(sub_scores, sub_details)
 
@@ -112,6 +135,9 @@ class MacroRegimeLayer(BaseIntelligenceLayer):
                 'cycle_phase': cycle_phase,
                 'weights': self.weights,
             },
+            avg_freshness=round(avg_freshness, 2),
+            data_symbols_used=valid_count,
+            data_symbols_expected=len(self.weights),
         )
 
     # ─── Sub-metric scoring ───

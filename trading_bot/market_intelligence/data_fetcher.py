@@ -229,6 +229,69 @@ class MarketDataCache:
         days_stale = max(0, (now - latest).days)
         return max(0.3, 1.0 - 0.1 * days_stale)
 
+    def avg_freshness_for_symbols(self, symbols: List[str]) -> float:
+        """여러 심볼의 평균 데이터 신선도.
+
+        데이터가 없는 심볼(freshness=0.0)은 평균에서 제외합니다.
+
+        Args:
+            symbols: 심볼 리스트
+
+        Returns:
+            0.0~1.0 평균 신선도. 모든 심볼에 데이터 없으면 1.0 (패널티 없음).
+        """
+        values = [self.freshness_multiplier(s) for s in symbols
+                  if self.freshness_multiplier(s) > 0.0]
+        return sum(values) / len(values) if values else 1.0
+
+    # FRED 시리즈 릴리스 주기별 분류
+    _FRED_MONTHLY_SERIES = frozenset({'manufacturing', 'consumer_sentiment'})
+    _FRED_WEEKLY_SERIES = frozenset({'unemployment'})
+
+    def fred_freshness(self, key: str) -> float:
+        """FRED 시리즈의 데이터 신선도.
+
+        릴리스 주기에 따라 감쇠율 차등 적용:
+        - 일간 시리즈: 0.1/day 감쇠, 하한 0.3
+        - 주간 시리즈: 0.05/day 감쇠, 하한 0.4
+        - 월간 시리즈: 0.02/day 감쇠, 하한 0.5
+
+        Args:
+            key: FRED 시리즈 키 (예: 'yield_spread', 'manufacturing')
+
+        Returns:
+            0.0 (데이터 없음) ~ 1.0 (당일 데이터)
+        """
+        series = self._fred_data.get(key)
+        if series is None or len(series) == 0:
+            return 0.0
+
+        latest = series.index[-1]
+        now = pd.Timestamp.now(tz='UTC')
+        if latest.tzinfo is None:
+            latest = latest.tz_localize('UTC')
+
+        days_stale = max(0, (now - latest).days)
+
+        if key in self._FRED_MONTHLY_SERIES:
+            return max(0.5, 1.0 - 0.02 * days_stale)
+        if key in self._FRED_WEEKLY_SERIES:
+            return max(0.4, 1.0 - 0.05 * days_stale)
+        return max(0.3, 1.0 - 0.1 * days_stale)
+
+    def avg_fred_freshness(self, keys: List[str]) -> float:
+        """여러 FRED 시리즈의 평균 신선도.
+
+        Args:
+            keys: FRED 시리즈 키 리스트
+
+        Returns:
+            0.0~1.0 평균 신선도. 데이터 있는 시리즈만 포함.
+        """
+        values = [self.fred_freshness(k) for k in keys
+                  if self._fred_data.get(k) is not None]
+        return sum(values) / len(values) if values else 1.0
+
     @property
     def available_symbols(self) -> List[str]:
         """캐시에 저장된 심볼 목록."""

@@ -109,6 +109,15 @@ class MarketStructureLayer(BaseIntelligenceLayer):
         valid_count = sum(1 for v in sub_scores.values() if not np.isnan(v))
         confidence = valid_count / len(self.weights)
 
+        # 데이터 신선도 계산
+        if cache is not None and hasattr(cache, 'avg_freshness_for_symbols'):
+            all_syms = ['^VIX', '^VIX3M', 'VIXY', 'VIXM'] + self.breadth_symbols + self.sector_symbols
+            avg_freshness = cache.avg_freshness_for_symbols(all_syms)
+        else:
+            avg_freshness = 1.0
+
+        confidence = confidence * avg_freshness
+
         signal = self.classify_score(composite)
         interpretation = self._interpret(composite, sub_details)
 
@@ -123,6 +132,9 @@ class MarketStructureLayer(BaseIntelligenceLayer):
                 'sub_details': sub_details,
                 'weights': self.weights,
             },
+            avg_freshness=round(avg_freshness, 2),
+            data_symbols_used=valid_count,
+            data_symbols_expected=len(self.weights),
         )
 
     # ─── Sub-metric scoring ───

@@ -78,7 +78,8 @@ class TestLayerResult:
         )
         d = result.to_dict()
         expected_keys = {'layer', 'score', 'signal', 'confidence',
-                         'metrics', 'interpretation', 'details'}
+                         'metrics', 'interpretation', 'details',
+                         'avg_freshness', 'data_completeness'}
         assert set(d.keys()) == expected_keys
 
 

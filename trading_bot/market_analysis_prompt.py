@@ -572,6 +572,7 @@ INTELLIGENCE_SECTION_TEMPLATE = r"""# 0.5 시장 인텔리전스 대시보드 {{
 ::: callout {{{{icon="🧠" color="blue_bg"}}}}
 	**종합 시장 점수**: {{score}} ({{signal}}) — {{interpretation}}
 :::
+__DATA_QUALITY_CALLOUT__
 ## 5-Layer 분석 결과
 <table fit-page-width="true" header-row="true">
 <tr color="blue_bg">
@@ -579,6 +580,7 @@ INTELLIGENCE_SECTION_TEMPLATE = r"""# 0.5 시장 인텔리전스 대시보드 {{
 <td>**점수**</td>
 <td>**시그널**</td>
 <td>**신뢰도**</td>
+<td>**신선도**</td>
 <td>**핵심 판단**</td>
 </tr>
 {{layer_rows}}
@@ -587,6 +589,45 @@ INTELLIGENCE_SECTION_TEMPLATE = r"""# 0.5 시장 인텔리전스 대시보드 {{
 {{layer_details}}
 ---
 """
+
+
+def _build_data_quality_callout(intelligence: dict) -> str:
+    """data_quality 딕셔너리에서 Notion Enhanced Markdown callout 문자열 생성."""
+    dq = intelligence.get('data_quality', {})
+    if not dq:
+        return ""
+
+    completeness = dq.get('layer_completeness', 1.0)
+    freshness = dq.get('avg_freshness', 1.0)
+    missing = dq.get('layers_missing', [])
+
+    if completeness >= 1.0 and freshness >= 0.8:
+        return (
+            '::: callout {{{{icon="✅" color="green_bg"}}}}\n'
+            f'\t**데이터 품질**: 5/5 레이어 완전, 평균 신선도 {freshness:.0%}\n'
+            ':::\n'
+        )
+
+    parts = []
+    if completeness < 1.0:
+        n = len(dq.get('layers_contributing', []))
+        parts.append(f"{n}/5 레이어만 분석에 기여")
+    if freshness < 0.8:
+        parts.append(f"평균 신선도 {freshness:.0%}")
+    if missing:
+        layer_kr = {
+            'macro_regime': '매크로', 'market_structure': '시장구조',
+            'sector_rotation': '섹터', 'enhanced_technicals': '기술적',
+            'sentiment': '심리',
+        }
+        names = [layer_kr.get(m, m) for m in missing]
+        parts.append(f"누락: {', '.join(names)}")
+
+    return (
+        '::: callout {{{{icon="⚠️" color="orange_bg"}}}}\n'
+        f'\t**데이터 품질 주의**: {"; ".join(parts)}\n'
+        ':::\n'
+    )
 
 
 def _build_intelligence_data_block(intelligence: dict) -> str:
@@ -625,8 +666,27 @@ def _build_intelligence_data_block(intelligence: dict) -> str:
         conf = data.get('confidence', 0)
         interp = data.get('interpretation', '')
         lines.append(f"\n### {name}")
-        lines.append(f"- 점수: {score:+.1f} ({signal}), 신뢰도: {conf:.0%}")
+        freshness = data.get('avg_freshness', 1.0)
+        lines.append(f"- 점수: {score:+.1f} ({signal}), 신뢰도: {conf:.0%}, 신선도: {freshness:.0%}")
         lines.append(f"- 판단: {interp}")
+
+    # 데이터 품질 요약
+    dq = intelligence.get('data_quality', {})
+    if dq:
+        lines.append(f"\n### 데이터 품질 요약")
+        contributing = len(dq.get('layers_contributing', []))
+        lines.append(f"- 레이어 완전성: {contributing}/5")
+        lines.append(f"- 평균 신선도: {dq.get('avg_freshness', 1.0):.0%}")
+
+        missing = dq.get('layers_missing', [])
+        if missing:
+            names = [layer_names_kr.get(m, m) for m in missing]
+            lines.append(f"- ⚠ 누락 레이어: {', '.join(names)}")
+
+        stale = {k: v for k, v in dq.get('per_layer_freshness', {}).items() if v < 0.8}
+        if stale:
+            for k, v in stale.items():
+                lines.append(f"- ⚠ {layer_names_kr.get(k, k)} 신선도: {v:.0%}")
 
     return "\n".join(lines)
 
@@ -1139,9 +1199,13 @@ def build_analysis_prompt(json_path: str, session_reports_dir: str = None) -> st
 
     # 인텔리전스 섹션 조건부 삽입 (매크로 섹션 다음, # 1. 앞)
     if has_intelligence:
+        dq_callout = _build_data_quality_callout(data['intelligence'])
+        intel_template = INTELLIGENCE_SECTION_TEMPLATE.replace(
+            '__DATA_QUALITY_CALLOUT__', dq_callout
+        )
         format_spec = format_spec.replace(
             "---\n# 1.",
-            "---\n" + INTELLIGENCE_SECTION_TEMPLATE + "# 1."
+            "---\n" + intel_template + "# 1."
         )
 
     prompt = f"""아래 JSON은 오늘의 트레이딩 세션 데이터입니다.

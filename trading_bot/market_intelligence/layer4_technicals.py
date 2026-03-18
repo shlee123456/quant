@@ -106,6 +106,16 @@ class TechnicalsLayer(BaseIntelligenceLayer):
 
         confidence = min(1.0, len(composite_scores) / max(len(stock_symbols), 1))
 
+        # 데이터 신선도 계산 (소스별 가중 블렌딩)
+        # stocks_data(실시간 KIS API): weight 0.46, cache(yfinance): weight 0.54
+        if cache is not None and hasattr(cache, 'avg_freshness_for_symbols'):
+            cache_freshness = cache.avg_freshness_for_symbols(stock_symbols)
+        else:
+            cache_freshness = 1.0
+        avg_freshness = 0.46 * 1.0 + 0.54 * cache_freshness
+
+        confidence = min(1.0, confidence * avg_freshness)
+
         interpretation = self._build_interpretation(
             avg_score, top_stocks, bottom_stocks
         )
@@ -125,6 +135,9 @@ class TechnicalsLayer(BaseIntelligenceLayer):
                 'top_stocks': top_stocks,
                 'bottom_stocks': bottom_stocks,
             },
+            avg_freshness=round(avg_freshness, 2),
+            data_symbols_used=len(composite_scores),
+            data_symbols_expected=len(stock_symbols),
         )
 
     # ──────────────────────────────────────────────────────────────

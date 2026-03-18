@@ -104,6 +104,16 @@ class SentimentLayer(BaseIntelligenceLayer):
         )
         confidence = valid_count / len(SUB_WEIGHTS)
 
+        # 데이터 신선도 계산 (외부 API + 캐시 ETF 블렌딩)
+        cache_syms = ['^VIX', 'VIXY', 'GLD', 'SPY']
+        if cache is not None and hasattr(cache, 'avg_freshness_for_symbols'):
+            cache_freshness = cache.avg_freshness_for_symbols(cache_syms)
+        else:
+            cache_freshness = 1.0
+        avg_freshness = 0.50 * 1.0 + 0.50 * cache_freshness
+
+        confidence = confidence * avg_freshness
+
         interpretation = self._build_interpretation(
             composite, details, metrics
         )
@@ -116,6 +126,9 @@ class SentimentLayer(BaseIntelligenceLayer):
             metrics={k: round(v, 1) for k, v in metrics.items()},
             interpretation=interpretation,
             details=details,
+            avg_freshness=round(avg_freshness, 2),
+            data_symbols_used=valid_count,
+            data_symbols_expected=len(SUB_WEIGHTS),
         )
 
     # ──────────────────────────────────────────────────────────────
