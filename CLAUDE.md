@@ -114,8 +114,14 @@ pip install -r requirements.txt 2>&1 | tee .context/terminal/install_$(date +%s)
 # 백테스트 예제 실행
 python examples/run_backtest_example.py 2>&1 | tee .context/terminal/backtest_$(date +%s).log
 
-# 일일 시장 분석 수동 실행
+# 미국 시장 분석 수동 실행
 python scripts/run_market_analysis.py 2>&1 | tee .context/terminal/market_analysis_$(date +%s).log
+
+# 한국 시장 분석 수동 실행
+python scripts/run_kr_market_analysis.py --skip-notion 2>&1 | tee .context/terminal/kr_market_analysis_$(date +%s).log
+
+# 한국 시장 노션 리포트 수동 실행
+python scripts/kr_notion_writer.py 2>&1 | tee .context/terminal/kr_notion_writer_$(date +%s).log
 
 # 스케줄러 (멀티 프리셋)
 python scheduler.py --presets "프리셋1" "프리셋2" 2>&1 | tee .context/terminal/scheduler_$(date +%s).log
@@ -601,6 +607,16 @@ Small edges disappear with commissions. Always include realistic fees.
 - ✅ LLM 시그널 필터 (LLMClient - vLLM 연동)
 - ✅ RegimeDetector (ADX 기반 시장 레짐 감지)
 
+### Phase 3.5: 국내(한국) 시장 분석 (✅ 완료 - 2026-03-18)
+- ✅ KR 데이터 인프라 (kr_holidays, kr_data_fetcher, bok_fetcher)
+- ✅ 5-Layer Intelligence KR 레이어 1/2/3/5 (매크로, 시장구조, 섹터, 감성)
+- ✅ 한글 뉴스 수집 (KRNewsCollector), 경제 이벤트 캘린더 (KREventCalendarCollector)
+- ✅ KRMarketAnalyzer + JSON 생성 (`data/market_analysis/{date}_kr.json`)
+- ✅ 한국 프롬프트 빌더 + 노션 리포트 (병렬 Worker A/B/C)
+- ✅ 스케줄러 KR 잡 통합 (15:50 KST, `KR_SCHEDULER_ENABLED`)
+- ✅ 대시보드 종목 DB (kr_stock_symbols.py, 53종목 + 7프리셋)
+- ✅ cron 자동화 (15:52 분석 + 16:03 노션)
+
 ### Phase 4: VBT 마이그레이션 (진행중)
 - ✅ VBTBacktester (vectorbt 기반 벡터화 백테스터)
 - 🔲 전략 VBT 포팅 완료
@@ -621,6 +637,7 @@ APScheduler를 사용하여 Paper Trading을 자동으로 실행합니다.
 - 미국 시장 시간에 자동 실행 (23:30-06:00 KST)
 - 장 마감 후 자동 종료 및 리포트 생성 (06:00 KST)
 - 장 마감 후 시장 분석 및 Notion 자동 작성 (06:10 KST)
+- 한국 시장 분석 (15:50 KST, `KR_SCHEDULER_ENABLED=true` 시)
 - 멀티 프리셋 동시 세션 지원 (--presets)
 - Slack/Email 알림 통합
 
@@ -638,9 +655,11 @@ python scheduler.py --list-presets
 - Email SMTP 설정 (선택)
 
 **스케줄**:
+- `15:50 KST`: 한국 시장 분석 + JSON 저장 (KR_SCHEDULER_ENABLED=true 시)
+- `16:00 KST`: 한국 노션 리포트 (호스트 cron)
 - `23:30 KST`: Paper Trading 시작 (미국 시장 개장)
 - `06:00 KST`: Paper Trading 종료 (미국 시장 마감)
-- `06:10 KST`: 시장 분석 + Notion 작성 (MarketAnalyzer + Claude CLI)
+- `06:10 KST`: 미국 시장 분석 + Notion 작성 (MarketAnalyzer + Claude CLI)
 
 **로그 파일**:
 - 경로: `logs/scheduler.log`
