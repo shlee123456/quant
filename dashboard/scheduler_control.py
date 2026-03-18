@@ -304,30 +304,38 @@ class SchedulerController:
             return [f"ERROR: 알 수 없는 오류 - {str(e)}"]
 
     def get_schedule_info(self) -> Dict[str, any]:
-        """
-        스케줄 정보 반환 (scheduler.py의 스케줄 정보)
+        """Get current schedule information with DST auto-detection."""
+        try:
+            from trading_bot.us_market_hours import get_market_hours_kst
+            hours = get_market_hours_kst()
+            label = hours['et_label']
+            dst_mode = '서머타임' if hours['is_dst'] else '윈터타임'
+            open_str = f"{hours['open']['hour']:02d}:{hours['open']['minute']:02d}"
+            close_str = f"{hours['close']['hour']:02d}:{hours['close']['minute']:02d}"
+        except ImportError:
+            label = 'ET'
+            dst_mode = '알 수 없음'
+            open_str = '??:??'
+            close_str = '??:??'
 
-        Returns:
-            Dict with schedule information
-        """
         return {
-            'timezone': 'Asia/Seoul (KST)',
+            'timezone': f'Asia/Seoul (KST) — {dst_mode} ({label})',
             'schedules': [
                 {
-                    'time': '23:30 KST',
+                    'time': f'{open_str} KST',
                     'job': '페이퍼 트레이딩 시작',
-                    'description': '미국 시장 개장 (정규장 23:30-06:00)'
+                    'description': f'미국 시장 개장 (정규장 {open_str}-{close_str})'
                 },
                 {
-                    'time': '06:00 KST',
+                    'time': f'{close_str} KST',
                     'job': '페이퍼 트레이딩 중지',
                     'description': '미국 시장 마감, 리포트 생성 및 Slack 전송'
                 }
             ],
             'market_hours': {
                 'name': 'US Stock Market',
-                'open': '23:30 KST (09:30 EST)',
-                'close': '06:00 KST (16:00 EST)',
+                'open': f'{open_str} KST (09:30 {label})',
+                'close': f'{close_str} KST (16:00 {label})',
                 'timezone': 'US/Eastern'
             }
         }

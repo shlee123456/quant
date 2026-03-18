@@ -2,8 +2,9 @@
 Automated Trading Scheduler
 
 Schedules paper trading sessions during US market hours:
-- Market open: 23:30 KST - Start paper trading
-- Market close: 06:00 KST - Stop trading and generate reports
+- Market open: 22:30 KST (EDT) / 23:30 KST (EST) - Start paper trading
+- Market close: 05:00 KST (EDT) / 06:00 KST (EST) - Stop trading and generate reports
+- DST auto-detection via pytz
 
 Usage:
     python scheduler.py
@@ -236,19 +237,19 @@ def main():
         logger.info("프리셋: 없음 (기본 설정 1개 세션)")
     if state.ctx.max_sessions > 0:
         logger.info(f"최대 세션 수: {state.ctx.max_sessions}")
-    logger.info("시간대: Asia/Seoul")
+    from trading_bot.us_market_hours import get_market_hours_kst, get_schedule_description
+    hours = get_market_hours_kst()
+    logger.info(f"시간대: Asia/Seoul (DST 자동 감지: {'서머타임 EDT' if hours['is_dst'] else '윈터타임 EST'})")
     logger.info("스케줄:")
-    logger.info("  23:30 KST - 페이퍼 트레이딩 시작")
-    logger.info("  06:00 KST - 트레이딩 중지 및 리포트")
-    logger.info("  06:10 KST - 시장 분석 + 노션 작성")
+    logger.info(get_schedule_description())
     logger.info("  매 60초 - 하트비트 + 제어 명령 폴링")
     logger.info("  매 2분 - 워치독 (스레드 감시)")
-    logger.info("  매일 06:05 - DB 유지보수 (다운샘플링+정리)")
+    logger.info(f"  매일 {hours['close_5m']['hour']:02d}:{hours['close_5m']['minute']:02d} - DB 유지보수 (다운샘플링+정리)")
     logger.info("=" * 60)
 
     # 스케줄 작업 추가
 
-    # 장 시작: 트레이딩 시작 (23:30 KST) - 공휴일/주말 건너뜀
+    # 장 시작: 트레이딩 시작 - 공휴일/주말 건너뜀
     def _scheduled_start():
         if not _is_trading_day():
             return
@@ -256,25 +257,25 @@ def main():
 
     scheduler.add_job(
         _scheduled_start,
-        CronTrigger(hour=23, minute=30),
+        CronTrigger(hour=hours['open']['hour'], minute=hours['open']['minute']),
         id='start_trading',
         name='페이퍼 트레이딩 시작',
         misfire_grace_time=300
     )
 
-    # 장 마감: 트레이딩 중지 (06:00 KST)
+    # 장 마감: 트레이딩 중지
     scheduler.add_job(
         stop_paper_trading,
-        CronTrigger(hour=6, minute=0),
+        CronTrigger(hour=hours['close']['hour'], minute=hours['close']['minute']),
         id='stop_trading',
         name='페이퍼 트레이딩 중지',
         misfire_grace_time=300
     )
 
-    # 장 마감 후: 시장 분석 + 노션 작성 (06:10 KST)
+    # 장 마감 후: 시장 분석 + 노션 작성 (마감 10분 후)
     scheduler.add_job(
         run_market_analysis,
-        CronTrigger(hour=6, minute=10),
+        CronTrigger(hour=hours['close_10m']['hour'], minute=hours['close_10m']['minute']),
         id='market_analysis',
         name='시장 분석 + 노션 작성',
         misfire_grace_time=600
@@ -300,12 +301,47 @@ def main():
         coalesce=True
     )
 
-    # 일간 DB 유지보수 (매일 06:05 KST, 장 마감 직후)
+    # 일간 DB 유지보수 (장 마감 5분 후)
     scheduler.add_job(
         _db_maintenance,
-        CronTrigger(hour=6, minute=5),
+        CronTrigger(hour=hours['close_5m']['hour'], minute=hours['close_5m']['minute']),
         id='db_maintenance',
         name='DB 유지보수',
+        misfire_grace_time=3600
+    )
+
+    # 매일 자정 DST 전환 체크 (연 2회 전환 자동 대응)
+    def _reschedule_if_dst_changed():
+        new_hours = get_market_hours_kst()
+        current_job = scheduler.get_job('start_trading')
+        if current_job is None:
+            return
+        # CronTrigger에서 현재 설정된 hour 추출
+        try:
+            current_hour = list(current_job.trigger.fields[5].expressions)[0].first
+        except (IndexError, AttributeError):
+            return
+        if current_hour != new_hours['open']['hour']:
+            logger.warning(
+                f"DST 전환 감지! 스케줄 재설정: "
+                f"개장 {current_hour}시 → {new_hours['open']['hour']}시"
+            )
+            from apscheduler.triggers.cron import CronTrigger as CT
+            scheduler.reschedule_job('start_trading', trigger=CT(
+                hour=new_hours['open']['hour'], minute=new_hours['open']['minute']))
+            scheduler.reschedule_job('stop_trading', trigger=CT(
+                hour=new_hours['close']['hour'], minute=new_hours['close']['minute']))
+            scheduler.reschedule_job('market_analysis', trigger=CT(
+                hour=new_hours['close_10m']['hour'], minute=new_hours['close_10m']['minute']))
+            scheduler.reschedule_job('db_maintenance', trigger=CT(
+                hour=new_hours['close_5m']['hour'], minute=new_hours['close_5m']['minute']))
+            logger.info("스케줄 재설정 완료")
+
+    scheduler.add_job(
+        _reschedule_if_dst_changed,
+        CronTrigger(hour=0, minute=0),
+        id='dst_check',
+        name='DST 전환 체크',
         misfire_grace_time=3600
     )
 
