@@ -376,8 +376,8 @@ def run_parallel_kr_notion_writer(json_path: str) -> bool:
         worker_name="Notion-Writer",
         prompt=notion_prompt,
         tools="mcp__claude_ai_Notion__*",
-        timeout=300,
-        max_budget=0.30,
+        timeout=600,
+        max_budget=0.60,
     )
     costs["Notion-Writer"] = notion_cost or 0.0
 
@@ -387,8 +387,8 @@ def run_parallel_kr_notion_writer(json_path: str) -> bool:
             worker_name="Notion-Writer",
             prompt=notion_prompt,
             tools="mcp__claude_ai_Notion__*",
-            timeout=600,
-            max_budget=0.60,
+            timeout=900,
+            max_budget=1.00,
         )
         costs["Notion-Writer"] = costs.get("Notion-Writer", 0) + (retry_cost or 0.0)
         if retry_ok:
@@ -410,11 +410,13 @@ def run_parallel_kr_notion_writer(json_path: str) -> bool:
 
     # 12. URL 검증
     import re
+    logger.debug(f"[Notion-Writer] 출력 내용: {notion_output[:500]}")
     notion_url_match = re.search(r'NOTION_PAGE_URL:\s*(https?://\S+)', notion_output)
     if not notion_url_match:
         notion_url_fallback = re.search(r'https://(?:www\.)?notion\.(?:so|site)/\S+', notion_output)
         if not notion_url_fallback:
             logger.error("Notion Writer 출력에 페이지 URL이 없습니다.")
+            logger.error(f"Notion Writer 출력 (앞 500자): {notion_output[:500]}")
             return False
         else:
             logger.info(f"Notion 페이지 URL (fallback): {notion_url_fallback.group()}")

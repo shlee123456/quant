@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 KR_LAYER_SYMBOLS: Dict[str, List[str]] = {
     'indices': ['^KS11', '^KQ11'],
-    'vix': ['^VKOSPI'],
+    'vix': [],  # ^VKOSPI는 Yahoo Finance 미지원 — VKOSPI 의존 레이어는 graceful degradation
     'breadth_stocks': [
         '005930.KS', '000660.KS', '005380.KS', '207940.KS', '373220.KS',
         '000270.KS', '005490.KS', '068270.KS', '105560.KS', '006400.KS',
@@ -122,6 +122,30 @@ class KRMarketDataCache(MarketDataCache):
                 return False
 
             self._parse_download_result(raw, all_symbols)
+
+            # 배치 다운로드에서 누락된 심볼 개별 재시도
+            missing = [s for s in all_symbols if s not in self._data]
+            if missing:
+                logger.info(f"KRMarketDataCache: {len(missing)}개 심볼 개별 재시도")
+                for sym in missing:
+                    try:
+                        single = yf.download(
+                            tickers=sym,
+                            period=self.period,
+                            interval=self.interval,
+                            progress=False,
+                        )
+                        if single is not None and not single.empty:
+                            if 'Close' in single.columns:
+                                single = single.dropna(subset=['Close'])
+                            if not single.empty:
+                                self._data[sym] = single
+                    except Exception:
+                        pass
+                retry_ok = len(missing) - len([s for s in missing if s not in self._data])
+                if retry_ok > 0:
+                    logger.info(f"KRMarketDataCache: 재시도로 {retry_ok}개 추가 복구")
+
             self._fetched = True
             logger.info(f"KRMarketDataCache: {len(self._data)}개 심볼 캐시 완료")
 

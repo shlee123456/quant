@@ -40,7 +40,7 @@ KR_WORKER_MODELS: Dict[str, str] = {
     'Worker-A': 'claude-sonnet-4-6',
     'Worker-B': 'claude-sonnet-4-6',
     'Worker-C': 'claude-haiku-4-5-20251001',
-    'Notion-Writer': 'claude-haiku-4-5-20251001',
+    'Notion-Writer': 'claude-sonnet-4-6',
 }
 
 # Notion Enhanced Markdown 포맷 규칙

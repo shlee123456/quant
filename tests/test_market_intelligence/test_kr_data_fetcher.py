@@ -36,9 +36,9 @@ class TestKRLayerSymbols:
         assert '^KS11' in KR_LAYER_SYMBOLS['indices']
         assert '^KQ11' in KR_LAYER_SYMBOLS['indices']
 
-    def test_vix_contains_vkospi(self):
-        """vix에 VKOSPI 포함."""
-        assert '^VKOSPI' in KR_LAYER_SYMBOLS['vix']
+    def test_vix_is_empty(self):
+        """vix는 빈 리스트 (Yahoo Finance 미지원)."""
+        assert KR_LAYER_SYMBOLS['vix'] == []
 
     def test_breadth_stocks_count(self):
         """breadth_stocks가 25개."""
@@ -86,7 +86,7 @@ class TestGetKRAllSymbols:
     def test_includes_key_symbols(self):
         """주요 심볼 포함 확인."""
         all_syms = _get_kr_all_symbols()
-        for sym in ['^KS11', '^KQ11', '^VKOSPI', '005930.KS', 'USDKRW=X']:
+        for sym in ['^KS11', '^KQ11', '005930.KS', 'USDKRW=X']:
             assert sym in all_syms
 
     def test_returns_list(self):
