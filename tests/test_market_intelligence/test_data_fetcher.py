@@ -69,7 +69,7 @@ class TestMarketDataCache:
     def test_init_defaults(self):
         """기본 초기화 값 확인."""
         cache = MarketDataCache()
-        assert cache.period == '6mo'
+        assert cache.period == '1y'
         assert cache.interval == '1d'
         assert cache.is_fetched is False
         assert cache.available_symbols == []

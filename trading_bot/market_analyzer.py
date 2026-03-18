@@ -794,7 +794,7 @@ class MarketAnalyzer:
         try:
             raw = yf.download(
                 all_symbols,
-                period='6mo',
+                period='1y',
                 interval='1d',
                 progress=False,
                 group_by='ticker',

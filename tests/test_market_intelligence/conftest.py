@@ -100,6 +100,10 @@ class MockCache:
         """테스트용 FRED 데이터 조회."""
         return self._fred_data.get(key)
 
+    def spy_ma200_status(self):
+        """테스트용 SPY MA200 상태."""
+        return {}
+
 
 def make_trending_cache(
     trend: float = 0.001,

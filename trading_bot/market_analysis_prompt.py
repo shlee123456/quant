@@ -573,6 +573,7 @@ INTELLIGENCE_SECTION_TEMPLATE = r"""# 0.5 시장 인텔리전스 대시보드 {{
 	**종합 시장 점수**: {{score}} ({{signal}}) — {{interpretation}}
 :::
 __DATA_QUALITY_CALLOUT__
+__SPY_MA200_CALLOUT__
 ## 5-Layer 분석 결과
 <table fit-page-width="true" header-row="true">
 <tr color="blue_bg">
@@ -626,6 +627,30 @@ def _build_data_quality_callout(intelligence: dict) -> str:
     return (
         '::: callout {{{{icon="⚠️" color="orange_bg"}}}}\n'
         f'\t**데이터 품질 주의**: {"; ".join(parts)}\n'
+        ':::\n'
+    )
+
+
+def _build_spy_ma200_callout(intelligence: dict) -> str:
+    """SPY MA200 장기 추세 Notion callout 생성."""
+    spy = intelligence.get('spy_weekly_trend', {})
+    if not spy:
+        return ""
+
+    above = spy.get('above_ma200', True)
+    distance = spy.get('distance_pct', 0)
+    price = spy.get('current_price', 0)
+    ma200 = spy.get('ma200', 0)
+
+    if above:
+        return (
+            '::: callout {{{{icon="📈" color="green_bg"}}}}\n'
+            f'\t**장기 추세**: SPY ${price} > MA200 ${ma200} ({distance:+.1f}%) — 상승 추세 유지\n'
+            ':::\n'
+        )
+    return (
+        '::: callout {{{{icon="📉" color="red_bg"}}}}\n'
+        f'\t**장기 추세 경고**: SPY ${price} < MA200 ${ma200} ({distance:+.1f}%) — 하락 추세, 단기 반등 주의\n'
         ':::\n'
     )
 
@@ -687,6 +712,22 @@ def _build_intelligence_data_block(intelligence: dict) -> str:
         if stale:
             for k, v in stale.items():
                 lines.append(f"- ⚠ {layer_names_kr.get(k, k)} 신선도: {v:.0%}")
+
+    # SPY 장기 추세
+    spy_trend = intelligence.get('spy_weekly_trend', {})
+    if spy_trend:
+        above = spy_trend.get('above_ma200', True)
+        distance = spy_trend.get('distance_pct', 0)
+        price = spy_trend.get('current_price', 0)
+        ma200 = spy_trend.get('ma200', 0)
+        regime_kr = '장기 상승 추세' if above else '장기 하락 추세'
+        direction = '위' if above else '아래'
+
+        lines.append(f"\n### SPY 장기 추세 (MA200)")
+        lines.append(f"- SPY 현재가: ${price}, MA200: ${ma200}")
+        lines.append(f"- MA200 {direction} ({distance:+.1f}%) → **{regime_kr}**")
+        if not above:
+            lines.append(f"- ⚠ 장기 하락 추세에서의 단기 bullish 신호는 데드캣 바운스 가능성 고려")
 
     return "\n".join(lines)
 
@@ -1200,8 +1241,11 @@ def build_analysis_prompt(json_path: str, session_reports_dir: str = None) -> st
     # 인텔리전스 섹션 조건부 삽입 (매크로 섹션 다음, # 1. 앞)
     if has_intelligence:
         dq_callout = _build_data_quality_callout(data['intelligence'])
+        ma200_callout = _build_spy_ma200_callout(data['intelligence'])
         intel_template = INTELLIGENCE_SECTION_TEMPLATE.replace(
             '__DATA_QUALITY_CALLOUT__', dq_callout
+        ).replace(
+            '__SPY_MA200_CALLOUT__', ma200_callout
         )
         format_spec = format_spec.replace(
             "---\n# 1.",

@@ -63,14 +63,14 @@ class MarketIntelligence:
     5개 레이어를 순차적으로 실행하여 종합 리포트를 생성합니다.
 
     Args:
-        period: yfinance 조회 기간 (기본 '6mo')
+        period: yfinance 조회 기간 (기본 '1y', MA200에 200거래일 필요)
         interval: yfinance 조회 간격 (기본 '1d')
         layer_weights: 레이어별 가중치 (기본: LAYER_WEIGHTS)
     """
 
     def __init__(
         self,
-        period: str = '6mo',
+        period: str = '1y',
         interval: str = '1d',
         layer_weights: Optional[Dict[str, float]] = None,
         fred_api_key: Optional[str] = None,
@@ -197,6 +197,11 @@ class MarketIntelligence:
 
         # Meta-confidence 계산
         report['overall']['meta_confidence'] = self._compute_meta_confidence(layer_results)
+
+        # SPY 장기 추세 (MA200)
+        spy_trend = self.cache.spy_ma200_status()
+        if spy_trend:
+            report['spy_weekly_trend'] = spy_trend
 
         # 데이터 품질 메타데이터
         import math as _math

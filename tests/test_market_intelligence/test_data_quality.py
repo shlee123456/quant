@@ -11,6 +11,9 @@ from trading_bot.market_intelligence.data_fetcher import MarketDataCache
 from trading_bot.market_intelligence.market_analysis_prompt import (
     _build_data_quality_callout,
 )
+from trading_bot.market_analysis_prompt import (
+    _build_spy_ma200_callout,
+)
 from .conftest import MockCache, make_trending_cache
 
 
@@ -197,3 +200,72 @@ class TestDataQualityCallout:
         """data_quality 없으면 빈 문자열."""
         result = _build_data_quality_callout({})
         assert result == ""
+
+
+# ── SPY MA200 테스트 ──
+
+class TestSpyMa200Status:
+    def test_spy_above_ma200(self):
+        """SPY가 MA200 위일 때 long_term_bullish."""
+        cache = MarketDataCache()
+        cache._fred_data = {}
+        dates = pd.date_range(end=pd.Timestamp.now(), periods=250, freq='B')
+        prices = 400 + np.arange(250) * 0.5
+        cache._data = {'SPY': pd.DataFrame({'Close': prices}, index=dates)}
+        result = cache.spy_ma200_status()
+        assert result['above_ma200'] is True
+        assert result['regime'] == 'long_term_bullish'
+        assert result['distance_pct'] > 0
+
+    def test_spy_below_ma200(self):
+        """SPY가 MA200 아래일 때 long_term_bearish."""
+        cache = MarketDataCache()
+        cache._fred_data = {}
+        dates = pd.date_range(end=pd.Timestamp.now(), periods=250, freq='B')
+        prices = 500 - np.arange(250) * 0.5
+        cache._data = {'SPY': pd.DataFrame({'Close': prices}, index=dates)}
+        result = cache.spy_ma200_status()
+        assert result['above_ma200'] is False
+        assert result['regime'] == 'long_term_bearish'
+        assert result['distance_pct'] < 0
+
+    def test_spy_insufficient_data(self):
+        """데이터 부족(< 200일) 시 빈 딕셔너리."""
+        cache = MarketDataCache()
+        cache._fred_data = {}
+        dates = pd.date_range(end=pd.Timestamp.now(), periods=100, freq='B')
+        cache._data = {'SPY': pd.DataFrame({'Close': range(100)}, index=dates)}
+        assert cache.spy_ma200_status() == {}
+
+    def test_spy_no_data(self):
+        """SPY 데이터 없으면 빈 딕셔너리."""
+        cache = MarketDataCache()
+        cache._data = {}
+        cache._fred_data = {}
+        assert cache.spy_ma200_status() == {}
+
+
+class TestSpyMa200Callout:
+    def test_bullish_callout(self):
+        """MA200 위 → 녹색 callout."""
+        intel = {'spy_weekly_trend': {
+            'above_ma200': True, 'current_price': 500,
+            'ma200': 480, 'distance_pct': 4.2
+        }}
+        result = _build_spy_ma200_callout(intel)
+        assert '📈' in result
+        assert 'green_bg' in result
+
+    def test_bearish_callout(self):
+        """MA200 아래 → 빨간 callout."""
+        intel = {'spy_weekly_trend': {
+            'above_ma200': False, 'current_price': 450,
+            'ma200': 480, 'distance_pct': -6.3
+        }}
+        result = _build_spy_ma200_callout(intel)
+        assert '📉' in result
+        assert 'red_bg' in result
+
+    def test_no_data_callout(self):
+        """데이터 없으면 빈 문자열."""
+        assert _build_spy_ma200_callout({}) == ""

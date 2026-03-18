@@ -6,7 +6,7 @@ Centralized yfinance data downloader for Market Intelligence layers.
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -62,11 +62,11 @@ class MarketDataCache:
     레이어별로 필요한 데이터를 get()/get_many()로 조회합니다.
 
     Args:
-        period: yfinance 조회 기간 (기본 '6mo')
+        period: yfinance 조회 기간 (기본 '1y', MA200 계산에 200거래일 필요)
         interval: yfinance 조회 간격 (기본 '1d')
     """
 
-    def __init__(self, period: str = '6mo', interval: str = '1d', fred_fetcher=None):
+    def __init__(self, period: str = '1y', interval: str = '1d', fred_fetcher=None):
         self.period = period
         self.interval = interval
         self._data: Dict[str, pd.DataFrame] = {}
@@ -291,6 +291,44 @@ class MarketDataCache:
         values = [self.fred_freshness(k) for k in keys
                   if self._fred_data.get(k) is not None]
         return sum(values) / len(values) if values else 1.0
+
+    def spy_ma200_status(self) -> Dict[str, Any]:
+        """SPY 200일 이동평균 기준 장기 추세 판정.
+
+        Returns:
+            {
+                'above_ma200': bool,
+                'current_price': float,
+                'ma200': float,
+                'distance_pct': float,
+                'regime': str,
+            }
+            데이터 부족(< 200일) 시 빈 딕셔너리.
+        """
+        spy_df = self._data.get('SPY')
+        if spy_df is None or spy_df.empty:
+            return {}
+
+        close = None
+        for col in ('Close', 'close', 'Adj Close'):
+            if col in spy_df.columns:
+                close = spy_df[col].dropna()
+                break
+        if close is None or len(close) < 200:
+            return {}
+
+        current_price = float(close.iloc[-1])
+        ma200 = float(close.rolling(200).mean().iloc[-1])
+        above = current_price > ma200
+        distance_pct = round((current_price - ma200) / ma200 * 100, 2)
+
+        return {
+            'above_ma200': above,
+            'current_price': round(current_price, 2),
+            'ma200': round(ma200, 2),
+            'distance_pct': distance_pct,
+            'regime': 'long_term_bullish' if above else 'long_term_bearish',
+        }
 
     @property
     def available_symbols(self) -> List[str]:
