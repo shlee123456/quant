@@ -77,6 +77,74 @@ def _build_intelligence_block(intelligence_data: Optional[Dict]) -> str:
     return "\n".join(lines)
 
 
+def _build_data_quality_block(intelligence_data: dict) -> str:
+    """데이터 품질 메타데이터를 마크다운 블록으로 변환."""
+    if not intelligence_data:
+        return ""
+
+    intel = intelligence_data.get("intelligence", intelligence_data)
+    dq = intel.get("data_quality", {})
+    if not dq:
+        return ""
+
+    lines = ["### 📊 데이터 품질"]
+    completeness = dq.get("layer_completeness", 1.0)
+    freshness = dq.get("avg_freshness", 1.0)
+    contributing = len(dq.get("layers_contributing", []))
+    missing = dq.get("layers_missing", [])
+
+    lines.append(f"- 레이어 완전성: {contributing}/5 ({completeness:.0%})")
+    lines.append(f"- 평균 데이터 신선도: {freshness:.0%}")
+
+    if missing:
+        layer_kr = {
+            'macro_regime': '매크로', 'market_structure': '시장구조',
+            'sector_rotation': '섹터', 'enhanced_technicals': '기술적',
+            'sentiment': '심리',
+        }
+        names = [layer_kr.get(m, m) for m in missing]
+        lines.append(f"- ⚠ 누락 레이어: {', '.join(names)}")
+
+    per_fresh = dq.get("per_layer_freshness", {})
+    stale = {k: v for k, v in per_fresh.items() if v < 0.8}
+    if stale:
+        layer_kr = {
+            'macro_regime': '매크로', 'market_structure': '시장구조',
+            'sector_rotation': '섹터', 'enhanced_technicals': '기술적',
+            'sentiment': '심리',
+        }
+        for k, v in stale.items():
+            lines.append(f"- ⚠ {layer_kr.get(k, k)} 신선도 낮음: {v:.0%}")
+
+    return "\n".join(lines)
+
+
+def _build_spy_ma200_block(intelligence_data: dict) -> str:
+    """SPY MA200 장기 추세 정보를 마크다운 블록으로 변환."""
+    if not intelligence_data:
+        return ""
+
+    intel = intelligence_data.get("intelligence", intelligence_data)
+    spy = intel.get("spy_weekly_trend", {})
+    if not spy:
+        return ""
+
+    above = spy.get("above_ma200", True)
+    price = spy.get("current_price", 0)
+    ma200 = spy.get("ma200", 0)
+    distance = spy.get("distance_pct", 0)
+    regime = "장기 상승 추세" if above else "장기 하락 추세"
+    direction = "위" if above else "아래"
+
+    lines = ["### 📈 SPY 장기 추세 (MA200)"]
+    lines.append(f"- SPY 현재가: ${price}, MA200: ${ma200}")
+    lines.append(f"- MA200 {direction} ({distance:+.1f}%) → **{regime}**")
+    if not above:
+        lines.append("- ⚠ 장기 하락 추세: 단기 bullish 신호는 데드캣 바운스 가능성 고려")
+
+    return "\n".join(lines)
+
+
 def _build_intelligence_summary(intelligence_data: Optional[Dict]) -> str:
     """인텔리전스 데이터의 간략 요약 (Worker B/C 용)."""
     if not intelligence_data:
@@ -867,6 +935,8 @@ class PromptDataBuilder:
             "section_note": section_note,
             "fact_sheet_block": fact_sheet_block,
             "trend_block": trend_block,
+            "data_quality_block": _build_data_quality_block(intelligence_data),
+            "spy_ma200_block": _build_spy_ma200_block(intelligence_data),
         }
 
     def build_worker_b_context(
@@ -1024,6 +1094,8 @@ class PromptDataBuilder:
             "news_block": news_block,
             "fg_block": fg_block,
             "fact_sheet_block": fact_sheet_block,
+            "data_quality_block": _build_data_quality_block(intelligence_data),
+            "spy_ma200_block": _build_spy_ma200_block(intelligence_data),
         }
 
         return ctx, top3_symbols
@@ -1097,6 +1169,8 @@ class PromptDataBuilder:
             "fact_sheet_block": fact_sheet_block,
             "trend_block": trend_block,
             "scorecard_block": scorecard_block,
+            "data_quality_block": _build_data_quality_block(intelligence_data),
+            "spy_ma200_block": _build_spy_ma200_block(intelligence_data),
         }
 
     def build_notion_writer_context(

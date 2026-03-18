@@ -25,7 +25,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from trading_bot.market_analyzer import MarketAnalyzer
-from trading_bot.market_analysis_prompt import build_analysis_prompt
 from trading_bot.brokers import KoreaInvestmentBroker
 
 logging.basicConfig(
@@ -52,6 +51,25 @@ def create_broker() -> KoreaInvestmentBroker:
         user_id=user_id,
         mock=mock,
     )
+
+
+def _run_legacy_notion(json_path: str, session_reports_dir: str = None):
+    """레거시 단일 프롬프트 Notion 작성 (폴백용)."""
+    try:
+        from trading_bot.market_analysis_prompt import build_analysis_prompt
+        prompt = build_analysis_prompt(json_path, session_reports_dir)
+        proc = subprocess.run(
+            ["claude", "-p", "--model", "claude-sonnet-4-6",
+             "--allowedTools", "mcp__claude_ai_Notion__*,Read,WebSearch"],
+            input=prompt, capture_output=True, text=True, timeout=300,
+            env={**os.environ},
+        )
+        if proc.returncode == 0:
+            logger.info("레거시 Notion 작성 완료")
+        else:
+            logger.error(f"레거시 Notion 작성 실패 (code={proc.returncode})")
+    except Exception as e:
+        logger.error(f"레거시 Notion 작성 에러: {e}")
 
 
 def main():
@@ -199,33 +217,30 @@ def main():
         logger.info(f"완료. JSON: {json_path}")
         return
 
-    logger.info("Claude CLI로 노션 페이지 작성 중...")
-    prompt = build_analysis_prompt(json_path)
-
+    logger.info("Notion Writer (병렬 시스템)로 노션 페이지 작성 중...")
+    notion_cmd = [
+        sys.executable, os.path.join(os.path.dirname(__file__), 'notion_writer.py'),
+    ]
     try:
-        env = {k: v for k, v in os.environ.items() if k != 'CLAUDECODE'}
         proc = subprocess.run(
-            ["claude", "-p", "--model", "claude-sonnet-4-6", "--allowedTools", "mcp__claude_ai_Notion__*,Read,WebSearch"],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            env=env,
+            notion_cmd,
+            capture_output=True, text=True, timeout=600,
+            env={**os.environ},
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         )
-
         if proc.returncode == 0:
-            logger.info("노션 페이지 작성 성공")
-            if proc.stdout:
-                logger.info(f"Claude 응답:\n{proc.stdout[:500]}")
+            logger.info("Notion 페이지 작성 완료 (병렬 시스템)")
         else:
-            logger.error(f"노션 작성 실패 (returncode={proc.returncode})")
-            if proc.stderr:
-                logger.error(f"stderr: {proc.stderr[:500]}")
-
+            logger.warning(f"Notion Writer 실패 (code={proc.returncode}), 레거시 폴백 시도...")
+            logger.warning(f"stderr: {proc.stderr[:500] if proc.stderr else 'N/A'}")
+            # Legacy fallback
+            _run_legacy_notion(json_path, session_reports_dir=None)
     except subprocess.TimeoutExpired:
-        logger.error("Claude CLI 타임아웃 (300초 초과)")
+        logger.error("Notion Writer 타임아웃 (600초)")
+        _run_legacy_notion(json_path, session_reports_dir=None)
     except FileNotFoundError:
-        logger.error("claude CLI를 찾을 수 없습니다. Claude Code가 설치되어 있는지 확인하세요.")
+        logger.warning("notion_writer.py 미발견, 레거시 폴백...")
+        _run_legacy_notion(json_path, session_reports_dir=None)
 
     logger.info(f"완료. JSON: {json_path}")
 
