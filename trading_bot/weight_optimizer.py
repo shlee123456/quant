@@ -15,8 +15,11 @@
     print(opt_result.recommendation)
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -337,3 +340,36 @@ class WeightOptimizer:
             lines.append("권고: 기존 가중치 유지.")
 
         return "\n".join(lines)
+
+
+WEIGHTS_PATH = Path('data/optimized_weights.json')
+
+
+def save_weights(result: OptimizationResult) -> Path:
+    """최적화 결과를 JSON으로 저장."""
+    payload = {
+        'weights': result.optimal_weights,
+        'oos_ic': result.oos_ic,
+        'current_ic': result.current_ic,
+        'improvement_pct': result.improvement_pct,
+        'stability_score': result.stability_score,
+        'is_improvement': result.is_improvement,
+        'recommendation': result.recommendation,
+        'saved_at': datetime.now().isoformat(),
+    }
+    WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    WEIGHTS_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+    return WEIGHTS_PATH
+
+
+def load_weights() -> Optional[Dict[str, float]]:
+    """저장된 최적화 가중치 로드. 없거나 is_improvement=False면 None."""
+    if not WEIGHTS_PATH.exists():
+        return None
+    try:
+        payload = json.loads(WEIGHTS_PATH.read_text())
+        if not payload.get('is_improvement', False):
+            return None
+        return payload.get('weights')
+    except (json.JSONDecodeError, KeyError):
+        return None

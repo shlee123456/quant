@@ -17,7 +17,11 @@ import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
-import feedparser
+try:
+    import feedparser
+    _has_feedparser = True
+except ImportError:
+    _has_feedparser = False
 import requests
 
 logger = logging.getLogger(__name__)
@@ -39,6 +43,10 @@ class NewsCollector:
             request_delay: RSS 요청 간 대기 시간(초), rate limit 방지
             finnhub_api_key: Finnhub API 키 (없으면 환경변수 FINNHUB_API_KEY 사용)
         """
+        if not _has_feedparser:
+            raise ImportError(
+                "feedparser 패키지가 필요합니다. 설치: pip install feedparser"
+            )
         self.request_delay = request_delay
         self.finnhub_api_key = finnhub_api_key or os.getenv('FINNHUB_API_KEY')
 

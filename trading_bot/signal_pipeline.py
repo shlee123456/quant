@@ -165,7 +165,7 @@ class SignalPipeline:
         """
         try:
             min_accuracy = self._context_filter_config.get('min_accuracy', 35.0)
-            min_sample_size = self._context_filter_config.get('min_sample_size', 5)
+            min_sample_size = self._context_filter_config.get('min_sample_size', 30)
 
             # 1. Scorecard 캐시 (일 1회 갱신)
             today = datetime.now().strftime('%Y-%m-%d')

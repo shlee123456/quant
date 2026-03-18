@@ -84,7 +84,16 @@ class MarketIntelligence:
             period=period, interval=interval,
             fred_fetcher=self._fred_fetcher,
         )
-        self.weights = layer_weights or LAYER_WEIGHTS.copy()
+        if layer_weights:
+            self.weights = layer_weights
+        else:
+            from trading_bot.weight_optimizer import load_weights
+            optimized = load_weights()
+            if optimized:
+                self.weights = optimized
+                logger.info(f"최적화 가중치 로드: {optimized}")
+            else:
+                self.weights = LAYER_WEIGHTS.copy()
 
         # 5개 레이어 초기화
         self.layers: Dict[str, BaseIntelligenceLayer] = {

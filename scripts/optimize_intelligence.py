@@ -59,9 +59,12 @@ def main():
     print("=" * 50)
 
     if opt_result.is_improvement:
-        print("\n적용 방법:")
-        print("trading_bot/market_intelligence/__init__.py의 LAYER_WEIGHTS를 아래로 변경:")
-        print(f"LAYER_WEIGHTS = {opt_result.optimal_weights}")
+        from trading_bot.weight_optimizer import save_weights
+        path = save_weights(opt_result)
+        print(f"\n최적화 가중치 저장: {path}")
+        print("다음 MarketIntelligence 실행 시 자동 적용됩니다.")
+    else:
+        print("\n개선 미달 — 기존 가중치 유지")
 
     sys.exit(0)
 

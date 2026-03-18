@@ -155,7 +155,7 @@ class PaperTrader:
         context_filter_config = {
             'enabled': os.getenv('CONTEXT_FILTER_ENABLED', 'false').lower() == 'true',
             'min_accuracy': float(os.getenv('CONTEXT_FILTER_MIN_ACCURACY', '35')),
-            'min_sample_size': int(os.getenv('CONTEXT_FILTER_MIN_SAMPLE_SIZE', '5')),
+            'min_sample_size': int(os.getenv('CONTEXT_FILTER_MIN_SAMPLE_SIZE', '30')),
         }
 
         self._signal_pipeline = SignalPipeline(
