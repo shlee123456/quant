@@ -8,15 +8,14 @@ Layer 4: Enhanced Technicals (개별 종목 기술적 분석)
 Layer 5: Sentiment & Positioning (심리 + 포지셔닝)
 
 Usage:
+    # US market (default)
     from trading_bot.market_intelligence import MarketIntelligence
-
     mi = MarketIntelligence()
-    report = mi.analyze(
-        stock_symbols=['AAPL', 'MSFT'],
-        stocks_data=result.get('stocks', {}),
-        news_data=result.get('news'),
-        fear_greed_data=result.get('fear_greed_index'),
-    )
+    report = mi.analyze(stock_symbols=['AAPL', 'MSFT'], ...)
+
+    # KR market
+    mi_kr = MarketIntelligence(market='kr')
+    report = mi_kr.analyze(stock_symbols=['005930.KS'], ...)
 """
 
 import logging
@@ -42,6 +41,9 @@ from .layer2_market_structure import MarketStructureLayer
 from .layer3_sector_rotation import SectorRotationLayer
 from .layer4_technicals import TechnicalsLayer
 from .layer5_sentiment import SentimentLayer
+from .kr_layer1_macro_regime import KRMacroRegimeLayer
+from .kr_layer2_market_structure import KRMarketStructureLayer
+from .kr_layer3_sector_rotation import KRSectorRotationLayer
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,7 @@ class MarketIntelligence:
         period: yfinance 조회 기간 (기본 '1y', MA200에 200거래일 필요)
         interval: yfinance 조회 간격 (기본 '1d')
         layer_weights: 레이어별 가중치 (기본: LAYER_WEIGHTS)
+        market: 'us' 또는 'kr' (기본: 'us')
     """
 
     def __init__(
@@ -74,8 +77,23 @@ class MarketIntelligence:
         interval: str = '1d',
         layer_weights: Optional[Dict[str, float]] = None,
         fred_api_key: Optional[str] = None,
+        market: str = 'us',
     ):
-        # FRED 초기화
+        self.market = market
+
+        if market == 'kr':
+            self._init_kr(period, interval, layer_weights)
+        else:
+            self._init_us(period, interval, layer_weights, fred_api_key)
+
+    def _init_us(
+        self,
+        period: str,
+        interval: str,
+        layer_weights: Optional[Dict[str, float]],
+        fred_api_key: Optional[str],
+    ) -> None:
+        """US 마켓 초기화."""
         from .fred_fetcher import FREDDataFetcher
         self._fred_fetcher = FREDDataFetcher(api_key=fred_api_key)
 
@@ -88,18 +106,76 @@ class MarketIntelligence:
             self.weights = layer_weights
         else:
             from trading_bot.weight_optimizer import load_weights
-            optimized = load_weights()
+            optimized = load_weights(market='us')
             if optimized:
                 self.weights = optimized
-                logger.info(f"최적화 가중치 로드: {optimized}")
+                logger.info(f"US 최적화 가중치 로드: {optimized}")
             else:
                 self.weights = LAYER_WEIGHTS.copy()
 
-        # 5개 레이어 초기화
+        # 5개 레이어 초기화 (US)
         self.layers: Dict[str, BaseIntelligenceLayer] = {
             'macro_regime': MacroRegimeLayer(),
             'market_structure': MarketStructureLayer(),
             'sector_rotation': SectorRotationLayer(),
+            'enhanced_technicals': TechnicalsLayer(),
+            'sentiment': SentimentLayer(),
+        }
+
+        self._bok_fetcher = None
+        self._kr_cache = None
+
+    def _init_kr(
+        self,
+        period: str,
+        interval: str,
+        layer_weights: Optional[Dict[str, float]],
+    ) -> None:
+        """KR 마켓 초기화.
+
+        KR 전용 레이어(1~3)와 공통 레이어(4 Technicals)를 사용합니다.
+        BOKDataFetcher, KRMarketDataCache가 있으면 사용하고,
+        없으면 기본 MarketDataCache로 graceful degradation합니다.
+        """
+        # BOK 데이터 페처 (lazy import, 없으면 None)
+        self._bok_fetcher = None
+        try:
+            from .bok_fetcher import BOKDataFetcher
+            self._bok_fetcher = BOKDataFetcher()
+        except (ImportError, Exception) as e:
+            logger.info(f"BOKDataFetcher 사용 불가 (graceful degradation): {e}")
+
+        # KR 데이터 캐시 (lazy import, 없으면 기본 MarketDataCache 사용)
+        self._kr_cache = None
+        try:
+            from .kr_data_fetcher import KRMarketDataCache
+            self._kr_cache = KRMarketDataCache(period=period, interval=interval)
+        except (ImportError, Exception) as e:
+            logger.info(f"KRMarketDataCache 사용 불가, 기본 MarketDataCache 사용: {e}")
+
+        # 캐시 설정: KR 전용 캐시 우선, 없으면 기본 캐시
+        if self._kr_cache is not None:
+            self.cache = self._kr_cache
+        else:
+            self.cache = MarketDataCache(period=period, interval=interval)
+
+        # 가중치 로드
+        if layer_weights:
+            self.weights = layer_weights
+        else:
+            from trading_bot.weight_optimizer import load_weights
+            optimized = load_weights(market='kr')
+            if optimized:
+                self.weights = optimized
+                logger.info(f"KR 최적화 가중치 로드: {optimized}")
+            else:
+                self.weights = LAYER_WEIGHTS.copy()
+
+        # KR 레이어 (1~3) + 공통 레이어 (4 Technicals, 5 Sentiment)
+        self.layers: Dict[str, BaseIntelligenceLayer] = {
+            'macro_regime': KRMacroRegimeLayer(),
+            'market_structure': KRMarketStructureLayer(),
+            'sector_rotation': KRSectorRotationLayer(),
             'enhanced_technicals': TechnicalsLayer(),
             'sentiment': SentimentLayer(),
         }
@@ -149,6 +225,10 @@ class MarketIntelligence:
             'fear_greed': fg_for_layer,
             'stock_symbols': stock_symbols,
         }
+
+        # KR 마켓인 경우 BOK 데이터 페처 추가
+        if self.market == 'kr' and self._bok_fetcher is not None:
+            context['bok_fetcher'] = self._bok_fetcher
 
         # Step 3: 각 레이어 분석
         layer_results: Dict[str, LayerResult] = {}
@@ -207,10 +287,15 @@ class MarketIntelligence:
         # Meta-confidence 계산
         report['overall']['meta_confidence'] = self._compute_meta_confidence(layer_results)
 
-        # SPY 장기 추세 (MA200)
-        spy_trend = self.cache.spy_ma200_status()
-        if spy_trend:
-            report['spy_weekly_trend'] = spy_trend
+        # 장기 추세 (MA200): market에 따라 SPY 또는 KOSPI200
+        if self.market == 'kr':
+            kospi_trend = self._kospi_ma200_status()
+            if kospi_trend:
+                report['kospi_weekly_trend'] = kospi_trend
+        else:
+            spy_trend = self.cache.spy_ma200_status()
+            if spy_trend:
+                report['spy_weekly_trend'] = spy_trend
 
         # 데이터 품질 메타데이터
         import math as _math
@@ -242,7 +327,7 @@ class MarketIntelligence:
     def _compute_dynamic_weights(self, layer_results: Dict[str, LayerResult]) -> Dict[str, float]:
         """레짐에 따라 레이어 가중치를 동적으로 조절.
 
-        Layer 1의 cycle_phase와 Layer 2의 VIX 점수를 기반으로
+        Layer 1의 cycle_phase와 Layer 2의 VIX/VKOSPI 점수를 기반으로
         시장 상황에 맞게 가중치를 재조정합니다.
         """
         import math
@@ -254,20 +339,21 @@ class MarketIntelligence:
         if l1 and l1.details and not math.isnan(l1.score):
             cycle = l1.details.get('cycle_phase', 'unknown')
 
-        # Layer 2에서 VIX 점수 추출
+        # Layer 2에서 VIX/VKOSPI 점수 추출
         l2 = layer_results.get('market_structure')
-        vix_score = 0
+        vol_score = 0
         if l2 and l2.metrics and not math.isnan(l2.score):
-            vix_score = l2.metrics.get('vix_level', 0)
+            # US: vix_level, KR: vkospi_level
+            vol_score = l2.metrics.get('vix_level', l2.metrics.get('vkospi_level', 0))
 
-        if cycle == 'contraction' or vix_score < -30:
+        if cycle == 'contraction' or vol_score < -30:
             # 위기/고변동성: 매크로 + 센티먼트 중시
             weights['macro_regime'] = 0.30
             weights['sentiment'] = 0.25
             weights['enhanced_technicals'] = 0.15
             weights['market_structure'] = 0.15
             weights['sector_rotation'] = 0.15
-        elif cycle == 'expansion' and vix_score > 20:
+        elif cycle == 'expansion' and vol_score > 20:
             # 안정적 확장: 기술적 + 섹터 중시
             weights['enhanced_technicals'] = 0.30
             weights['sector_rotation'] = 0.20
@@ -277,6 +363,46 @@ class MarketIntelligence:
         # else: 기본 가중치 유지
 
         return weights
+
+    def _kospi_ma200_status(self) -> Dict[str, Any]:
+        """KOSPI200 ETF 200일 이동평균 기준 장기 추세 판정.
+
+        Returns:
+            {
+                'above_ma200': bool,
+                'current_price': float,
+                'ma200': float,
+                'distance_pct': float,
+                'regime': str,
+            }
+            데이터 부족(< 200일) 시 빈 딕셔너리.
+        """
+        from .kr_layer3_sector_rotation import KOSPI200_ETF
+
+        kospi_df = self.cache.get(KOSPI200_ETF)
+        if kospi_df is None or (hasattr(kospi_df, 'empty') and kospi_df.empty):
+            return {}
+
+        close = None
+        for col in ('Close', 'close', 'Adj Close'):
+            if col in kospi_df.columns:
+                close = kospi_df[col].dropna()
+                break
+        if close is None or len(close) < 200:
+            return {}
+
+        current_price = float(close.iloc[-1])
+        ma200 = float(close.rolling(200).mean().iloc[-1])
+        above = current_price > ma200
+        distance_pct = round((current_price - ma200) / ma200 * 100, 2)
+
+        return {
+            'above_ma200': above,
+            'current_price': round(current_price, 2),
+            'ma200': round(ma200, 2),
+            'distance_pct': distance_pct,
+            'regime': 'long_term_bullish' if above else 'long_term_bearish',
+        }
 
     def _compute_meta_confidence(self, layer_results: Dict[str, LayerResult]) -> float:
         """레이어 간 의견 일치도 + 데이터 신선도 + 완전성을 종합 측정.
@@ -408,8 +534,11 @@ class MarketIntelligence:
 
             layer_names_kr = {
                 'macro_regime': '매크로',
+                'kr_macro_regime': '한국 매크로',
                 'market_structure': '시장 구조',
+                'kr_market_structure': '한국 시장 구조',
                 'sector_rotation': '섹터 로테이션',
+                'kr_sector_rotation': '한국 섹터 로테이션',
                 'enhanced_technicals': '기술적 분석',
                 'sentiment': '센티먼트',
             }
@@ -508,10 +637,14 @@ __all__ = [
     'LAYER_SYMBOLS',
     # FRED
     'FREDDataFetcher',
-    # Layers
+    # US Layers
     'MacroRegimeLayer',
     'MarketStructureLayer',
     'SectorRotationLayer',
     'TechnicalsLayer',
     'SentimentLayer',
+    # KR Layers
+    'KRMacroRegimeLayer',
+    'KRMarketStructureLayer',
+    'KRSectorRotationLayer',
 ]

@@ -77,9 +77,11 @@ from trading_bot.scheduler.session_manager import (  # noqa: E402
     start_paper_trading,
     stop_paper_trading,
     run_market_analysis,
+    run_kr_market_analysis,
     _start_single_session,
     _stop_single_session,
     _is_trading_day,
+    _is_kr_trading_day,
 )
 from trading_bot.scheduler.db_maintenance import db_maintenance as _db_maintenance  # noqa: E402
 from trading_bot.scheduler.scheduler_core import (  # noqa: E402
@@ -240,11 +242,12 @@ def main():
     from trading_bot.us_market_hours import get_market_hours_kst, get_schedule_description
     hours = get_market_hours_kst()
     logger.info(f"시간대: Asia/Seoul (DST 자동 감지: {'서머타임 EDT' if hours['is_dst'] else '윈터타임 EST'})")
-    logger.info("스케줄:")
+    logger.info("US 시장 스케줄:")
     logger.info(get_schedule_description())
     logger.info("  매 60초 - 하트비트 + 제어 명령 폴링")
     logger.info("  매 2분 - 워치독 (스레드 감시)")
     logger.info(f"  매일 {hours['close_5m']['hour']:02d}:{hours['close_5m']['minute']:02d} - DB 유지보수 (다운샘플링+정리)")
+    # 한국 시장 스케줄 정보는 잡 등록 시 출력
     logger.info("=" * 60)
 
     # 스케줄 작업 추가
@@ -344,6 +347,29 @@ def main():
         name='DST 전환 체크',
         misfire_grace_time=3600
     )
+
+    # === 한국 시장 스케줄 (KR_SCHEDULER_ENABLED=true 시 활성화) ===
+    kr_scheduler_enabled = os.getenv('KR_SCHEDULER_ENABLED', 'false').strip().lower()
+    if kr_scheduler_enabled in ('true', '1', 'yes'):
+        from trading_bot.kr_market_hours import get_kr_market_hours, get_kr_schedule_description
+        kr_hours = get_kr_market_hours()
+
+        # 한국 장 마감 20분 후: 한국 시장 분석 + JSON 저장
+        scheduler.add_job(
+            run_kr_market_analysis,
+            CronTrigger(
+                hour=kr_hours['analysis_time']['hour'],
+                minute=kr_hours['analysis_time']['minute'],
+            ),
+            id='kr_market_analysis',
+            name='한국 시장 분석 + JSON 저장',
+            misfire_grace_time=600
+        )
+
+        logger.info("한국 시장 스케줄 (KR_SCHEDULER_ENABLED=true):")
+        logger.info(get_kr_schedule_description())
+    else:
+        logger.info("한국 시장 스케줄: 비활성화 (KR_SCHEDULER_ENABLED=false)")
 
     # 시작 완료 -> idle 상태 + Slack 알림
     state.scheduler_health.update('idle', {

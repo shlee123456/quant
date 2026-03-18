@@ -343,10 +343,34 @@ class WeightOptimizer:
 
 
 WEIGHTS_PATH = Path('data/optimized_weights.json')
+WEIGHTS_PATH_KR = Path('data/optimized_weights_kr.json')
 
 
-def save_weights(result: OptimizationResult) -> Path:
-    """최적화 결과를 JSON으로 저장."""
+def _weights_path_for_market(market: str = 'us') -> Path:
+    """마켓에 따른 가중치 파일 경로 반환.
+
+    Args:
+        market: 'us' 또는 'kr'
+
+    Returns:
+        가중치 JSON 파일 경로
+    """
+    if market == 'kr':
+        return WEIGHTS_PATH_KR
+    return WEIGHTS_PATH
+
+
+def save_weights(result: OptimizationResult, market: str = 'us') -> Path:
+    """최적화 결과를 JSON으로 저장.
+
+    Args:
+        result: 최적화 결과 객체
+        market: 'us' 또는 'kr' (기본: 'us')
+
+    Returns:
+        저장된 파일 경로
+    """
+    path = _weights_path_for_market(market)
     payload = {
         'weights': result.optimal_weights,
         'oos_ic': result.oos_ic,
@@ -357,17 +381,25 @@ def save_weights(result: OptimizationResult) -> Path:
         'recommendation': result.recommendation,
         'saved_at': datetime.now().isoformat(),
     }
-    WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    WEIGHTS_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
-    return WEIGHTS_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+    return path
 
 
-def load_weights() -> Optional[Dict[str, float]]:
-    """저장된 최적화 가중치 로드. 없거나 is_improvement=False면 None."""
-    if not WEIGHTS_PATH.exists():
+def load_weights(market: str = 'us') -> Optional[Dict[str, float]]:
+    """저장된 최적화 가중치 로드. 없거나 is_improvement=False면 None.
+
+    Args:
+        market: 'us' 또는 'kr' (기본: 'us')
+
+    Returns:
+        가중치 딕셔너리 또는 None
+    """
+    path = _weights_path_for_market(market)
+    if not path.exists():
         return None
     try:
-        payload = json.loads(WEIGHTS_PATH.read_text())
+        payload = json.loads(path.read_text())
         if not payload.get('is_improvement', False):
             return None
         return payload.get('weights')

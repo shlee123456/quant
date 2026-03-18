@@ -24,6 +24,13 @@ from trading_bot.us_holidays import is_us_market_holiday
 
 from trading_bot.brokers import KoreaInvestmentBroker
 
+# 한국 시장 공휴일 (optional - 모듈 미존재 시 주말만 체크)
+try:
+    from trading_bot.kr_holidays import is_kr_market_holiday
+    _has_kr_holidays = True
+except ImportError:
+    _has_kr_holidays = False
+
 import trading_bot.scheduler.scheduler_state as state
 
 logger = logging.getLogger(__name__)
@@ -76,6 +83,32 @@ def _is_trading_day() -> bool:
     if is_us_market_holiday(us_date):
         logger.info(f"미국 시장 공휴일입니다 (미국 동부: {us_date}) - 트레이딩 건너뜀")
         return False
+
+    return True
+
+
+def _is_kr_trading_day() -> bool:
+    """
+    오늘이 한국 주식시장 거래일인지 확인합니다.
+    KST 15:50에 호출되므로, KST 기준 오늘 날짜를 사용합니다.
+
+    Returns:
+        거래일이면 True, 공휴일/주말이면 False
+    """
+    kst = pytz.timezone('Asia/Seoul')
+    kr_now = datetime.now(kst)
+    kr_date = kr_now.date()
+
+    # 주말 체크
+    if kr_date.weekday() >= 5:  # 5=Saturday, 6=Sunday
+        logger.info(f"주말입니다 (KST: {kr_date}, {kr_date.strftime('%A')}) - 한국 시장 분석 건너뜀")
+        return False
+
+    # 공휴일 체크 (kr_holidays 모듈 존재 시)
+    if _has_kr_holidays:
+        if is_kr_market_holiday(kr_date):
+            logger.info(f"한국 시장 공휴일입니다 (KST: {kr_date}) - 한국 시장 분석 건너뜀")
+            return False
 
     return True
 
@@ -514,3 +547,62 @@ def run_market_analysis():
     except Exception as e:
         logger.error(f"시장 분석 실패: {e}", exc_info=True)
         state.notifier.notify_error(f"시장 분석 실패: {e}", context="시장 분석")
+
+
+def run_kr_market_analysis():
+    """
+    한국 장 마감 후 시장 분석: KRMarketAnalyzer로 데이터 수집 + JSON 저장.
+    15:50 KST 실행 (장 마감 20분 후).
+    """
+    logger.info("=" * 60)
+    logger.info("한국 시장 분석 시작...")
+    logger.info("=" * 60)
+
+    if not _is_kr_trading_day():
+        return
+
+    if not state._has_market_analyzer:
+        logger.warning("MarketAnalyzer 모듈 미설치 - 한국 시장 분석 건너뜀")
+        return
+
+    # 환경 변수에서 설정 읽기
+    enabled = os.getenv('KR_SCHEDULER_ENABLED', 'false').strip().lower()
+    if enabled not in ('true', '1', 'yes'):
+        logger.info("KR_SCHEDULER_ENABLED=false - 한국 시장 분석 비활성화됨")
+        return
+
+    symbols_str = os.getenv(
+        'KR_MARKET_ANALYSIS_SYMBOLS',
+        '005930,000660,005380,035420,035720,006400,373220,005490,105560,207940'
+    )
+    symbols = [s.strip() for s in symbols_str.split(',') if s.strip()]
+
+    try:
+        # 브로커 초기화
+        broker = _create_kis_broker()
+        if not broker:
+            logger.error("KIS 브로커 초기화 실패 - 한국 시장 분석 불가")
+            state.notifier.notify_error("KIS 브로커 초기화 실패", context="한국 시장 분석")
+            return
+
+        # MarketAnalyzer로 데이터 수집
+        analyzer = state.MarketAnalyzer()
+        logger.info(f"한국 시장 분석 대상 종목: {', '.join(symbols)}")
+        result = analyzer.analyze(symbols, broker)
+
+        # JSON 저장
+        json_path = analyzer.save_json(result)
+        logger.info(f"한국 시장 분석 결과 저장: {json_path}")
+
+        # Slack 알림
+        state.notifier.send_slack(
+            f"*한국 시장 분석 데이터 수집 완료*\n\n"
+            f"분석 종목: {', '.join(symbols)}\n"
+            f"결과 파일: {json_path}\n"
+            f"노션 작성은 호스트 cron에서 처리됩니다",
+            color='good'
+        )
+
+    except Exception as e:
+        logger.error(f"한국 시장 분석 실패: {e}", exc_info=True)
+        state.notifier.notify_error(f"한국 시장 분석 실패: {e}", context="한국 시장 분석")

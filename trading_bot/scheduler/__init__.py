@@ -27,9 +27,11 @@ from trading_bot.scheduler.session_manager import (
     start_paper_trading,
     stop_paper_trading,
     run_market_analysis,
+    run_kr_market_analysis,
     _start_single_session,
     _stop_single_session,
     _is_trading_day,
+    _is_kr_trading_day,
 )
 from trading_bot.scheduler.db_maintenance import db_maintenance
 from trading_bot.scheduler.scheduler_core import (
@@ -59,9 +61,11 @@ __all__ = [
     'start_paper_trading',
     'stop_paper_trading',
     'run_market_analysis',
+    'run_kr_market_analysis',
     '_start_single_session',
     '_stop_single_session',
     '_is_trading_day',
+    '_is_kr_trading_day',
     'db_maintenance',
     'signal_handler',
     '_handle_status',
