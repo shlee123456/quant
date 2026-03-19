@@ -39,3 +39,4 @@ fredapi>=0.5.0        # Federal Reserve Economic Data API
 
 # Vectorized backtesting (Phase 5 - VBT Migration)
 vectorbt>=0.26.0      # Vectorized backtesting engine
+notion-client>=2.0.0

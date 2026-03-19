@@ -40,6 +40,9 @@ import pytz
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from dotenv import load_dotenv
+load_dotenv(PROJECT_ROOT / ".env")
+
 from trading_bot.market_analysis_prompt import build_analysis_prompt, get_notion_page_id
 from trading_bot.parallel_prompt_builder import (
     WORKER_MODELS,
@@ -53,6 +56,7 @@ from trading_bot.parallel_prompt_builder import (
     _load_previous_top3,
     _save_top3_marker,
 )
+from trading_bot.notion_api_writer import NotionPageWriter
 
 # 로깅 설정
 logging.basicConfig(
@@ -530,6 +534,11 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
         today=today,
     )
 
+    # 10.5. 조립 콘텐츠 캐시 저장 (--notion-only 재시도용 — 검증 전 저장)
+    cache_path = MARKET_ANALYSIS_DIR / f"{today}_assembled.md"
+    cache_path.write_text(assembled, encoding="utf-8")
+    logger.info(f"조립 콘텐츠 캐시 저장: {cache_path} ({len(assembled)}자)")
+
     # 11. 유효성 검증 (모든 워커 성공 시에만 도달)
     if has_sessions:
         expected = ["# 1.", "# 2.", "# 3.", "# 4.", "# 5.",
@@ -547,71 +556,40 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
 
     logger.info(f"섹션 조합 완료 (총 길이: {len(assembled)}자)")
 
-    # 12. Notion Writer Claude 실행
-    parent_page_id = get_notion_page_id()
-    notion_prompt = build_notion_writer_prompt(assembled, today, parent_page_id)
+    # 12. Notion API로 직접 페이지 생성 (Claude CLI MCP 의존성 제거)
+    logger.info("[Notion-API] Python notion-client로 페이지 생성 시작")
 
-    logger.info(f"Notion Writer 프롬프트 생성 완료 (길이: {len(notion_prompt)}자)")
+    # 월별 폴더 이름 생성 (예: "26-03월")
+    from datetime import datetime as dt
+    month_name = dt.strptime(today, "%Y-%m-%d").strftime("%y-%m월")
 
-    notion_ok, notion_output, notion_cost = run_claude_worker(
-        worker_name="Notion-Writer",
-        prompt=notion_prompt,
-        tools="mcp__claude_ai_Notion__*",
-        timeout=300,
-        max_budget=0.30,
-    )
-
-    costs["Notion-Writer"] = notion_cost or 0.0
-
-    # 12.5. Notion Writer 실패 시 1회 재시도 (budget 2배)
-    if not notion_ok:
-        logger.warning("[Notion-Writer] 실패 → 재시도 (budget 2배, timeout 2배)")
-        _notify_worker_failure("Notion-Writer", "Notion Writer 실패 - 재시도 중 (budget=$0.60, timeout=600s)")
-        retry_ok, retry_output, retry_cost = run_claude_worker(
-            worker_name="Notion-Writer",
-            prompt=notion_prompt,
-            tools="mcp__claude_ai_Notion__*",
-            timeout=600,
-            max_budget=0.60,
+    try:
+        writer = NotionPageWriter()
+        page_url = writer.create_report(
+            title=f"📊 시장 분석 | {today}",
+            content=assembled,
+            month_name=month_name,
         )
-        costs["Notion-Writer"] = costs.get("Notion-Writer", 0) + (retry_cost or 0.0)
-        if retry_ok:
-            notion_ok = True
-            notion_output = retry_output
-            logger.info("[Notion-Writer] 재시도 성공")
-        else:
-            logger.error("[Notion-Writer] 재시도 실패 → 레거시 폴백")
-            _notify_worker_failure("Notion-Writer", "Notion Writer 재시도도 실패하여 레거시 폴백으로 전환합니다.")
-            return _run_legacy_fallback(json_path, session_reports_dir)
+    except Exception as e:
+        logger.error(f"[Notion-API] 페이지 생성 실패: {e}")
+        _notify_worker_failure("Notion-API", f"Python Notion API 페이지 생성 실패: {e}")
+        return False
 
-    # 13. 비용 요약 로깅
+    if not page_url:
+        logger.error("[Notion-API] 페이지 URL 없음 — 생성 실패")
+        return False
+
+    logger.info(f"[Notion-API] 페이지 생성 완료: {page_url}")
+
+    # 13. 비용 요약 로깅 (Notion API는 무료이므로 Writer 비용 없음)
     total_cost = sum(costs.values())
     logger.info(
         f"총 비용: ${total_cost:.4f} "
         f"(A=${costs.get('Worker-A', 0):.4f}, "
         f"B=${costs.get('Worker-B', 0):.4f}, "
         f"C=${costs.get('Worker-C', 0):.4f}, "
-        f"Writer=${costs.get('Notion-Writer', 0):.4f})"
+        f"Notion-API=$0.0000)"
     )
-
-    # 14. Notion 페이지 생성 검증 (출력에 URL이 포함되어야 함)
-    import re
-    notion_url_match = re.search(r'NOTION_PAGE_URL:\s*(https?://\S+)', notion_output)
-    if not notion_url_match:
-        # URL 마커가 없으면 notion.so URL이라도 있는지 확인
-        notion_url_fallback = re.search(r'https://(?:www\.)?notion\.(?:so|site)/\S+', notion_output)
-        if not notion_url_fallback:
-            logger.error(
-                "Notion Writer가 성공을 반환했지만 페이지 URL이 출력에 없습니다. "
-                "실제 페이지 생성에 실패했을 가능성이 높습니다."
-            )
-            logger.error(f"Notion Writer 출력 (앞 500자): {notion_output[:500]}")
-            _notify_worker_failure("Notion-Writer", "페이지 URL 미확인 - 실제 생성 실패 가능성")
-            return False
-        else:
-            logger.info(f"Notion 페이지 URL (fallback): {notion_url_fallback.group()}")
-    else:
-        logger.info(f"Notion 페이지 URL: {notion_url_match.group(1)}")
 
     # 15. TOP 3 마커 저장 (다음날 중복 방지용 — 코드 기반)
     try:
@@ -644,6 +622,11 @@ def main():
         action="store_true",
         help="프롬프트를 파일로 저장하고 Claude 호출은 하지 않음",
     )
+    parser.add_argument(
+        "--notion-only",
+        action="store_true",
+        help="캐시된 조립 콘텐츠로 Notion 작성만 재시도 (워커 비용 절약)",
+    )
     args = parser.parse_args()
 
     logger.info("=" * 50)
@@ -660,6 +643,36 @@ def main():
 
     if args.dry_run:
         logger.info("[DRY-RUN] 노션 작성을 건너뜁니다.")
+        return
+
+    # --notion-only: 캐시된 조립 콘텐츠로 Notion 작성만 재시도
+    if args.notion_only:
+        today = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y-%m-%d")
+        cache_path = MARKET_ANALYSIS_DIR / f"{today}_assembled.md"
+        if not cache_path.exists():
+            logger.error(f"캐시 파일 없음: {cache_path}")
+            sys.exit(1)
+        assembled = cache_path.read_text(encoding="utf-8")
+        logger.info(f"캐시 로드: {cache_path} ({len(assembled)}자)")
+        from datetime import datetime as dt
+        month_name = dt.strptime(today, "%Y-%m-%d").strftime("%y-%m월")
+        try:
+            writer = NotionPageWriter()
+            page_url = writer.create_report(
+                title=f"📊 시장 분석 | {today}",
+                content=assembled,
+                month_name=month_name,
+            )
+            if page_url:
+                logger.info(f"Notion 페이지 URL: {page_url}")
+                mark_done(json_path)
+                logger.info("노션 작성 성공!")
+            else:
+                logger.error("노션 작성 실패 — URL 없음")
+                sys.exit(1)
+        except Exception as e:
+            logger.error(f"노션 작성 실패: {e}")
+            sys.exit(1)
         return
 
     # 이미 처리된 파일인지 확인 (dry-run 모드에서는 스킵)
