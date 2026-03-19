@@ -54,8 +54,8 @@ COPY scheduler.py ./scheduler.py
 # Create directories for data, logs, and reports
 RUN mkdir -p /app/data /app/logs /app/config /app/reports
 
-# Create non-root user for security
-RUN useradd -m -u 1000 trader && \
+# Create non-root user for security (UID 1001 matches host user)
+RUN useradd -m -u 1001 trader && \
     chown -R trader:trader /app
 
 # Switch to non-root user
