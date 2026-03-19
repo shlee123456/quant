@@ -29,6 +29,9 @@ import pytz
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from dotenv import load_dotenv
+load_dotenv(PROJECT_ROOT / ".env")
+
 from trading_bot.kr_parallel_prompt_builder import (
     KR_WORKER_MODELS,
     build_kr_worker_a_prompt,
@@ -40,6 +43,7 @@ from trading_bot.kr_parallel_prompt_builder import (
     _get_kr_notion_page_id,
 )
 from trading_bot.kr_market_analyzer import KRMarketAnalyzer
+from trading_bot.notion_api_writer import NotionPageWriter
 
 # 로깅 설정
 logging.basicConfig(
@@ -368,35 +372,29 @@ def run_parallel_kr_notion_writer(json_path: str) -> bool:
 
     logger.info(f"섹션 조합 완료 (총 길이: {len(assembled)}자)")
 
-    # 10. Notion Writer 실행
+    # 10. Notion API로 직접 페이지 생성 (Claude CLI MCP 의존성 제거)
+    logger.info("[Notion-API] Python notion-client로 페이지 생성 시작")
     parent_page_id = _get_kr_notion_page_id()
-    notion_prompt = build_kr_notion_writer_prompt(assembled, today, parent_page_id)
 
-    notion_ok, notion_output, notion_cost = run_claude_worker(
-        worker_name="Notion-Writer",
-        prompt=notion_prompt,
-        tools="mcp__claude_ai_Notion__*",
-        timeout=600,
-        max_budget=0.60,
-    )
-    costs["Notion-Writer"] = notion_cost or 0.0
+    from datetime import datetime as dt
+    month_name = dt.strptime(today, "%Y-%m-%d").strftime("%y-%m월")
 
-    if not notion_ok:
-        logger.warning("[Notion-Writer] 실패 -> 재시도")
-        retry_ok, retry_output, retry_cost = run_claude_worker(
-            worker_name="Notion-Writer",
-            prompt=notion_prompt,
-            tools="mcp__claude_ai_Notion__*",
-            timeout=900,
-            max_budget=1.00,
+    try:
+        writer = NotionPageWriter(parent_page_id=parent_page_id)
+        page_url = writer.create_report(
+            title=f"📊 한국 시장 분석 | {today}",
+            content=assembled,
+            month_name=month_name,
         )
-        costs["Notion-Writer"] = costs.get("Notion-Writer", 0) + (retry_cost or 0.0)
-        if retry_ok:
-            notion_ok = True
-            notion_output = retry_output
-        else:
-            logger.error("[Notion-Writer] 재시도 실패")
-            return False
+    except Exception as e:
+        logger.error(f"[Notion-API] 페이지 생성 실패: {e}")
+        return False
+
+    if not page_url:
+        logger.error("[Notion-API] 페이지 URL 없음 — 생성 실패")
+        return False
+
+    logger.info(f"[Notion-API] 페이지 생성 완료: {page_url}")
 
     # 11. 비용 요약
     total_cost = sum(costs.values())
@@ -405,23 +403,8 @@ def run_parallel_kr_notion_writer(json_path: str) -> bool:
         f"(A=${costs.get('Worker-A', 0):.4f}, "
         f"B=${costs.get('Worker-B', 0):.4f}, "
         f"C=${costs.get('Worker-C', 0):.4f}, "
-        f"Writer=${costs.get('Notion-Writer', 0):.4f})"
+        f"Notion-API=$0.0000)"
     )
-
-    # 12. URL 검증
-    import re
-    logger.debug(f"[Notion-Writer] 출력 내용: {notion_output[:500]}")
-    notion_url_match = re.search(r'NOTION_PAGE_URL:\s*(https?://\S+)', notion_output)
-    if not notion_url_match:
-        notion_url_fallback = re.search(r'https://(?:www\.)?notion\.(?:so|site)/\S+', notion_output)
-        if not notion_url_fallback:
-            logger.error("Notion Writer 출력에 페이지 URL이 없습니다.")
-            logger.error(f"Notion Writer 출력 (앞 500자): {notion_output[:500]}")
-            return False
-        else:
-            logger.info(f"Notion 페이지 URL (fallback): {notion_url_fallback.group()}")
-    else:
-        logger.info(f"Notion 페이지 URL: {notion_url_match.group(1)}")
 
     logger.info("한국 시장 병렬 Notion 작성 성공!")
     return True
