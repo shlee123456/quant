@@ -44,6 +44,13 @@ except ImportError:
     MarketAnalyzer = None
     _has_market_analyzer = False
 
+try:
+    from trading_bot.kr_market_analyzer import KRMarketAnalyzer
+    _has_kr_market_analyzer = True
+except ImportError:
+    KRMarketAnalyzer = None
+    _has_kr_market_analyzer = False
+
 logger = logging.getLogger(__name__)
 
 # Strategy name -> class mapping

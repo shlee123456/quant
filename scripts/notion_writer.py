@@ -566,7 +566,7 @@ def run_parallel_notion_writer(json_path: str, session_reports_dir: Optional[str
     try:
         writer = NotionPageWriter()
         page_url = writer.create_report(
-            title=f"📊 시장 분석 | {today}",
+            title=f"🇺🇸 미국 시장 분석 | {today}",
             content=assembled,
             month_name=month_name,
         )
@@ -659,7 +659,7 @@ def main():
         try:
             writer = NotionPageWriter()
             page_url = writer.create_report(
-                title=f"📊 시장 분석 | {today}",
+                title=f"🇺🇸 미국 시장 분석 | {today}",
                 content=assembled,
                 month_name=month_name,
             )

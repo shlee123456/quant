@@ -824,13 +824,35 @@ def assemble_kr_sections(
         f':::'
     )
 
-    assembled = "\n\n".join([
-        worker_a_output.strip(),
-        worker_b_output.strip(),
-        worker_c_output.strip(),
-        footer,
-    ])
+    # 각 워커 출력이 ---로 끝나지 않으면 구분선 추가 (포맷 규칙 8번)
+    def _ensure_trailing_separator(text: str) -> str:
+        stripped = text.strip()
+        if not stripped.endswith("---"):
+            return stripped + "\n---"
+        return stripped
 
+    worker_a = _ensure_trailing_separator(worker_a_output)
+    worker_b = _ensure_trailing_separator(worker_b_output)
+    worker_c = worker_c_output.strip()  # 마지막 워커는 푸터 직전이므로 구분선 불필요
+
+    assembled = (
+        f"<table_of_contents/>\n---\n"
+        f"{worker_a}\n"
+        f"{worker_b}\n"
+        f"{worker_c}\n"
+        f"{footer}"
+    )
+
+    # 포맷 자동 교정 (callout 닫기 누락, 이중 구분선, MD 테이블 변환 등)
+    try:
+        from trading_bot.prompts.prompt_engine import PromptEngine
+        assembled, corrections = PromptEngine.auto_correct_format(assembled)
+        if corrections:
+            logger.info(f"포맷 자동 교정 {len(corrections)}건: {corrections}")
+    except ImportError:
+        logger.debug("PromptEngine 미설치 - 포맷 자동 교정 건너뜀")
+
+    logger.info(f"섹션 조립 완료 (총 길이: {len(assembled)}자)")
     return assembled
 
 

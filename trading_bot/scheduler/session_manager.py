@@ -561,8 +561,8 @@ def run_kr_market_analysis():
     if not _is_kr_trading_day():
         return
 
-    if not state._has_market_analyzer:
-        logger.warning("MarketAnalyzer 모듈 미설치 - 한국 시장 분석 건너뜀")
+    if not state._has_kr_market_analyzer:
+        logger.warning("KRMarketAnalyzer 모듈 미설치 - 한국 시장 분석 건너뜀")
         return
 
     # 환경 변수에서 설정 읽기
@@ -585,12 +585,12 @@ def run_kr_market_analysis():
             state.notifier.notify_error("KIS 브로커 초기화 실패", context="한국 시장 분석")
             return
 
-        # MarketAnalyzer로 데이터 수집
-        analyzer = state.MarketAnalyzer()
+        # KRMarketAnalyzer로 데이터 수집
+        analyzer = state.KRMarketAnalyzer()
         logger.info(f"한국 시장 분석 대상 종목: {', '.join(symbols)}")
         result = analyzer.analyze(symbols, broker)
 
-        # JSON 저장
+        # JSON 저장 ({date}_kr.json)
         json_path = analyzer.save_json(result)
         logger.info(f"한국 시장 분석 결과 저장: {json_path}")
 

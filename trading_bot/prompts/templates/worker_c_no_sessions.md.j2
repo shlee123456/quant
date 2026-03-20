@@ -70,15 +70,39 @@
 [... rows from support_resistance data]
 </table>
 ## RSI 시그널 대기 종목
+<table fit-page-width="true" header-row="true">
+<tr color="yellow_bg">
+<td>**종목**</td>
+<td>**현재 RSI**</td>
+<td>**임계치**</td>
+<td>**거리**</td>
+<td>**상태**</td>
+</tr>
+[... rows from rsi_pending_signals: symbol, rsi, threshold, distance, type(near_oversold→"매수 대기 🟢"/near_overbought→"매도 대기 🔴"). Use green_bg for near_oversold, red_bg for near_overbought]
+</table>
 ::: callout {icon="🔔" color="yellow_bg"}
-[list stocks where RSI is within ±3 of their oversold/overbought thresholds from rsi_pending_signals]
+rsi_pending_signals가 비어있으면: **현재 RSI 임계치 근접 종목 없음** — 모든 종목이 중립 구간에 위치합니다.
 :::
 ## 향후 주시 사항
-[numbered points about what to watch for tomorrow/this week based on data]
+<table fit-page-width="true" header-row="true">
+<tr color="blue_bg">
+<td>**구분**</td>
+<td>**주시 포인트**</td>
+<td>**관련 종목**</td>
+</tr>
+[... 3-5 rows: categorize watch items into 기술적/매크로/이벤트 etc., with related symbols]
+</table>
 ---
 # 9. 리스크 요인 {color="blue"}
 ## 시장 주요 리스크
-[numbered risk items based on market data analysis]
+<table fit-page-width="true" header-row="true">
+<tr color="red_bg">
+<td>**리스크**</td>
+<td>**영향도**</td>
+<td>**관련 종목**</td>
+</tr>
+[... rows: risk description, impact level (🔴높음/🟡중간/🟢낮음), affected symbols]
+</table>
 ## 변동성 이상 종목
 <table fit-page-width="true" header-row="true">
 <tr color="red_bg">
@@ -89,7 +113,14 @@
 [... rows for high-volatility or extreme-move stocks]
 </table>
 ## 뉴스 기반 잠재 리스크
-[bullet points - infer from data patterns, regime states, extreme indicators]
+<table fit-page-width="true" header-row="true">
+<tr color="orange_bg">
+<td>**뉴스 이슈**</td>
+<td>**영향 종목**</td>
+<td>**예상 영향**</td>
+</tr>
+[... rows from news data: issue summary, affected symbols, expected impact (긍정/부정/중립)]
+</table>
 ---
 
 --- END EXACT OUTPUT STRUCTURE ---

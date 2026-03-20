@@ -382,7 +382,7 @@ def run_parallel_kr_notion_writer(json_path: str) -> bool:
     try:
         writer = NotionPageWriter(parent_page_id=parent_page_id)
         page_url = writer.create_report(
-            title=f"📊 한국 시장 분석 | {today}",
+            title=f"🇰🇷 한국 시장 분석 | {today}",
             content=assembled,
             month_name=month_name,
         )
