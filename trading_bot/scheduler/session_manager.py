@@ -440,6 +440,9 @@ def run_market_analysis():
     logger.info("시장 분석 시작...")
     logger.info("=" * 60)
 
+    if not _is_trading_day():
+        return
+
     if not state._has_market_analyzer:
         logger.warning("MarketAnalyzer 모듈 미설치 - 시장 분석 건너뜀")
         return
