@@ -78,6 +78,7 @@ class LiveTrader:
         max_daily_trades: int = 50,
         max_position_count: int = 10,
         order_type: str = 'market',
+        adaptive_manager=None,
     ):
         self.strategy = strategy
 
@@ -107,6 +108,12 @@ class LiveTrader:
         self._stop_event = threading.Event()
         self._loop_exited = threading.Event()
         self._stopped = False
+
+        # Adaptive strategy manager (optional)
+        self._adaptive_manager = adaptive_manager
+
+        # Lock for strategy swaps
+        self._lock = threading.RLock()
 
         # Symbol-level error counts
         self._symbol_error_counts: Dict[str, int] = {}
@@ -322,6 +329,28 @@ class LiveTrader:
             logger.warning(f"No OHLCV data for {symbol}, skipping")
             return
 
+        # 2.5. Adaptive strategy switching + parameter adaptation
+        _pre_regime_result = None
+        if self._adaptive_manager:
+            new_strategy, _pre_regime_result, did_switch = self._adaptive_manager.evaluate(df)
+            if did_switch:
+                old_name = self.strategy.name
+                with self._lock:
+                    self.strategy = new_strategy
+                logger.info(f"[{symbol}] 전략 전환: {old_name} -> {self.strategy.name}")
+                if self.db and self.session_id:
+                    self.db.log_strategy_switch(self.session_id, {
+                        'timestamp': timestamp, 'symbol': symbol,
+                        'from_strategy': old_name, 'to_strategy': self.strategy.name,
+                        'regime': _pre_regime_result.regime.value,
+                        'confidence': _pre_regime_result.confidence,
+                    })
+            if self._adaptive_manager._parameter_adapter and _pre_regime_result:
+                adapted = self._adaptive_manager._parameter_adapter.adapt(_pre_regime_result)
+                self._risk_manager.stop_loss_pct = adapted['stop_loss_pct']
+                self._risk_manager.take_profit_pct = adapted['take_profit_pct']
+            self._adaptive_manager.tick()
+
         # 3. Get current signal from strategy
         signal, info = self.strategy.get_current_signal(df)
 
@@ -338,6 +367,7 @@ class LiveTrader:
             strategy_name=self.strategy.name,
             db=self.db,
             session_id=self.session_id,
+            pre_detected_regime=_pre_regime_result,
         )
 
         # 5. Risk manager: check stop loss / take profit

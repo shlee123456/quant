@@ -215,6 +215,31 @@ def _start_single_session(label: str, config: Optional[Dict]):
             preset_name=label if config else None
         )
 
+        # Adaptive strategy manager (프리셋에 adaptive_regime_switching=true 시)
+        adaptive_manager = None
+        if config and config.get('adaptive_regime_switching') and state.global_regime_detector:
+            try:
+                from trading_bot.adaptive_strategy_manager import AdaptiveStrategyManager
+                _adapter = None
+                if config.get('adaptive_parameters'):
+                    from trading_bot.parameter_adapter import ParameterAdapter
+                    _adapter = ParameterAdapter(
+                        base_strategy_params=strategy_params or strategy.get_params(),
+                        base_stop_loss_pct=stop_loss_pct,
+                        base_take_profit_pct=take_profit_pct,
+                    )
+                adaptive_manager = AdaptiveStrategyManager(
+                    strategy_class_map=state.STRATEGY_CLASS_MAP,
+                    regime_detector=state.global_regime_detector,
+                    initial_strategy=strategy,
+                    regime_strategy_map=config.get('regime_strategy_map') or None,
+                    default_params=config.get('default_params_per_strategy') or {},
+                    parameter_adapter=_adapter,
+                )
+                logger.info(f"{log_prefix} 적응형 전략 관리자 활성화 (파라미터 적응: {config.get('adaptive_parameters', False)})")
+            except Exception as e:
+                logger.warning(f"{log_prefix} 적응형 전략 관리자 초기화 실패: {e}")
+
         # 페이퍼 트레이더 생성 (레짐 감지 + LLM 통합)
         trader = PaperTrader(
             strategy=strategy,
@@ -231,6 +256,7 @@ def _start_single_session(label: str, config: Optional[Dict]):
             regime_detector=state.global_regime_detector,
             llm_client=state.global_llm_client,
             limit_orders=limit_orders if limit_orders else None,
+            adaptive_manager=adaptive_manager,
         )
 
         # Attach notifier to trader for stop loss/take profit notifications
@@ -615,6 +641,64 @@ def run_kr_market_analysis():
         state.notifier.notify_error(f"한국 시장 분석 실패: {e}", context="한국 시장 분석")
 
 
+def run_weekly_optimization():
+    """주간 전략 최적화 (일요일 00:00 KST).
+
+    AUTO_OPTIMIZATION_ENABLED=true 시 활성화.
+    모든 프리셋을 대상으로 walk-forward 최적화 실행 후
+    개선된 파라미터를 프리셋에 자동 반영.
+    """
+    if os.getenv('AUTO_OPTIMIZATION_ENABLED', 'false').strip().lower() not in ('true', '1'):
+        return
+
+    logger.info("=" * 60)
+    logger.info("주간 전략 자동 최적화 시작...")
+    logger.info("=" * 60)
+
+    try:
+        from trading_bot.auto_optimizer import AutoOptimizer
+        from trading_bot.optimizer import StrategyOptimizer
+
+        # 브로커 초기화
+        if state.ctx.global_broker is not None:
+            broker = state.ctx.global_broker
+        else:
+            broker = _create_kis_broker()
+        if not broker:
+            logger.error("주간 최적화: 브로커 초기화 실패")
+            return
+
+        optimizer = StrategyOptimizer()
+        auto_opt = AutoOptimizer(
+            optimizer=optimizer,
+            preset_manager=state.preset_manager,
+            strategy_class_map=state.STRATEGY_CLASS_MAP,
+        )
+
+        # 모든 프리셋 이름 수집
+        target_presets = [p['name'] for p in state.preset_manager.list_presets()]
+        if not target_presets:
+            logger.info("주간 최적화: 프리셋 없음, 건너뜀")
+            return
+
+        result = auto_opt.run(broker=broker, target_presets=target_presets)
+
+        # DB 기록
+        if state.ctx.global_db and result.get('runs'):
+            for run in result['runs']:
+                state.ctx.global_db.log_optimization_run(run)
+
+        logger.info(f"주간 최적화 완료: {result.get('summary', '')}")
+        state.notifier.send_slack(
+            f"*주간 전략 최적화 완료*\n{result.get('summary', '결과 없음')}",
+            color='good'
+        )
+
+    except Exception as e:
+        logger.error(f"주간 최적화 실패: {e}", exc_info=True)
+        state.notifier.notify_error(f"주간 최적화 실패: {e}", context="주간 최적화")
+
+
 # ============================================================
 # Live Trading Session Management
 # ============================================================
@@ -723,6 +807,31 @@ def _start_single_live_session(label: str, config: Optional[Dict]):
         max_daily_trades = int(os.getenv('LIVE_TRADING_MAX_DAILY_TRADES', '50'))
         max_position_count = int(os.getenv('LIVE_TRADING_MAX_POSITION_COUNT', '10'))
 
+        # Adaptive strategy manager (프리셋에 adaptive_regime_switching=true 시)
+        adaptive_manager = None
+        if config and config.get('adaptive_regime_switching') and state.global_regime_detector:
+            try:
+                from trading_bot.adaptive_strategy_manager import AdaptiveStrategyManager
+                _adapter = None
+                if config.get('adaptive_parameters'):
+                    from trading_bot.parameter_adapter import ParameterAdapter
+                    _adapter = ParameterAdapter(
+                        base_strategy_params=strategy_params or strategy.get_params(),
+                        base_stop_loss_pct=stop_loss_pct,
+                        base_take_profit_pct=take_profit_pct,
+                    )
+                adaptive_manager = AdaptiveStrategyManager(
+                    strategy_class_map=state.STRATEGY_CLASS_MAP,
+                    regime_detector=state.global_regime_detector,
+                    initial_strategy=strategy,
+                    regime_strategy_map=config.get('regime_strategy_map') or None,
+                    default_params=config.get('default_params_per_strategy') or {},
+                    parameter_adapter=_adapter,
+                )
+                logger.info(f"{log_prefix} 적응형 전략 관리자 활성화 (파라미터 적응: {config.get('adaptive_parameters', False)})")
+            except Exception as e:
+                logger.warning(f"{log_prefix} 적응형 전략 관리자 초기화 실패: {e}")
+
         # LiveTrader 생성
         LiveTrader = state.LiveTrader
         trader = LiveTrader(
@@ -744,6 +853,7 @@ def _start_single_live_session(label: str, config: Optional[Dict]):
             max_daily_loss_pct=max_daily_loss_pct,
             max_daily_trades=max_daily_trades,
             max_position_count=max_position_count,
+            adaptive_manager=adaptive_manager,
         )
 
         logger.info(f"{log_prefix} LiveTrader 초기화 완료 (mode={live_mode})")

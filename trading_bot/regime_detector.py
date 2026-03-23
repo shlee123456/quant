@@ -43,8 +43,8 @@ class RegimeDetector:
     STRATEGY_MAP = {
         MarketRegime.BULLISH: ['MACD Strategy', 'RSI+MACD Combo Strategy'],
         MarketRegime.BEARISH: ['RSI Strategy', 'Bollinger Bands'],
-        MarketRegime.SIDEWAYS: ['RSI Strategy', 'Bollinger Bands'],
-        MarketRegime.VOLATILE: ['Bollinger Bands'],
+        MarketRegime.SIDEWAYS: ['RSI Strategy', 'Bollinger Bands', 'Stochastic'],
+        MarketRegime.VOLATILE: ['Bollinger Bands', 'Stochastic'],
     }
 
     def __init__(self, adx_period: int = 14, ma_period: int = 50, vol_window: int = 100):

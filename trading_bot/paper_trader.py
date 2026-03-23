@@ -60,6 +60,7 @@ class PaperTrader:
         limit_orders: Optional[List[Dict]] = None,
         sentiment_sizing: bool = False,
         enable_short: bool = False,
+        adaptive_manager=None,
     ):
         """
         Initialize paper trader
@@ -184,6 +185,9 @@ class PaperTrader:
         # Sentiment-based position sizing
         self._sentiment_sizing = sentiment_sizing
         self._intelligence_report: Optional[Dict] = None
+
+        # Adaptive strategy manager (optional)
+        self._adaptive_manager = adaptive_manager
 
         # Limit order manager
         self._limit_order_manager = LimitOrderManager(db=db, lock=self._lock) if db else None
@@ -784,6 +788,27 @@ class PaperTrader:
                         logger.warning(f"No OHLCV data for {symbol}, skipping")
                         continue
 
+                    # === Adaptive strategy switching + parameter adaptation ===
+                    _pre_regime_result = None
+                    if self._adaptive_manager:
+                        new_strategy, _pre_regime_result, did_switch = self._adaptive_manager.evaluate(df)
+                        if did_switch:
+                            old_name = self.strategy.name
+                            self.strategy = new_strategy
+                            logger.info(f"[{symbol}] 전략 전환: {old_name} -> {self.strategy.name}")
+                            if self.db and self.session_id:
+                                self.db.log_strategy_switch(self.session_id, {
+                                    'timestamp': timestamp, 'symbol': symbol,
+                                    'from_strategy': old_name, 'to_strategy': self.strategy.name,
+                                    'regime': _pre_regime_result.regime.value,
+                                    'confidence': _pre_regime_result.confidence,
+                                })
+                        if self._adaptive_manager._parameter_adapter and _pre_regime_result:
+                            adapted = self._adaptive_manager._parameter_adapter.adapt(_pre_regime_result)
+                            self._risk_manager.stop_loss_pct = adapted['stop_loss_pct']
+                            self._risk_manager.take_profit_pct = adapted['take_profit_pct']
+                        self._adaptive_manager.tick()
+
                     # Get current signal from strategy
                     signal, info = self.strategy.get_current_signal(df)
 
@@ -800,6 +825,7 @@ class PaperTrader:
                         strategy_name=self.strategy.name,
                         db=self.db,
                         session_id=self.session_id,
+                        pre_detected_regime=_pre_regime_result,
                     )
 
                     # Log signal to database

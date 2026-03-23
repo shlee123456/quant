@@ -225,3 +225,16 @@ except ImportError:
 
 if _has_weight_optimizer:
     __all__.extend(['WeightOptimizer', 'OptimizationResult'])
+
+# Adaptive trading modules
+try:
+    from .adaptive_strategy_manager import AdaptiveStrategyManager
+    from .parameter_adapter import ParameterAdapter
+    from .auto_optimizer import AutoOptimizer
+    _has_adaptive = True
+except ImportError:
+    AdaptiveStrategyManager = ParameterAdapter = AutoOptimizer = None
+    _has_adaptive = False
+
+if _has_adaptive:
+    __all__.extend(['AdaptiveStrategyManager', 'ParameterAdapter', 'AutoOptimizer'])

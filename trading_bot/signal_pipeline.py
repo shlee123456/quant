@@ -57,6 +57,7 @@ class SignalPipeline:
         strategy_name: str,
         db=None,
         session_id: Optional[str] = None,
+        pre_detected_regime=None,
     ) -> Tuple[int, Optional[Any]]:
         """
         Run the signal through the full pipeline.
@@ -88,7 +89,7 @@ class SignalPipeline:
                 logger.warning(f"유효하지 않은 시그널 값 [{symbol}]: {signal}")
 
         # 2. Regime detection
-        regime_result = self._detect_regime(symbol, df, timestamp, db, session_id)
+        regime_result = pre_detected_regime or self._detect_regime(symbol, df, timestamp, db, session_id)
 
         # 2.5 Context filter
         if signal != 0 and self._context_filter_config.get('enabled', False):

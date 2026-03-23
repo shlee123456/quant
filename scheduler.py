@@ -78,6 +78,7 @@ from trading_bot.scheduler.session_manager import (  # noqa: E402
     stop_paper_trading,
     run_market_analysis,
     run_kr_market_analysis,
+    run_weekly_optimization,
     start_live_trading,
     stop_live_trading,
     _start_single_session,
@@ -403,6 +404,21 @@ def main():
         logger.info(f"  {hours['close']['hour']:02d}:{hours['close']['minute']:02d} KST - 라이브 트레이딩 중지")
     else:
         logger.info("라이브 트레이딩 스케줄: 비활성화 (LIVE_TRADING_ENABLED=false)")
+
+    # === 주간 자동 최적화 (AUTO_OPTIMIZATION_ENABLED=true 시 활성화) ===
+    auto_opt_enabled = os.getenv('AUTO_OPTIMIZATION_ENABLED', 'false').strip().lower()
+    if auto_opt_enabled in ('true', '1', 'yes'):
+        scheduler.add_job(
+            run_weekly_optimization,
+            CronTrigger(day_of_week='sun', hour=0, minute=0),
+            id='weekly_optimization',
+            name='주간 전략 최적화',
+            misfire_grace_time=3600
+        )
+        logger.info("주간 자동 최적화 스케줄 (AUTO_OPTIMIZATION_ENABLED=true):")
+        logger.info("  일요일 00:00 KST - 주간 전략 최적화")
+    else:
+        logger.info("주간 자동 최적화 스케줄: 비활성화 (AUTO_OPTIMIZATION_ENABLED=false)")
 
     # 시작 완료 -> idle 상태 + Slack 알림
     state.scheduler_health.update('idle', {

@@ -91,7 +91,13 @@ class StrategyPresetManager:
         enable_stop_loss: bool = True,
         enable_take_profit: bool = True,
         description: str = "",
-        limit_orders: Optional[List[Dict[str, Any]]] = None
+        limit_orders: Optional[List[Dict[str, Any]]] = None,
+        # Adaptive trading fields
+        adaptive_regime_switching: bool = False,
+        adaptive_parameters: bool = False,
+        regime_strategy_map: Optional[Dict] = None,
+        default_params_per_strategy: Optional[Dict] = None,
+        last_optimized_at: Optional[str] = None,
     ) -> bool:
         """
         Save strategy preset
@@ -137,6 +143,11 @@ class StrategyPresetManager:
             "enable_take_profit": enable_take_profit,
             "description": description,
             "limit_orders": limit_orders or [],
+            "adaptive_regime_switching": adaptive_regime_switching,
+            "adaptive_parameters": adaptive_parameters,
+            "regime_strategy_map": regime_strategy_map or {},
+            "default_params_per_strategy": default_params_per_strategy or {},
+            "last_optimized_at": last_optimized_at,
             "created_at": existing_preset.get("created_at") if existing_preset else datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
             "last_used": existing_preset.get("last_used") if existing_preset else None

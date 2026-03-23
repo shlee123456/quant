@@ -364,6 +364,62 @@ class TradingDatabase:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_orders_status ON live_orders(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_sessions_status ON live_trading_sessions(status)")
 
+            # -- Adaptive Trading Tables --
+
+            # Strategy switch history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS strategy_switches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    symbol TEXT,
+                    from_strategy TEXT,
+                    to_strategy TEXT NOT NULL,
+                    regime TEXT NOT NULL,
+                    confidence REAL,
+                    reason TEXT
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_switches_session ON strategy_switches(session_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_switches_ts ON strategy_switches(session_id, timestamp)")
+
+            # Parameter adaptation history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS parameter_adaptations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    symbol TEXT,
+                    volatility_percentile REAL,
+                    params_before TEXT,
+                    params_after TEXT,
+                    risk_params_before TEXT,
+                    risk_params_after TEXT,
+                    adjustments TEXT
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_adapt_session ON parameter_adaptations(session_id)")
+
+            # Auto-optimization run history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS optimization_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    preset_name TEXT,
+                    strategy_name TEXT,
+                    lookback_days INTEGER,
+                    old_params TEXT,
+                    new_params TEXT,
+                    old_metrics TEXT,
+                    new_metrics TEXT,
+                    improvement_pct REAL,
+                    applied INTEGER DEFAULT 0,
+                    rejected_reason TEXT
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_optrun_ts ON optimization_runs(timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_optrun_preset ON optimization_runs(preset_name)")
+
             conn.commit()
         finally:
             conn.close()
@@ -807,6 +863,125 @@ class TradingDatabase:
                 regime_data.get('volatility_percentile'),
                 recommended,
                 details
+            ))
+
+    def log_strategy_switch(self, session_id: str, switch_data: Dict[str, Any]):
+        """
+        Log a strategy switch event
+
+        Args:
+            session_id: Session identifier
+            switch_data: Dict with keys:
+                - timestamp: datetime or str
+                - symbol: str (optional)
+                - from_strategy: str (optional)
+                - to_strategy: str
+                - regime: str
+                - confidence: float (optional)
+                - reason: str (optional)
+        """
+        timestamp = switch_data.get('timestamp', datetime.now())
+        if isinstance(timestamp, datetime):
+            timestamp = timestamp.isoformat()
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO strategy_switches
+                (session_id, timestamp, symbol, from_strategy, to_strategy, regime, confidence, reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session_id,
+                timestamp,
+                switch_data.get('symbol'),
+                switch_data.get('from_strategy'),
+                switch_data['to_strategy'],
+                switch_data['regime'],
+                switch_data.get('confidence'),
+                switch_data.get('reason'),
+            ))
+
+    def log_parameter_adaptation(self, session_id: str, adapt_data: Dict[str, Any]):
+        """
+        Log a parameter adaptation event
+
+        Args:
+            session_id: Session identifier
+            adapt_data: Dict with keys:
+                - timestamp: datetime or str
+                - symbol: str (optional)
+                - volatility_percentile: float (optional)
+                - params_before: dict
+                - params_after: dict
+                - risk_params_before: dict (optional)
+                - risk_params_after: dict (optional)
+                - adjustments: list or dict (optional)
+        """
+        timestamp = adapt_data.get('timestamp', datetime.now())
+        if isinstance(timestamp, datetime):
+            timestamp = timestamp.isoformat()
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO parameter_adaptations
+                (session_id, timestamp, symbol, volatility_percentile,
+                 params_before, params_after, risk_params_before, risk_params_after, adjustments)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session_id,
+                timestamp,
+                adapt_data.get('symbol'),
+                adapt_data.get('volatility_percentile'),
+                json.dumps(adapt_data.get('params_before', {}), default=str),
+                json.dumps(adapt_data.get('params_after', {}), default=str),
+                json.dumps(adapt_data.get('risk_params_before', {}), default=str),
+                json.dumps(adapt_data.get('risk_params_after', {}), default=str),
+                json.dumps(adapt_data.get('adjustments', []), default=str),
+            ))
+
+    def log_optimization_run(self, run_data: Dict[str, Any]):
+        """
+        Log an auto-optimization run result
+
+        Args:
+            run_data: Dict with keys:
+                - timestamp: datetime or str
+                - preset_name: str (optional)
+                - strategy_name: str (optional)
+                - lookback_days: int (optional)
+                - old_params: dict
+                - new_params: dict
+                - old_metrics: dict (optional)
+                - new_metrics: dict (optional)
+                - improvement_pct: float (optional)
+                - applied: bool or int (optional)
+                - rejected_reason: str (optional)
+        """
+        timestamp = run_data.get('timestamp', datetime.now())
+        if isinstance(timestamp, datetime):
+            timestamp = timestamp.isoformat()
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO optimization_runs
+                (timestamp, preset_name, strategy_name, lookback_days,
+                 old_params, new_params, old_metrics, new_metrics,
+                 improvement_pct, applied, rejected_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                timestamp,
+                run_data.get('preset_name'),
+                run_data.get('strategy_name'),
+                run_data.get('lookback_days'),
+                json.dumps(run_data.get('old_params', {}), default=str),
+                json.dumps(run_data.get('new_params', {}), default=str),
+                json.dumps(run_data.get('old_metrics', {}), default=str),
+                json.dumps(run_data.get('new_metrics', {}), default=str),
+                run_data.get('improvement_pct'),
+                1 if run_data.get('applied') else 0,
+                run_data.get('rejected_reason'),
             ))
 
     def get_regime_history(self, session_id: str, symbol: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
