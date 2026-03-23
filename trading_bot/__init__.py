@@ -115,6 +115,16 @@ except ImportError:
     SignalPipeline = None
     _has_paper_trader = False
 
+# Live trading modules
+try:
+    from .safety_guard import SafetyGuard
+    from .live_order_manager import LiveOrderManager, LiveOrder
+    from .live_trader import LiveTrader
+    _has_live_trader = True
+except ImportError:
+    SafetyGuard = LiveOrderManager = LiveOrder = LiveTrader = None
+    _has_live_trader = False
+
 __all__ = [
     'Config',
     'SimulationDataGenerator',
@@ -143,6 +153,8 @@ if _has_ccxt:
     __all__.append('DataHandler')
 if _has_paper_trader:
     __all__.extend(['PaperTrader', 'PerformanceCalculator', 'OrderExecutor', 'RiskManager', 'PortfolioManager', 'SignalPipeline'])
+if _has_live_trader:
+    __all__.extend(['SafetyGuard', 'LiveOrderManager', 'LiveOrder', 'LiveTrader'])
 
 # Portfolio allocator
 try:

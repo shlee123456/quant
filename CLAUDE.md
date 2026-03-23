@@ -621,11 +621,13 @@ Small edges disappear with commissions. Always include realistic fees.
 - ✅ VBTBacktester (vectorbt 기반 벡터화 백테스터)
 - 🔲 전략 VBT 포팅 완료
 
-### Phase 5: Live Trading (계획중)
-- RiskManager 클래스 (일일 손실 제한, 포지션 크기 제한)
-- LiveTrader (실제 주문 실행)
-- 2단계 확인 UI
-- 상세 로깅 및 감사 추적
+### Phase 5: Live Trading (진행중 - MVP)
+- ✅ SafetyGuard (킬스위치 + 일일한도)
+- ✅ LiveOrderManager (브로커 주문 래퍼)
+- ✅ LiveTrader (실제 주문 실행)
+- ✅ 스케줄러 통합 (LIVE_TRADING_ENABLED)
+- 🔲 2단계 확인 UI
+- 🔲 상세 로깅 및 감사 추적
 
 ## Project Root Files
 
