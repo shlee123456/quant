@@ -72,9 +72,121 @@ def _build_intelligence_block(intelligence_data: Optional[Dict]) -> str:
                         lines.append(f"  - {mk}: {', '.join(parts[:5])}")
                 elif not isinstance(mv, (list, dict)):
                     lines.append(f"  - {mk}: {mv}")
+
+        # Options Flow 하이라이트 (Layer 5 센티먼트에 포함된 경우)
+        if layer_key == "sentiment" and isinstance(metrics, dict):
+            of_score = metrics.get("options_flow")
+            if of_score is not None and str(of_score) != 'nan':
+                details = layer_data.get("details", {})
+                of_details = details.get("options_flow", {})
+                pcr_val = of_details.get("equity_pcr")
+                zone = of_details.get("zone", "")
+                if pcr_val is not None:
+                    lines.append(
+                        f"  - **옵션 플로우 하이라이트**: "
+                        f"PCR {pcr_val:.2f} ({zone}), 점수 {of_score:+.1f}"
+                    )
+
         lines.append("")
 
     return "\n".join(lines)
+
+
+def _build_pcr_block(pcr_data: Optional[Dict]) -> str:
+    """CBOE Put/Call Ratio 데이터 블록 (Worker A 데이터 섹션용).
+
+    Args:
+        pcr_data: CBOEFetcher.get_latest() 결과
+
+    Returns:
+        프롬프트 블록 문자열. 데이터 없으면 빈 문자열.
+    """
+    if not pcr_data:
+        return ""
+
+    pcr = pcr_data.get("equity_pcr")
+    if pcr is None:
+        return ""
+
+    pcr_5d = pcr_data.get("pcr_5d_avg")
+    pcr_20d = pcr_data.get("pcr_20d_avg")
+    date = pcr_data.get("date", "N/A")
+
+    lines = [
+        "\n## CBOE Put/Call Ratio (옵션 시장 포지셔닝)",
+        f"- **Equity PCR**: {pcr:.4f} (기준일: {date})",
+    ]
+
+    if pcr_5d is not None:
+        lines.append(f"- **5일 평균**: {pcr_5d:.4f}")
+    if pcr_20d is not None:
+        lines.append(f"- **20일 평균**: {pcr_20d:.4f}")
+
+    # 간단한 해석
+    if pcr >= 1.2:
+        lines.append("- **해석**: 풋 비율 높음 (공포) — 역발상 매수 시그널 가능")
+    elif pcr < 0.7:
+        lines.append("- **해석**: 콜 비율 높음 (탐욕) — 역발상 매도 시그널 가능")
+    else:
+        lines.append("- **해석**: 보통 수준")
+
+    if pcr_5d is not None and pcr_20d is not None and pcr_20d > 0:
+        if pcr_5d > pcr_20d * 1.02:
+            lines.append("- **추세**: 단기 PCR 상승 중 (공포 증가)")
+        elif pcr_5d < pcr_20d * 0.98:
+            lines.append("- **추세**: 단기 PCR 하락 중 (탐욕 증가)")
+
+    lines.append(
+        "\n위 Put/Call Ratio 데이터를 시장 심리 분석에 반영하세요.\n"
+    )
+
+    return "\n".join(lines)
+
+
+def _build_pcr_summary(pcr_data: Optional[Dict]) -> str:
+    """CBOE Put/Call Ratio 간략 요약 (Worker B 역발상 분석 컨텍스트용).
+
+    Args:
+        pcr_data: CBOEFetcher.get_latest() 결과
+
+    Returns:
+        프롬프트 요약 문자열. 데이터 없으면 빈 문자열.
+    """
+    if not pcr_data:
+        return ""
+
+    pcr = pcr_data.get("equity_pcr")
+    if pcr is None:
+        return ""
+
+    pcr_5d = pcr_data.get("pcr_5d_avg")
+    pcr_20d = pcr_data.get("pcr_20d_avg")
+
+    # 포지셔닝 방향 판단
+    if pcr >= 1.2:
+        positioning = "극단적 풋 편중 (공포)"
+    elif pcr >= 1.0:
+        positioning = "풋 우위 (약한 공포)"
+    elif pcr >= 0.7:
+        positioning = "균형"
+    elif pcr >= 0.5:
+        positioning = "콜 우위 (약한 탐욕)"
+    else:
+        positioning = "극단적 콜 편중 (탐욕)"
+
+    summary = (
+        f"\n### 옵션 시장 포지셔닝 (CBOE PCR)\n"
+        f"- Equity PCR: {pcr:.4f} — {positioning}\n"
+    )
+
+    if pcr_5d is not None and pcr_20d is not None:
+        summary += f"- 5일/20일 평균: {pcr_5d:.4f} / {pcr_20d:.4f}\n"
+
+    summary += (
+        "- 옵션 포지셔닝 데이터를 역발상 투자 관점 분석에 반영하세요.\n"
+    )
+
+    return summary
 
 
 def _build_data_quality_block(intelligence_data: dict) -> str:
@@ -841,6 +953,7 @@ class PromptDataBuilder:
         fundamentals_data: Optional[Dict] = None,
         fear_greed_data: Optional[Dict] = None,
         daily_changes: Optional[Dict] = None,
+        pcr_data: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """Worker A 프롬프트용 컨텍스트를 생성합니다."""
         from trading_bot.market_analysis_prompt import (
@@ -917,6 +1030,8 @@ class PromptDataBuilder:
 
         trend_block = _build_trend_block()
 
+        pcr_block = _build_pcr_block(pcr_data)
+
         return {
             "today": today,
             "symbols": symbols,
@@ -937,6 +1052,7 @@ class PromptDataBuilder:
             "trend_block": trend_block,
             "data_quality_block": _build_data_quality_block(intelligence_data),
             "spy_ma200_block": _build_spy_ma200_block(intelligence_data),
+            "pcr_block": pcr_block,
         }
 
     def build_worker_b_context(
@@ -950,6 +1066,7 @@ class PromptDataBuilder:
         worker_a_context: Optional[str] = None,
         daily_changes: Optional[Dict] = None,
         previous_top3: Optional[list] = None,
+        pcr_data: Optional[Dict] = None,
     ) -> Tuple[Dict[str, Any], List[str]]:
         """Worker B 프롬프트용 컨텍스트를 생성합니다.
 
@@ -1083,6 +1200,8 @@ class PromptDataBuilder:
             logger.warning(f"Worker B 팩트시트 빌드 실패 (무시): {e}")
             fact_sheet_block = "(⚠️ 팩트시트 생성 실패 — 데이터 기반으로 직접 분석하세요)"
 
+        pcr_summary = _build_pcr_summary(pcr_data)
+
         ctx = {
             "today": today,
             "intel_summary": intel_summary,
@@ -1096,6 +1215,7 @@ class PromptDataBuilder:
             "fact_sheet_block": fact_sheet_block,
             "data_quality_block": _build_data_quality_block(intelligence_data),
             "spy_ma200_block": _build_spy_ma200_block(intelligence_data),
+            "pcr_summary": pcr_summary,
         }
 
         return ctx, top3_symbols

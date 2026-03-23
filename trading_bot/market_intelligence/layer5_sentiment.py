@@ -5,10 +5,11 @@ Layer 5: Sentiment & Positioning - 심리 및 포지셔닝 분석.
 역발상(contrarian) 시그널을 제공합니다.
 
 Sub-metrics:
-    - fear_greed (0.30): CNN Fear & Greed Index 기반 역발상 시그널
-    - vix_sentiment (0.20): VIX 수준 기반 심리 판단
-    - news_sentiment (0.20): 뉴스 헤드라인 키워드 감성 분석
-    - smart_money (0.30): GLD/SPY 비율 모멘텀 기반 기관 리스크 선호도
+    - fear_greed (0.25): CNN Fear & Greed Index 기반 역발상 시그널
+    - vix_sentiment (0.15): VIX 수준 기반 심리 판단
+    - news_sentiment (0.15): 뉴스 헤드라인 키워드 감성 분석
+    - smart_money (0.25): GLD/SPY 비율 모멘텀 기반 기관 리스크 선호도
+    - options_flow (0.20): CBOE Put/Call Ratio 기반 역발상 시그널
 """
 
 import logging
@@ -28,10 +29,11 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────────
 
 SUB_WEIGHTS: Dict[str, float] = {
-    'fear_greed': 0.30,
-    'vix_sentiment': 0.20,
-    'news_sentiment': 0.20,
-    'smart_money': 0.30,
+    'fear_greed': 0.25,
+    'vix_sentiment': 0.15,
+    'news_sentiment': 0.15,
+    'smart_money': 0.25,
+    'options_flow': 0.20,
 }
 
 POSITIVE_WORDS = frozenset({
@@ -50,7 +52,7 @@ NEGATIVE_WORDS = frozenset({
 class SentimentLayer(BaseIntelligenceLayer):
     """Layer 5: 심리 및 포지셔닝 분석.
 
-    Fear & Greed Index, VIX, 뉴스 감성, 기관 리스크 선호도를
+    Fear & Greed Index, VIX, 뉴스 감성, 기관 리스크 선호도, 옵션 플로우를
     결합하여 시장 심리의 극단성을 평가합니다.
     """
 
@@ -65,6 +67,7 @@ class SentimentLayer(BaseIntelligenceLayer):
                 - 'fear_greed': Dict with 'value' key (0-100)
                 - 'cache': MarketDataCache (VIX, HYG 데이터)
                 - 'news': List[Dict] with 'title' key
+                - 'pcr_data': Optional[Dict] from CBOEFetcher.get_latest()
 
         Returns:
             LayerResult with sentiment composite score
@@ -93,6 +96,11 @@ class SentimentLayer(BaseIntelligenceLayer):
         sm_score, sm_details = self._calc_smart_money(cache)
         metrics['smart_money'] = sm_score
         details['smart_money'] = sm_details
+
+        # 5) Options Flow (CBOE Put/Call Ratio)
+        of_score, of_details = self._calc_options_flow(data.get('pcr_data'))
+        metrics['options_flow'] = of_score
+        details['options_flow'] = of_details
 
         # 합성 점수
         composite = weighted_composite(metrics, SUB_WEIGHTS)
@@ -405,6 +413,93 @@ class SentimentLayer(BaseIntelligenceLayer):
             'direction': direction,
         }
 
+    @staticmethod
+    def _calc_options_flow(
+        pcr_data: Optional[Dict[str, Any]],
+    ) -> Tuple[float, Dict[str, Any]]:
+        """CBOE Put/Call Ratio 기반 역발상(contrarian) 점수.
+
+        높은 PCR(풋 비율 높음)은 공포 = 역발상 매수 시그널.
+        낮은 PCR(콜 비율 높음)은 탐욕 = 역발상 매도 시그널.
+
+        스코어 매핑 (+-100 범위):
+            PCR >= 1.5  -> +100 (극단적 공포)
+            PCR >= 1.2  -> +60
+            1.0 <= PCR < 1.2 -> +20
+            0.7 <= PCR < 1.0 -> 0
+            0.5 <= PCR < 0.7 -> -40
+            PCR < 0.5   -> -100 (극단적 탐욕)
+
+        5일 이동평균 보정:
+            pcr_5d > pcr_20d * 1.02 -> +10
+            pcr_5d < pcr_20d * 0.98 -> -10
+
+        Args:
+            pcr_data: CBOEFetcher.get_latest() 결과
+                {equity_pcr, pcr_5d_avg, pcr_20d_avg, date}
+
+        Returns:
+            (score, details) 튜플. pcr_data=None 시 (NaN, {'error': ...})
+        """
+        if pcr_data is None:
+            return float('nan'), {'error': 'no data'}
+
+        pcr = pcr_data.get('equity_pcr')
+        if pcr is None:
+            return float('nan'), {'error': 'no pcr value'}
+
+        try:
+            pcr = float(pcr)
+        except (TypeError, ValueError):
+            return float('nan'), {'error': 'invalid pcr value'}
+
+        # PCR 수준 기반 역발상 점수
+        if pcr >= 1.5:
+            base_score = 100.0
+            zone = 'extreme_fear'
+        elif pcr >= 1.2:
+            base_score = 60.0
+            zone = 'fear'
+        elif pcr >= 1.0:
+            base_score = 20.0
+            zone = 'mild_fear'
+        elif pcr >= 0.7:
+            base_score = 0.0
+            zone = 'neutral'
+        elif pcr >= 0.5:
+            base_score = -40.0
+            zone = 'mild_greed'
+        else:
+            base_score = -100.0
+            zone = 'extreme_greed'
+
+        # 5일 MA 보정
+        ma_bonus = 0.0
+        pcr_5d = pcr_data.get('pcr_5d_avg')
+        pcr_20d = pcr_data.get('pcr_20d_avg')
+
+        if pcr_5d is not None and pcr_20d is not None and pcr_20d > 0:
+            try:
+                pcr_5d = float(pcr_5d)
+                pcr_20d = float(pcr_20d)
+                if pcr_5d > pcr_20d * 1.02:
+                    ma_bonus = 10.0
+                elif pcr_5d < pcr_20d * 0.98:
+                    ma_bonus = -10.0
+            except (TypeError, ValueError):
+                pass
+
+        score = max(-100.0, min(100.0, base_score + ma_bonus))
+
+        return score, {
+            'equity_pcr': round(pcr, 4),
+            'zone': zone,
+            'ma_bonus': ma_bonus,
+            'pcr_5d_avg': pcr_data.get('pcr_5d_avg'),
+            'pcr_20d_avg': pcr_data.get('pcr_20d_avg'),
+            'date': pcr_data.get('date'),
+        }
+
     # ──────────────────────────────────────────────────────────────
     # Helpers
     # ──────────────────────────────────────────────────────────────
@@ -477,5 +572,24 @@ class SentimentLayer(BaseIntelligenceLayer):
             'neutral': '기관 중립',
         }
         parts.append(sm_labels.get(sm_dir, sm_dir))
+
+        # Options Flow
+        of_info = details.get('options_flow', {})
+        of_zone = of_info.get('zone')
+        if of_zone is not None:
+            of_labels = {
+                'extreme_fear': '옵션 극단적 풋 편중',
+                'fear': '옵션 풋 편중',
+                'mild_fear': '옵션 약한 풋 편중',
+                'neutral': '옵션 중립',
+                'mild_greed': '옵션 콜 편중',
+                'extreme_greed': '옵션 극단적 콜 편중',
+            }
+            pcr_val = of_info.get('equity_pcr')
+            label = of_labels.get(of_zone, of_zone)
+            if pcr_val is not None:
+                parts.append(f"PCR {pcr_val:.2f} ({label})")
+            else:
+                parts.append(label)
 
         return ", ".join(parts)

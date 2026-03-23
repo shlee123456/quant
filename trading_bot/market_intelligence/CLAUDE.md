@@ -11,12 +11,24 @@ Claude는 결과 해석만 담당합니다.
 
 ```
 market_intelligence/
-├── __init__.py              # 패키지 공개 API
+├── __init__.py              # 패키지 공개 API (US/KR 오케스트레이터)
 ├── base_layer.py            # LayerResult, BaseIntelligenceLayer (ABC)
 ├── scoring.py               # 공유 점수 유틸리티 (percentile, z-score, RSI 등)
-├── data_fetcher.py          # MarketDataCache (yfinance 통합)
-├── layer1_macro_regime.py   # Layer 1: 매크로 레짐 (금리/신용/달러/제조업)
-├── layer2_market_structure.py # Layer 2: 시장 구조 (VIX/breadth/McClellan)
+├── data_fetcher.py          # MarketDataCache (yfinance 통합, US)
+├── fred_fetcher.py          # FRED 경제 데이터 (US)
+├── cboe_fetcher.py          # CBOE Put/Call Ratio CSV (US 수급)
+├── kr_data_fetcher.py       # KRMarketDataCache (yfinance 한국 심볼)
+├── bok_fetcher.py           # 한국은행 API (KR 매크로)
+├── kr_flow_fetcher.py       # pykrx 투자자 수급 + 공매도 (KR 수급)
+├── layer1_macro_regime.py   # Layer 1 US: 매크로 레짐
+├── layer2_market_structure.py # Layer 2 US: 시장 구조 (VIX/breadth/McClellan)
+├── layer3_sector_rotation.py # Layer 3 US: 섹터/팩터 로테이션
+├── layer4_technicals.py     # Layer 4 공통: 기술적 분석
+├── layer5_sentiment.py      # Layer 5 US: 심리 + 포지셔닝 (options_flow 포함)
+├── kr_layer1_macro_regime.py # Layer 1 KR
+├── kr_layer2_market_structure.py # Layer 2 KR (investor_flow 포함)
+├── kr_layer3_sector_rotation.py # Layer 3 KR
+├── kr_layer5_sentiment.py   # Layer 5 KR (VKOSPI/한글뉴스/원달러)
 └── CLAUDE.md                # 이 문서
 ```
 
@@ -31,8 +43,16 @@ market_intelligence/
 | `MarketStructureLayer` | layer2_market_structure.py | 시장 구조 분석 (6개 서브 메트릭) |
 | `SectorRotationLayer` | layer3_sector_rotation.py | 섹터/팩터 로테이션 분석 |
 | `TechnicalsLayer` | layer4_technicals.py | 개별 종목 기술적 분석 |
-| `SentimentLayer` | layer5_sentiment.py | 심리 + 포지셔닝 분석 |
-| `MarketIntelligence` | __init__.py | 5-Layer 오케스트레이터 + 포지션 사이징 추천 |
+| `SentimentLayer` | layer5_sentiment.py | US 심리 + 포지셔닝 분석 (options_flow 포함) |
+| `KRMacroRegimeLayer` | kr_layer1_macro_regime.py | KR 매크로 레짐 (BOK 기준금리/원달러 등) |
+| `KRMarketStructureLayer` | kr_layer2_market_structure.py | KR 시장 구조 (VKOSPI/breadth/investor_flow) |
+| `KRSectorRotationLayer` | kr_layer3_sector_rotation.py | KR 섹터 로테이션 (KODEX ETF) |
+| `KRSentimentLayer` | kr_layer5_sentiment.py | KR 심리 분석 (VKOSPI/한글뉴스/원달러) |
+| `CBOEFetcher` | cboe_fetcher.py | CBOE Put/Call Ratio CSV 수집 (US 수급) |
+| `KRFlowFetcher` | kr_flow_fetcher.py | pykrx 투자자 수급 + 시장 공매도 (KR 수급) |
+| `FREDDataFetcher` | fred_fetcher.py | FRED 경제 데이터 (US 매크로) |
+| `BOKDataFetcher` | bok_fetcher.py | 한국은행 경제 데이터 (KR 매크로) |
+| `MarketIntelligence` | __init__.py | 5-Layer 오케스트레이터 (US/KR 분기) + 포지션 사이징 |
 
 ## 포지션 사이징 추천
 
@@ -87,6 +107,26 @@ print(result2.score, result2.signal, result2.interpretation)
 2. `analyze(data) -> LayerResult` 구현
 3. `__init__.py`에 export 추가
 4. `tests/test_market_intelligence/`에 테스트 작성
+
+## 수급 데이터 (Supply/Demand Flow)
+
+### US: CBOE Put/Call Ratio
+```
+CBOEFetcher.get_latest()  →  context['pcr_data']  →  SentimentLayer._calc_options_flow()
+```
+- 환경변수: `CBOE_PCR_ENABLED=true`
+- 데이터: CBOE CSV (무료, 인증 불필요)
+- 스코어 범위: ±100 (역발상 — 높은 PCR = contrarian bullish)
+
+### KR: 외국인/기관 순매수 + 공매도
+```
+KRFlowFetcher.get_latest_summary()  →  context['kr_flow_data']  →  KRMarketStructureLayer._score_investor_flow()
+KRFlowFetcher.get_short_selling_summary()  →  _score_investor_flow() 내 ±5 보너스
+```
+- 환경변수: `KR_INVESTOR_FLOW_ENABLED=true`
+- 데이터: pykrx (KRX 웹 스크래핑, 무료, YYYYMMDD 형식)
+- 스코어 범위: ±100 (aligned_buying/selling ± 규모 보너스 ± 공매도 보너스)
+- 공매도는 시장 전체 비율만 사용 (종목별 pykrx 미지원)
 
 ## 테스트
 

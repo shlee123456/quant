@@ -168,13 +168,15 @@ class TestSentimentHappyPath:
     def test_metrics_contains_all_sub_scores(self, layer, full_data):
         """metrics에 모든 서브 메트릭이 포함되어야 한다."""
         result = layer.analyze(full_data)
-        expected_keys = {'fear_greed', 'vix_sentiment', 'news_sentiment', 'smart_money'}
+        expected_keys = {'fear_greed', 'vix_sentiment', 'news_sentiment', 'smart_money', 'options_flow'}
         assert expected_keys.issubset(set(result.metrics.keys()))
 
     def test_sub_scores_in_valid_range(self, layer, full_data):
         """각 서브 메트릭 점수가 유효한 범위여야 한다."""
         result = layer.analyze(full_data)
         for key, value in result.metrics.items():
+            if np.isnan(value):
+                continue  # NaN은 데이터 없음 (예: options_flow without pcr_data)
             assert -100.0 <= value <= 100.0, f"{key} = {value} out of range"
 
     def test_interpretation_is_korean(self, layer, full_data):
@@ -603,3 +605,159 @@ class TestSentimentConsistency:
         """해석에 기관 리스크 선호도가 포함되어야 한다."""
         result = layer.analyze(full_data)
         assert '기관' in result.interpretation
+
+    def test_interpretation_includes_options_flow(self, layer, full_data):
+        """PCR 데이터가 있으면 해석에 옵션 정보가 포함되어야 한다."""
+        full_data['pcr_data'] = {
+            'equity_pcr': 1.1,
+            'pcr_5d_avg': 1.05,
+            'pcr_20d_avg': 0.95,
+            'date': '2026-03-23',
+        }
+        result = layer.analyze(full_data)
+        assert 'PCR' in result.interpretation
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Options Flow (PCR) scoring tests
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestOptionsFlowScoring:
+    """CBOE Put/Call Ratio 역발상 점수 테스트."""
+
+    def test_extreme_fear_pcr(self, layer):
+        """PCR >= 1.5 -> +100 (극단적 공포)."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 1.6, 'pcr_5d_avg': 1.5, 'pcr_20d_avg': 1.3, 'date': '2026-03-23',
+        })
+        assert score == 100.0
+        assert details['zone'] == 'extreme_fear'
+
+    def test_fear_pcr(self, layer):
+        """PCR >= 1.2 -> +60."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 1.3, 'pcr_5d_avg': 1.3, 'pcr_20d_avg': 1.3, 'date': '2026-03-23',
+        })
+        assert score == 60.0
+        assert details['zone'] == 'fear'
+
+    def test_mild_fear_pcr(self, layer):
+        """1.0 <= PCR < 1.2 -> +20."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 1.1, 'pcr_5d_avg': 1.05, 'pcr_20d_avg': 1.05, 'date': '2026-03-23',
+        })
+        assert score == 20.0
+        assert details['zone'] == 'mild_fear'
+
+    def test_neutral_pcr(self, layer):
+        """0.7 <= PCR < 1.0 -> 0."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 0.85, 'pcr_5d_avg': 0.85, 'pcr_20d_avg': 0.85, 'date': '2026-03-23',
+        })
+        assert score == 0.0
+        assert details['zone'] == 'neutral'
+
+    def test_mild_greed_pcr(self, layer):
+        """0.5 <= PCR < 0.7 -> -40."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 0.6, 'pcr_5d_avg': 0.6, 'pcr_20d_avg': 0.6, 'date': '2026-03-23',
+        })
+        assert score == -40.0
+        assert details['zone'] == 'mild_greed'
+
+    def test_extreme_greed_pcr(self, layer):
+        """PCR < 0.5 -> -100 (극단적 탐욕)."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 0.4, 'pcr_5d_avg': 0.4, 'pcr_20d_avg': 0.5, 'date': '2026-03-23',
+        })
+        assert score == -100.0
+        assert details['zone'] == 'extreme_greed'
+
+    def test_none_returns_nan(self, layer):
+        """pcr_data=None -> (NaN, {'error': ...})."""
+        score, details = layer._calc_options_flow(None)
+        assert np.isnan(score)
+        assert 'error' in details
+
+    def test_missing_pcr_value(self, layer):
+        """equity_pcr 키 없음 -> NaN."""
+        score, details = layer._calc_options_flow({'date': '2026-03-23'})
+        assert np.isnan(score)
+
+    def test_ma_bonus_positive(self, layer):
+        """pcr_5d > pcr_20d * 1.02 -> +10 보정."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 0.85,  # neutral zone -> 0
+            'pcr_5d_avg': 1.10,
+            'pcr_20d_avg': 1.00,  # 1.10 > 1.02 -> +10
+            'date': '2026-03-23',
+        })
+        assert score == 10.0
+        assert details['ma_bonus'] == 10.0
+
+    def test_ma_bonus_negative(self, layer):
+        """pcr_5d < pcr_20d * 0.98 -> -10 보정."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 0.85,  # neutral zone -> 0
+            'pcr_5d_avg': 0.90,
+            'pcr_20d_avg': 1.00,  # 0.90 < 0.98 -> -10
+            'date': '2026-03-23',
+        })
+        assert score == -10.0
+        assert details['ma_bonus'] == -10.0
+
+    def test_score_clamped_to_100(self, layer):
+        """점수가 +100을 초과하지 않음."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 2.0,  # +100
+            'pcr_5d_avg': 2.0,
+            'pcr_20d_avg': 1.5,  # 2.0 > 1.53 -> +10
+            'date': '2026-03-23',
+        })
+        assert score == 100.0  # clamped
+
+    def test_score_clamped_to_neg100(self, layer):
+        """점수가 -100 미만이 되지 않음."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 0.3,  # -100
+            'pcr_5d_avg': 0.25,
+            'pcr_20d_avg': 0.30,  # 0.25 < 0.294 -> -10
+            'date': '2026-03-23',
+        })
+        assert score == -100.0  # clamped
+
+    def test_boundary_1_5(self, layer):
+        """경계값 PCR=1.5 -> extreme_fear."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 1.5, 'pcr_5d_avg': 1.5, 'pcr_20d_avg': 1.5, 'date': '2026-03-23',
+        })
+        assert details['zone'] == 'extreme_fear'
+
+    def test_boundary_1_2(self, layer):
+        """경계값 PCR=1.2 -> fear."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 1.2, 'pcr_5d_avg': 1.2, 'pcr_20d_avg': 1.2, 'date': '2026-03-23',
+        })
+        assert details['zone'] == 'fear'
+
+    def test_boundary_1_0(self, layer):
+        """경계값 PCR=1.0 -> mild_fear."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 1.0, 'pcr_5d_avg': 1.0, 'pcr_20d_avg': 1.0, 'date': '2026-03-23',
+        })
+        assert details['zone'] == 'mild_fear'
+
+    def test_boundary_0_7(self, layer):
+        """경계값 PCR=0.7 -> neutral."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 0.7, 'pcr_5d_avg': 0.7, 'pcr_20d_avg': 0.7, 'date': '2026-03-23',
+        })
+        assert details['zone'] == 'neutral'
+
+    def test_boundary_0_5(self, layer):
+        """경계값 PCR=0.5 -> mild_greed."""
+        score, details = layer._calc_options_flow({
+            'equity_pcr': 0.5, 'pcr_5d_avg': 0.5, 'pcr_20d_avg': 0.5, 'date': '2026-03-23',
+        })
+        assert details['zone'] == 'mild_greed'

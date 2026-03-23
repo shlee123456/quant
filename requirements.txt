@@ -37,6 +37,9 @@ docker>=7.0.0         # Docker container management
 # Economic Data (Phase 4 - FRED Integration)
 fredapi>=0.5.0        # Federal Reserve Economic Data API
 
+# KR Market Data
+pykrx>=1.0.0          # KRX (Korea Exchange) market data
+
 # Vectorized backtesting (Phase 5 - VBT Migration)
 vectorbt>=0.26.0      # Vectorized backtesting engine
 notion-client>=2.0.0

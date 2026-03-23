@@ -1,12 +1,13 @@
 """
-Layer 2 (KR): 한국 시장 구조 - VKOSPI + 시장 폭 + 섹터 브레드스
+Layer 2 (KR): 한국 시장 구조 - VKOSPI + 시장 폭 + 섹터 브레드스 + 투자자 수급
 
 한국 시장의 내부 구조를 수치화합니다:
-- vkospi_level (0.25): VKOSPI 수준 (비선형 스코어링)
-- breadth_50ma (0.25): 한국 대형주 25개 중 50MA 위 비율
+- vkospi_level (0.20): VKOSPI 수준 (비선형 스코어링)
+- breadth_50ma (0.20): 한국 대형주 25개 중 50MA 위 비율
 - breadth_200ma (0.15): 한국 대형주 25개 중 200MA 위 비율
-- sector_breadth (0.20): KODEX 섹터 ETF 중 양의 5일 수익률 비율
-- mcclellan_proxy (0.15): 한국 섹터 ETF 전진/후퇴 비율 EMA 오실레이터
+- sector_breadth (0.15): KODEX 섹터 ETF 중 양의 5일 수익률 비율
+- mcclellan_proxy (0.10): 한국 섹터 ETF 전진/후퇴 비율 EMA 오실레이터
+- investor_flow (0.20): 외국인/기관 순매수 수급 컨센서스
 
 Note: US Layer 2에 있는 VIX term structure 메트릭은
     한국에서 사용할 수 없으므로 VKOSPI에 가중치 재분배.
@@ -23,13 +24,14 @@ from .scoring import percentile_rank, pct_change, weighted_composite
 
 logger = logging.getLogger(__name__)
 
-# 서브 메트릭 가중치 (VIX term structure 없음 → VKOSPI에 재분배)
+# 서브 메트릭 가중치 (VIX term structure 없음 → investor_flow 추가)
 KR_STRUCTURE_WEIGHTS: Dict[str, float] = {
-    'vkospi_level': 0.25,
-    'breadth_50ma': 0.25,
+    'vkospi_level': 0.20,
+    'breadth_50ma': 0.20,
     'breadth_200ma': 0.15,
-    'sector_breadth': 0.20,
-    'mcclellan_proxy': 0.15,
+    'sector_breadth': 0.15,
+    'mcclellan_proxy': 0.10,
+    'investor_flow': 0.20,
 }
 
 # VKOSPI 심볼
@@ -80,8 +82,9 @@ KR_SECTOR_ETFS: List[str] = [
 class KRMarketStructureLayer(BaseIntelligenceLayer):
     """Layer 2 (KR): 한국 시장 구조 분석.
 
-    VKOSPI 레벨, 시장 폭(breadth), McClellan Oscillator 프록시를
-    종합하여 한국 시장 내부 건강도를 평가합니다.
+    VKOSPI 레벨, 시장 폭(breadth), McClellan Oscillator 프록시,
+    외국인/기관 투자자 수급(investor_flow, 0.20)을 종합하여
+    한국 시장 내부 건강도를 평가합니다.
 
     Args:
         weights: 서브 메트릭 가중치 딕셔너리 (기본: KR_STRUCTURE_WEIGHTS)
@@ -138,6 +141,14 @@ class KRMarketStructureLayer(BaseIntelligenceLayer):
         score, detail = self._score_mcclellan_proxy(cache)
         sub_scores['mcclellan_proxy'] = score
         sub_details['mcclellan_proxy'] = detail
+
+        # 6. Investor Flow (외국인/기관 수급 + 공매도 보조)
+        score, detail = self._score_investor_flow(
+            data.get('kr_flow_data'),
+            short_data=data.get('kr_short_data'),
+        )
+        sub_scores['investor_flow'] = score
+        sub_details['investor_flow'] = detail
 
         # 합성 점수 계산
         composite = weighted_composite(sub_scores, self.weights)
@@ -358,6 +369,96 @@ class KRMarketStructureLayer(BaseIntelligenceLayer):
             'ema19': round(float(ema19.iloc[-1]), 4),
             'ema39': round(float(ema39.iloc[-1]), 4),
         }
+
+    def _score_investor_flow(
+        self,
+        flow_data: Optional[Dict[str, Any]],
+        short_data: Optional[Dict[str, Any]] = None,
+    ) -> tuple:
+        """외국인/기관 투자자 수급 컨센서스를 평가.
+
+        Score range: +/-100
+        - aligned_buying: +80
+        - foreign_only (외국인만 매수): +40
+        - institutional_only (기관만 매수): +30
+        - divergent: 0
+        - foreign_selling (외국인만 매도): -40
+        - aligned_selling: -80
+        - Magnitude bonus: abs(foreign_net_5d) > 1조원 -> +/-20
+        - Short selling bonus: conditional +/-5
+
+        Args:
+            flow_data: KRFlowFetcher.get_latest_summary() 결과 또는 None
+            short_data: KRFlowFetcher.get_short_selling_summary() 결과 또는 None
+
+        Returns:
+            (score, details_dict)
+        """
+        if flow_data is None:
+            return float('nan'), {'error': 'no investor flow data'}
+
+        try:
+            consensus = flow_data.get('consensus', 'divergent')
+            foreign_net_5d = flow_data.get('foreign_net_5d', 0)
+            inst_net_5d = flow_data.get('institutional_net_5d', 0)
+            foreign_trend = flow_data.get('foreign_trend', 'selling')
+            inst_trend = flow_data.get('institutional_trend', 'selling')
+
+            # 기본 점수
+            if consensus == 'aligned_buying':
+                base_score = 80.0
+            elif consensus == 'aligned_selling':
+                base_score = -80.0
+            elif foreign_trend == 'buying' and inst_trend == 'selling':
+                # 외국인만 매수
+                base_score = 40.0
+            elif foreign_trend == 'selling' and inst_trend == 'buying':
+                # 기관만 매수
+                base_score = 30.0
+            elif foreign_trend == 'selling':
+                # 외국인 매도 (기관도 매도가 아닌 경우)
+                base_score = -40.0
+            else:
+                base_score = 0.0
+
+            # Magnitude bonus: abs(foreign_net_5d) > 1조원
+            magnitude_bonus = 0.0
+            threshold = 1_000_000_000_000  # 1조원
+            if abs(foreign_net_5d) > threshold:
+                magnitude_bonus = 20.0 if foreign_net_5d > 0 else -20.0
+
+            # Short selling conditional bonus
+            short_bonus = 0.0
+            if short_data is not None:
+                short_ratio = short_data.get('short_ratio_today', 0.0)
+                short_trend = short_data.get('trend', 'stable')
+                # 공매도 비율 높음 + 외국인 매도 → 추가 -5
+                if short_ratio >= 0.05 and foreign_trend == 'selling':
+                    short_bonus = -5.0
+                # 공매도 감소 + 외국인 매수 → 추가 +5
+                elif short_trend == 'decreasing' and foreign_trend == 'buying':
+                    short_bonus = 5.0
+
+            score = max(-100.0, min(100.0, base_score + magnitude_bonus + short_bonus))
+
+            detail = {
+                'consensus': consensus,
+                'foreign_net_5d': foreign_net_5d,
+                'institutional_net_5d': inst_net_5d,
+                'foreign_trend': foreign_trend,
+                'institutional_trend': inst_trend,
+                'base_score': base_score,
+                'magnitude_bonus': magnitude_bonus,
+                'short_bonus': short_bonus,
+            }
+            if short_data is not None:
+                detail['short_data'] = short_data
+
+            return score, detail
+
+        except Exception as e:
+            logger.warning(f"투자자 수급 스코어링 실패: {e}")
+            return float('nan'), {'error': str(e)}
 
     # ─── Korean interpretation ───
 

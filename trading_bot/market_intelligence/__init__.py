@@ -44,6 +44,7 @@ from .layer5_sentiment import SentimentLayer
 from .kr_layer1_macro_regime import KRMacroRegimeLayer
 from .kr_layer2_market_structure import KRMarketStructureLayer
 from .kr_layer3_sector_rotation import KRSectorRotationLayer
+from .kr_layer5_sentiment import KRSentimentLayer
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,14 @@ class MarketIntelligence:
         except (ImportError, Exception) as e:
             logger.info(f"BOKDataFetcher 사용 불가 (graceful degradation): {e}")
 
+        # KR 투자자 수급 페처 (lazy import, 없으면 None)
+        self._kr_flow_fetcher = None
+        try:
+            from .kr_flow_fetcher import KRFlowFetcher
+            self._kr_flow_fetcher = KRFlowFetcher()
+        except (ImportError, Exception) as e:
+            logger.info(f"KRFlowFetcher 사용 불가 (graceful degradation): {e}")
+
         # KR 데이터 캐시 (lazy import, 없으면 기본 MarketDataCache 사용)
         self._kr_cache = None
         try:
@@ -171,13 +180,13 @@ class MarketIntelligence:
             else:
                 self.weights = LAYER_WEIGHTS.copy()
 
-        # KR 레이어 (1~3) + 공통 레이어 (4 Technicals, 5 Sentiment)
+        # KR 레이어 (1~3, 5) + 공통 레이어 (4 Technicals)
         self.layers: Dict[str, BaseIntelligenceLayer] = {
             'macro_regime': KRMacroRegimeLayer(),
             'market_structure': KRMarketStructureLayer(),
             'sector_rotation': KRSectorRotationLayer(),
             'enhanced_technicals': TechnicalsLayer(),
-            'sentiment': SentimentLayer(),
+            'sentiment': KRSentimentLayer(),
         }
 
     def analyze(
@@ -186,6 +195,7 @@ class MarketIntelligence:
         stocks_data: Optional[Dict[str, Any]] = None,
         news_data: Optional[Any] = None,
         fear_greed_data: Optional[Dict[str, Any]] = None,
+        pcr_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """전체 5-Layer 분석을 실행합니다.
 
@@ -200,6 +210,7 @@ class MarketIntelligence:
             stocks_data: 기존 MarketAnalyzer 분석 결과 {symbol: {...}}
             news_data: 뉴스 데이터 (리스트 또는 딕셔너리)
             fear_greed_data: Fear & Greed 지수 데이터
+            pcr_data: CBOE Put/Call Ratio 데이터 (US 옵션 플로우)
 
         Returns:
             구조화된 인텔리전스 리포트 딕셔너리
@@ -224,11 +235,21 @@ class MarketIntelligence:
             'news': news_list,
             'fear_greed': fg_for_layer,
             'stock_symbols': stock_symbols,
+            'pcr_data': pcr_data,
         }
 
         # KR 마켓인 경우 BOK 데이터 페처 추가
         if self.market == 'kr' and self._bok_fetcher is not None:
             context['bok_fetcher'] = self._bok_fetcher
+
+        # KR 마켓인 경우 투자자 수급 데이터 추가
+        if self.market == 'kr' and self._kr_flow_fetcher is not None:
+            try:
+                kr_flow = self._kr_flow_fetcher.get_latest_summary()
+                if kr_flow:
+                    context['kr_flow_data'] = kr_flow
+            except Exception as e:
+                logger.warning(f"KR 투자자 수급 데이터 수집 실패: {e}")
 
         # Step 3: 각 레이어 분석
         layer_results: Dict[str, LayerResult] = {}

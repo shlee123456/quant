@@ -132,6 +132,7 @@ class TestKRMarketStructureAnalyze:
         result = layer.analyze({'cache': kr_bullish_structure})
         expected_keys = set(KR_STRUCTURE_WEIGHTS.keys())
         assert set(result.metrics.keys()) == expected_keys
+        assert 'investor_flow' in result.metrics
 
     def test_interpretation_is_korean(self, kr_bullish_structure):
         layer = KRMarketStructureLayer()
@@ -303,3 +304,277 @@ class TestKRStructureInterpretation:
             'breadth_50ma': {'pct_above': 50.0},
         })
         assert "한국" in interp
+
+
+# ─── Investor flow scoring tests ───
+
+
+class TestInvestorFlowScoring:
+    """투자자 수급 서브 메트릭 테스트."""
+
+    def test_weights_sum_to_one(self):
+        """가중치 합계가 1.0."""
+        total = sum(KR_STRUCTURE_WEIGHTS.values())
+        assert abs(total - 1.0) < 1e-9
+
+    def test_weights_have_six_metrics(self):
+        """6개 서브 메트릭 존재."""
+        assert len(KR_STRUCTURE_WEIGHTS) == 6
+        assert 'investor_flow' in KR_STRUCTURE_WEIGHTS
+        assert KR_STRUCTURE_WEIGHTS['investor_flow'] == 0.20
+
+    def test_none_flow_data_returns_nan(self):
+        """flow_data=None → NaN 반환."""
+        layer = KRMarketStructureLayer()
+        score, detail = layer._score_investor_flow(None)
+        assert np.isnan(score)
+        assert 'error' in detail
+
+    def test_aligned_buying(self):
+        """aligned_buying → +80."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'aligned_buying',
+            'foreign_net_5d': 500_000_000_000,
+            'institutional_net_5d': 300_000_000_000,
+            'foreign_trend': 'buying',
+            'institutional_trend': 'buying',
+        }
+        score, detail = layer._score_investor_flow(flow)
+        assert score == 80.0
+        assert detail['consensus'] == 'aligned_buying'
+
+    def test_aligned_selling(self):
+        """aligned_selling → -80."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'aligned_selling',
+            'foreign_net_5d': -500_000_000_000,
+            'institutional_net_5d': -300_000_000_000,
+            'foreign_trend': 'selling',
+            'institutional_trend': 'selling',
+        }
+        score, detail = layer._score_investor_flow(flow)
+        assert score == -80.0
+
+    def test_foreign_only_buying(self):
+        """외국인만 매수, 기관 매도 → +40."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'divergent',
+            'foreign_net_5d': 500_000_000_000,
+            'institutional_net_5d': -200_000_000_000,
+            'foreign_trend': 'buying',
+            'institutional_trend': 'selling',
+        }
+        score, detail = layer._score_investor_flow(flow)
+        assert score == 40.0
+
+    def test_institutional_only_buying(self):
+        """기관만 매수, 외국인 매도 → +30."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'divergent',
+            'foreign_net_5d': -200_000_000_000,
+            'institutional_net_5d': 500_000_000_000,
+            'foreign_trend': 'selling',
+            'institutional_trend': 'buying',
+        }
+        score, detail = layer._score_investor_flow(flow)
+        assert score == 30.0
+
+    def test_foreign_selling(self):
+        """외국인 매도, 기관 비매수 → -40."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'divergent',
+            'foreign_net_5d': -200_000_000_000,
+            'institutional_net_5d': -100_000_000_000,
+            'foreign_trend': 'selling',
+            'institutional_trend': 'selling',
+        }
+        # consensus=aligned_selling 이므로 -80
+        # 실제로 both selling이면 consensus는 aligned_selling이어야 함
+        # divergent + foreign selling + inst not buying → -40
+        flow['consensus'] = 'divergent'
+        flow['institutional_trend'] = 'selling'
+        score, detail = layer._score_investor_flow(flow)
+        assert score == -40.0
+
+    def test_magnitude_bonus_positive(self):
+        """외국인 5일 순매수 > 1조원 → +20 보너스."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'aligned_buying',
+            'foreign_net_5d': 1_500_000_000_000,  # 1.5조원
+            'institutional_net_5d': 300_000_000_000,
+            'foreign_trend': 'buying',
+            'institutional_trend': 'buying',
+        }
+        score, detail = layer._score_investor_flow(flow)
+        assert score == 100.0  # 80 + 20 = 100, clamped
+        assert detail['magnitude_bonus'] == 20.0
+
+    def test_magnitude_bonus_negative(self):
+        """외국인 5일 순매도 > 1조원 → -20 보너스."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'aligned_selling',
+            'foreign_net_5d': -1_500_000_000_000,  # -1.5조원
+            'institutional_net_5d': -300_000_000_000,
+            'foreign_trend': 'selling',
+            'institutional_trend': 'selling',
+        }
+        score, detail = layer._score_investor_flow(flow)
+        assert score == -100.0  # -80 + (-20) = -100, clamped
+        assert detail['magnitude_bonus'] == -20.0
+
+    def test_no_magnitude_bonus_under_threshold(self):
+        """외국인 5일 순매수 < 1조원 → 보너스 없음."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'aligned_buying',
+            'foreign_net_5d': 500_000_000_000,  # 5000억원
+            'institutional_net_5d': 300_000_000_000,
+            'foreign_trend': 'buying',
+            'institutional_trend': 'buying',
+        }
+        score, detail = layer._score_investor_flow(flow)
+        assert score == 80.0
+        assert detail['magnitude_bonus'] == 0.0
+
+    def test_score_clamped_to_range(self):
+        """점수는 -100 ~ +100 범위."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'aligned_buying',
+            'foreign_net_5d': 2_000_000_000_000,
+            'institutional_net_5d': 1_000_000_000_000,
+            'foreign_trend': 'buying',
+            'institutional_trend': 'buying',
+        }
+        score, _ = layer._score_investor_flow(flow)
+        assert -100.0 <= score <= 100.0
+
+    def test_analyze_with_flow_data(self, kr_bullish_structure):
+        """analyze()에 kr_flow_data 전달 시 investor_flow 포함."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'aligned_buying',
+            'foreign_net_5d': 500_000_000_000,
+            'institutional_net_5d': 300_000_000_000,
+            'foreign_trend': 'buying',
+            'institutional_trend': 'buying',
+        }
+        result = layer.analyze({
+            'cache': kr_bullish_structure,
+            'kr_flow_data': flow,
+        })
+        assert 'investor_flow' in result.metrics
+        assert not np.isnan(result.metrics['investor_flow'])
+
+    def test_analyze_without_flow_data(self, kr_bullish_structure):
+        """analyze()에 kr_flow_data 없으면 investor_flow=NaN."""
+        layer = KRMarketStructureLayer()
+        result = layer.analyze({'cache': kr_bullish_structure})
+        assert 'investor_flow' in result.metrics
+        assert np.isnan(result.metrics['investor_flow'])
+
+
+# ─── Short selling bonus tests ───
+
+
+class TestShortSellingBonus:
+    """공매도 보조 시그널 테스트."""
+
+    def test_short_selling_negative_bonus(self):
+        """공매도 비율 >= 5% + 외국인 매도 → -5 보너스."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'divergent',
+            'foreign_net_5d': -200_000_000_000,
+            'institutional_net_5d': 100_000_000_000,
+            'foreign_trend': 'selling',
+            'institutional_trend': 'buying',
+        }
+        short = {
+            'short_ratio_today': 0.06,
+            'short_ratio_5d_avg': 0.05,
+            'trend': 'increasing',
+        }
+        # 기관만 매수(30) + short_bonus(-5) = 25
+        score, detail = layer._score_investor_flow(flow, short_data=short)
+        assert score == 25.0
+        assert detail['short_bonus'] == -5.0
+
+    def test_short_selling_positive_bonus(self):
+        """공매도 감소 + 외국인 매수 → +5 보너스."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'aligned_buying',
+            'foreign_net_5d': 500_000_000_000,
+            'institutional_net_5d': 300_000_000_000,
+            'foreign_trend': 'buying',
+            'institutional_trend': 'buying',
+        }
+        short = {
+            'short_ratio_today': 0.03,
+            'short_ratio_5d_avg': 0.04,
+            'trend': 'decreasing',
+        }
+        # aligned_buying(80) + short_bonus(5) = 85
+        score, detail = layer._score_investor_flow(flow, short_data=short)
+        assert score == 85.0
+        assert detail['short_bonus'] == 5.0
+
+    def test_no_short_data_no_bonus(self):
+        """short_data=None → 보너스 없음."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'aligned_buying',
+            'foreign_net_5d': 500_000_000_000,
+            'institutional_net_5d': 300_000_000_000,
+            'foreign_trend': 'buying',
+            'institutional_trend': 'buying',
+        }
+        score, detail = layer._score_investor_flow(flow, short_data=None)
+        assert score == 80.0
+        assert detail['short_bonus'] == 0.0
+
+    def test_short_bonus_clamped(self):
+        """공매도 보너스 포함해도 -100~+100 범위."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'aligned_buying',
+            'foreign_net_5d': 2_000_000_000_000,
+            'institutional_net_5d': 1_000_000_000_000,
+            'foreign_trend': 'buying',
+            'institutional_trend': 'buying',
+        }
+        short = {
+            'short_ratio_today': 0.02,
+            'short_ratio_5d_avg': 0.03,
+            'trend': 'decreasing',
+        }
+        # 80 + 20(magnitude) + 5(short) = 105, clamped to 100
+        score, _ = layer._score_investor_flow(flow, short_data=short)
+        assert score == 100.0
+
+    def test_short_data_included_in_details(self):
+        """short_data 제공 시 detail에 포함."""
+        layer = KRMarketStructureLayer()
+        flow = {
+            'consensus': 'divergent',
+            'foreign_net_5d': 0,
+            'institutional_net_5d': 0,
+            'foreign_trend': 'buying',
+            'institutional_trend': 'selling',
+        }
+        short = {
+            'short_ratio_today': 0.04,
+            'short_ratio_5d_avg': 0.04,
+            'trend': 'stable',
+        }
+        _, detail = layer._score_investor_flow(flow, short_data=short)
+        assert 'short_data' in detail
+        assert detail['short_data']['trend'] == 'stable'

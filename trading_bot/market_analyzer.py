@@ -201,6 +201,21 @@ class MarketAnalyzer:
         elif collect_fear_greed and not _has_fear_greed:
             logger.info("FearGreedCollector 미설치 - F&G 지수 수집 건너뜀")
 
+        # CBOE Put/Call Ratio 수집 (옵션)
+        if os.getenv('CBOE_PCR_ENABLED', 'true').lower() == 'true':
+            try:
+                from trading_bot.market_intelligence.cboe_fetcher import CBOEFetcher
+                cboe = CBOEFetcher()
+                pcr_data = cboe.get_latest()
+                if pcr_data:
+                    result['pcr'] = pcr_data
+                    logger.info(
+                        f"CBOE Put/Call Ratio 수집 완료: "
+                        f"equity_pcr={pcr_data.get('equity_pcr')}"
+                    )
+            except Exception as e:
+                logger.warning(f"CBOE PCR 수집 실패 (기술적 분석은 정상 진행): {e}")
+
         # 이벤트 캘린더 수집 (옵션)
         if collect_events and os.getenv('EVENT_CALENDAR_ENABLED', 'true').lower() == 'true':
             try:

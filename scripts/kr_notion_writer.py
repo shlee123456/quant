@@ -212,11 +212,12 @@ def run_parallel_kr_notion_writer(json_path: str) -> bool:
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    market_data = {k: v for k, v in data.items() if k not in ("news", "macro", "events", "intelligence")}
+    market_data = {k: v for k, v in data.items() if k not in ("news", "macro", "events", "intelligence", "investor_flow")}
     news_data = data.get("news", {})
     macro_data = data.get("macro")
     events_data = data.get("events")
     intelligence_data = data.get("intelligence")
+    investor_flow_data = data.get("investor_flow")
 
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -239,6 +240,7 @@ def run_parallel_kr_notion_writer(json_path: str) -> bool:
         intelligence_data=intelligence_data,
         events_data=events_data,
         daily_changes=daily_changes,
+        investor_flow_data=investor_flow_data,
     )
     prompt_c = build_kr_worker_c_prompt(
         market_data, today,
@@ -279,6 +281,7 @@ def run_parallel_kr_notion_writer(json_path: str) -> bool:
         intelligence_data=intelligence_data,
         worker_a_context=worker_a_context,
         daily_changes=daily_changes,
+        investor_flow_summary=investor_flow_data,
     )
     logger.info(
         f"프롬프트 생성 완료 - A: {len(prompt_a)}자, B: {len(prompt_b)}자, C: {len(prompt_c)}자"
@@ -451,11 +454,12 @@ def main() -> None:
         with open(str(json_path), "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        market_data = {k: v for k, v in data.items() if k not in ("news", "macro", "events", "intelligence")}
+        market_data = {k: v for k, v in data.items() if k not in ("news", "macro", "events", "intelligence", "investor_flow")}
         news_data = data.get("news", {})
         macro_data = data.get("macro")
         events_data = data.get("events")
         intelligence_data = data.get("intelligence")
+        investor_flow_data = data.get("investor_flow")
         today = datetime.now().strftime("%Y-%m-%d")
 
         prompts_dir = PROJECT_ROOT / "data" / "debug_prompts"
@@ -466,10 +470,12 @@ def main() -> None:
             macro_data=macro_data,
             intelligence_data=intelligence_data,
             events_data=events_data,
+            investor_flow_data=investor_flow_data,
         )
         prompt_b, _ = build_kr_worker_b_prompt(
             market_data, news_data, today,
             intelligence_data=intelligence_data,
+            investor_flow_summary=investor_flow_data,
         )
         prompt_c = build_kr_worker_c_prompt(
             market_data, today,

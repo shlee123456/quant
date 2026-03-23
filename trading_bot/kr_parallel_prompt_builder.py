@@ -176,6 +176,84 @@ def _build_kr_events_block(events_data: Optional[Dict]) -> str:
     return "\n".join(lines)
 
 
+def _build_kr_investor_flow_block(flow_data: Optional[Dict]) -> str:
+    """투자자 수급 데이터를 프롬프트 블록으로 구성합니다.
+
+    Args:
+        flow_data: KRFlowFetcher.get_latest_summary() 결과 또는 None
+
+    Returns:
+        프롬프트 블록 문자열 (데이터 없으면 빈 문자열)
+    """
+    if not flow_data:
+        return ""
+
+    lines: List[str] = ["\n## 투자자 수급 동향"]
+
+    date_str = flow_data.get('date', 'N/A')
+    lines.append(f"**기준일**: {date_str}")
+
+    # 외국인
+    foreign_today = flow_data.get('foreign_net_today', 0)
+    foreign_5d = flow_data.get('foreign_net_5d', 0)
+    foreign_trend = flow_data.get('foreign_trend', 'N/A')
+    lines.append(
+        f"- **외국인**: 당일 {foreign_today:,.0f}원, "
+        f"5일 누적 {foreign_5d:,.0f}원 ({foreign_trend})"
+    )
+
+    # 기관
+    inst_today = flow_data.get('institutional_net_today', 0)
+    inst_5d = flow_data.get('institutional_net_5d', 0)
+    inst_trend = flow_data.get('institutional_trend', 'N/A')
+    lines.append(
+        f"- **기관**: 당일 {inst_today:,.0f}원, "
+        f"5일 누적 {inst_5d:,.0f}원 ({inst_trend})"
+    )
+
+    # 컨센서스
+    consensus = flow_data.get('consensus', 'N/A')
+    consensus_labels = {
+        'aligned_buying': '외국인+기관 동반 매수',
+        'aligned_selling': '외국인+기관 동반 매도',
+        'divergent': '외국인/기관 엇갈림',
+    }
+    consensus_label = consensus_labels.get(consensus, consensus)
+    lines.append(f"- **컨센서스**: {consensus_label}")
+
+    return "\n".join(lines)
+
+
+def _build_kr_investor_flow_summary(flow_data: Optional[Dict]) -> str:
+    """Worker B용 투자자 수급 요약 (간략 버전).
+
+    Args:
+        flow_data: KRFlowFetcher.get_latest_summary() 결과 또는 None
+
+    Returns:
+        요약 문자열 (데이터 없으면 빈 문자열)
+    """
+    if not flow_data:
+        return ""
+
+    consensus = flow_data.get('consensus', 'N/A')
+    foreign_5d = flow_data.get('foreign_net_5d', 0)
+    inst_5d = flow_data.get('institutional_net_5d', 0)
+
+    consensus_labels = {
+        'aligned_buying': '동반 매수',
+        'aligned_selling': '동반 매도',
+        'divergent': '엇갈림',
+    }
+    label = consensus_labels.get(consensus, consensus)
+
+    return (
+        f"\n## 투자자 수급 요약\n"
+        f"외국인 5일 순매수: {foreign_5d:,.0f}원, "
+        f"기관 5일 순매수: {inst_5d:,.0f}원 → **{label}**"
+    )
+
+
 def _build_kr_intelligence_block(intelligence_data: Optional[Dict]) -> str:
     """5-Layer 인텔리전스 분석 결과를 프롬프트 블록으로 구성합니다."""
     if not intelligence_data:
@@ -285,6 +363,7 @@ def build_kr_worker_a_prompt(
     intelligence_data: Optional[Dict] = None,
     events_data: Optional[Dict] = None,
     daily_changes: Optional[Dict] = None,
+    investor_flow_data: Optional[Dict] = None,
 ) -> str:
     """
     Worker A 프롬프트를 생성합니다.
@@ -297,6 +376,7 @@ def build_kr_worker_a_prompt(
         intelligence_data: Intelligence 분석 결과
         events_data: 이벤트 캘린더 데이터
         daily_changes: 전일 대비 변화 데이터
+        investor_flow_data: 투자자 수급 데이터
 
     Returns:
         Worker A용 프롬프트 문자열
@@ -312,6 +392,7 @@ def build_kr_worker_a_prompt(
     events_block = _build_kr_events_block(events_data)
     intel_block = _build_kr_intelligence_block(intelligence_data)
     daily_changes_block = _build_kr_daily_changes_block(daily_changes)
+    flow_block = _build_kr_investor_flow_block(investor_flow_data)
 
     # 매크로 섹션 템플릿
     macro_section_template = ""
@@ -343,6 +424,7 @@ def build_kr_worker_a_prompt(
 - 특히 극단적 과매도/과매수, 급등/급락 종목의 뉴스를 심층 검색하세요.
 - 검색 결과에서 발견한 주요 뉴스는 분석에 반영하되, 출처를 명시하세요.
 {macro_block}
+{flow_block}
 {events_block}
 {daily_changes_block}
 
@@ -440,6 +522,7 @@ def build_kr_worker_b_prompt(
     worker_a_context: Optional[str] = None,
     daily_changes: Optional[Dict] = None,
     previous_top3: Optional[List[str]] = None,
+    investor_flow_summary: Optional[Dict] = None,
 ) -> Tuple[str, List[str]]:
     """
     Worker B 프롬프트를 생성합니다.
@@ -453,6 +536,7 @@ def build_kr_worker_b_prompt(
         worker_a_context: Worker A의 출력 (교차 검증용)
         daily_changes: 전일 대비 변화 데이터
         previous_top3: 이전 TOP 3 종목 리스트
+        investor_flow_summary: 투자자 수급 요약 데이터
 
     Returns:
         (Worker B용 프롬프트 문자열, TOP 3 심볼 리스트) 튜플
@@ -487,6 +571,9 @@ def build_kr_worker_b_prompt(
     # 인텔리전스 요약
     intel_summary = _build_kr_intelligence_block(intelligence_data)
 
+    # 수급 요약
+    flow_summary_block = _build_kr_investor_flow_summary(investor_flow_summary)
+
     # TOP 3 후보 안내
     top3_block = ""
     if top3_symbols:
@@ -516,6 +603,7 @@ def build_kr_worker_b_prompt(
 - 이미 수집된 뉴스 데이터가 아래에 있으므로, WebSearch는 추가 확인이 필요한 경우에만 사용하세요.
 - **중요**: 도구 호출보다 최종 마크다운 출력 생성을 우선하세요.
 {intel_summary}
+{flow_summary_block}
 {top3_block}
 {prev_top3_block}
 {reflection_block}

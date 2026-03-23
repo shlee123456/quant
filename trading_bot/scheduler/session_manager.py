@@ -496,6 +496,7 @@ def run_market_analysis():
                 stocks_data=result.get('stocks', {}),
                 news_data=result.get('news'),
                 fear_greed_data=result.get('fear_greed_index'),
+                pcr_data=result.get('pcr'),
             )
             result['intelligence'] = intel_report
             logger.info(

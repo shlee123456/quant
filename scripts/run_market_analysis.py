@@ -132,6 +132,7 @@ def main():
             stocks_data=results.get('stocks', {}),
             news_data=results.get('news'),
             fear_greed_data=results.get('fear_greed_index'),
+            pcr_data=results.get('pcr'),
         )
         results['intelligence'] = intel_report
         logger.info(

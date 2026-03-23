@@ -221,6 +221,22 @@ class KRMarketAnalyzer:
             except Exception as e:
                 logger.warning(f"한국 이벤트 캘린더 수집 실패: {e}")
 
+        # 투자자별 매매 동향 수집 (pykrx)
+        if os.getenv('KR_INVESTOR_FLOW_ENABLED', 'true').lower() == 'true':
+            try:
+                from trading_bot.market_intelligence.kr_flow_fetcher import KRFlowFetcher
+                flow_fetcher = KRFlowFetcher()
+                flow_data = flow_fetcher.get_latest_summary()
+                if flow_data:
+                    result_data['investor_flow'] = flow_data
+                    logger.info(
+                        f"투자자 매매 동향: 외국인 {flow_data.get('foreign_trend')}, "
+                        f"기관 {flow_data.get('institutional_trend')}, "
+                        f"합의 {flow_data.get('consensus')}"
+                    )
+            except Exception as e:
+                logger.warning(f"투자자별 매매 동향 수집 실패 (기술적 분석은 정상 진행): {e}")
+
         return result_data
 
     def _analyze_single_symbol(self, symbol: str, broker: Any) -> Optional[Dict]:
