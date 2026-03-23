@@ -78,6 +78,8 @@ from trading_bot.scheduler.session_manager import (  # noqa: E402
     stop_paper_trading,
     run_market_analysis,
     run_kr_market_analysis,
+    start_live_trading,
+    stop_live_trading,
     _start_single_session,
     _stop_single_session,
     _is_trading_day,
@@ -370,6 +372,37 @@ def main():
         logger.info(get_kr_schedule_description())
     else:
         logger.info("한국 시장 스케줄: 비활성화 (KR_SCHEDULER_ENABLED=false)")
+
+    # === 라이브 트레이딩 스케줄 (LIVE_TRADING_ENABLED=true 시 활성화) ===
+    live_trading_enabled = os.getenv('LIVE_TRADING_ENABLED', 'false').strip().lower()
+    if live_trading_enabled in ('true', '1', 'yes'):
+        def _scheduled_live_start():
+            if not _is_trading_day():
+                return
+            start_live_trading()
+
+        scheduler.add_job(
+            _scheduled_live_start,
+            CronTrigger(hour=hours['open']['hour'], minute=hours['open']['minute']),
+            id='start_live_trading',
+            name='라이브 트레이딩 시작',
+            misfire_grace_time=300
+        )
+
+        scheduler.add_job(
+            stop_live_trading,
+            CronTrigger(hour=hours['close']['hour'], minute=hours['close']['minute']),
+            id='stop_live_trading',
+            name='라이브 트레이딩 중지',
+            misfire_grace_time=300
+        )
+
+        live_mode = os.getenv('LIVE_TRADING_MODE', 'dry_run')
+        logger.info(f"라이브 트레이딩 스케줄 (LIVE_TRADING_ENABLED=true, mode={live_mode}):")
+        logger.info(f"  {hours['open']['hour']:02d}:{hours['open']['minute']:02d} KST - 라이브 트레이딩 시작")
+        logger.info(f"  {hours['close']['hour']:02d}:{hours['close']['minute']:02d} KST - 라이브 트레이딩 중지")
+    else:
+        logger.info("라이브 트레이딩 스케줄: 비활성화 (LIVE_TRADING_ENABLED=false)")
 
     # 시작 완료 -> idle 상태 + Slack 알림
     state.scheduler_health.update('idle', {

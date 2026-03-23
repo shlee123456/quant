@@ -51,6 +51,14 @@ except ImportError:
     KRMarketAnalyzer = None
     _has_kr_market_analyzer = False
 
+# Live trader (optional)
+try:
+    from trading_bot.live_trader import LiveTrader
+    _has_live_trader = True
+except ImportError:
+    LiveTrader = None
+    _has_live_trader = False
+
 logger = logging.getLogger(__name__)
 
 # Strategy name -> class mapping
@@ -73,6 +81,8 @@ class SchedulerContext:
     def __init__(self):
         self.active_traders: Dict = {}
         self.trader_threads: Dict = {}
+        self.active_live_traders: Dict = {}
+        self.live_trader_threads: Dict = {}
         self.traders_lock = threading.Lock()
         self.notifier = NotificationService()
         self.preset_manager = StrategyPresetManager()
@@ -102,6 +112,8 @@ ctx = SchedulerContext()
 # so they CANNOT be aliased here — use ctx.max_sessions / ctx.global_broker.
 active_traders = ctx.active_traders
 trader_threads = ctx.trader_threads
+active_live_traders = ctx.active_live_traders
+live_trader_threads = ctx.live_trader_threads
 traders_lock = ctx.traders_lock
 notifier = ctx.notifier
 preset_manager = ctx.preset_manager
