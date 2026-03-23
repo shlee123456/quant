@@ -303,6 +303,67 @@ class TradingDatabase:
             except sqlite3.OperationalError:
                 cursor.execute("ALTER TABLE trades ADD COLUMN side TEXT")
 
+            # -- Live Trading Tables (DB-001) --
+
+            # Live trading sessions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS live_trading_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    strategy_name TEXT NOT NULL,
+                    display_name TEXT,
+                    mode TEXT NOT NULL DEFAULT 'dry_run',
+                    start_time TEXT NOT NULL,
+                    end_time TEXT,
+                    initial_capital REAL NOT NULL,
+                    final_capital REAL,
+                    total_return REAL,
+                    sharpe_ratio REAL,
+                    max_drawdown REAL,
+                    win_rate REAL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    kill_switch_reason TEXT,
+                    broker_name TEXT,
+                    market_type TEXT
+                )
+            """)
+
+            # Live orders table (NO FK to live_trading_sessions)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS live_orders (
+                    internal_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    broker_order_id TEXT,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    order_type TEXT NOT NULL,
+                    requested_amount REAL NOT NULL,
+                    requested_price REAL,
+                    filled_amount REAL DEFAULT 0.0,
+                    filled_price REAL DEFAULT 0.0,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    reason TEXT,
+                    submitted_at TEXT,
+                    filled_at TEXT,
+                    commission REAL DEFAULT 0.0,
+                    slippage_pct REAL DEFAULT 0.0,
+                    error_message TEXT
+                )
+            """)
+
+            # Live trading state table (key-value store)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS live_trading_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
+            # Indexes for live trading tables
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_orders_session ON live_orders(session_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_orders_status ON live_orders(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_sessions_status ON live_trading_sessions(status)")
+
             conn.commit()
         finally:
             conn.close()
@@ -1233,3 +1294,188 @@ class TradingDatabase:
         shutil.copy2(self.db_path, backup_path)
 
         return backup_path
+
+    # ── Live Trading CRUD (DB-001) ──────────────────────────────────
+
+    def create_live_session(self, session_id: str, strategy_name: str,
+                            display_name: Optional[str], mode: str,
+                            initial_capital: float,
+                            broker_name: Optional[str] = None,
+                            market_type: Optional[str] = None):
+        """라이브 트레이딩 세션 생성
+
+        Args:
+            session_id: 세션 ID
+            strategy_name: 전략 이름
+            display_name: 표시 이름
+            mode: 실행 모드 ('dry_run' | 'live')
+            initial_capital: 초기 자본금
+            broker_name: 브로커 이름
+            market_type: 마켓 타입
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO live_trading_sessions
+                (session_id, strategy_name, display_name, mode, start_time,
+                 initial_capital, broker_name, market_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (session_id, strategy_name, display_name, mode,
+                  datetime.now().isoformat(), initial_capital,
+                  broker_name, market_type))
+
+    def update_live_session(self, session_id: str, updates: Dict[str, Any]):
+        """라이브 트레이딩 세션 업데이트
+
+        Args:
+            session_id: 세션 ID
+            updates: 업데이트할 필드 딕셔너리
+        """
+        if not updates:
+            return
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            set_clause = ", ".join([f"{key} = ?" for key in updates.keys()])
+            values = list(updates.values()) + [session_id]
+            cursor.execute(f"""
+                UPDATE live_trading_sessions
+                SET {set_clause}
+                WHERE session_id = ?
+            """, values)
+
+    def get_live_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """라이브 트레이딩 세션 조회
+
+        Args:
+            session_id: 세션 ID
+
+        Returns:
+            세션 딕셔너리 또는 None
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM live_trading_sessions WHERE session_id = ?
+            """, (session_id,))
+            row = cursor.fetchone()
+
+        if row:
+            return dict(row)
+        return None
+
+    def log_live_order(self, order_dict: Dict[str, Any]):
+        """라이브 주문 기록
+
+        Args:
+            order_dict: 주문 딕셔너리 (컬럼 키 매칭)
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO live_orders
+                (internal_id, session_id, broker_order_id, symbol, side,
+                 order_type, requested_amount, requested_price, filled_amount,
+                 filled_price, status, reason, submitted_at, filled_at,
+                 commission, slippage_pct, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                order_dict['internal_id'],
+                order_dict['session_id'],
+                order_dict.get('broker_order_id'),
+                order_dict['symbol'],
+                order_dict['side'],
+                order_dict['order_type'],
+                order_dict['requested_amount'],
+                order_dict.get('requested_price'),
+                order_dict.get('filled_amount', 0.0),
+                order_dict.get('filled_price', 0.0),
+                order_dict.get('status', 'pending'),
+                order_dict.get('reason'),
+                order_dict.get('submitted_at'),
+                order_dict.get('filled_at'),
+                order_dict.get('commission', 0.0),
+                order_dict.get('slippage_pct', 0.0),
+                order_dict.get('error_message'),
+            ))
+
+    def update_live_order(self, internal_id: str, updates: Dict[str, Any]):
+        """라이브 주문 업데이트
+
+        Args:
+            internal_id: 내부 주문 ID
+            updates: 업데이트할 필드 딕셔너리
+        """
+        if not updates:
+            return
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            set_clause = ", ".join([f"{key} = ?" for key in updates.keys()])
+            values = list(updates.values()) + [internal_id]
+            cursor.execute(f"""
+                UPDATE live_orders
+                SET {set_clause}
+                WHERE internal_id = ?
+            """, values)
+
+    def get_live_orders(self, session_id: str,
+                        status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """라이브 주문 조회
+
+        Args:
+            session_id: 세션 ID
+            status: 상태 필터 (None이면 전체)
+
+        Returns:
+            주문 딕셔너리 리스트
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if status:
+                cursor.execute("""
+                    SELECT * FROM live_orders
+                    WHERE session_id = ? AND status = ?
+                """, (session_id, status))
+            else:
+                cursor.execute("""
+                    SELECT * FROM live_orders
+                    WHERE session_id = ?
+                """, (session_id,))
+            rows = cursor.fetchall()
+
+        return [dict(row) for row in rows]
+
+    def get_live_state(self, key: str) -> Optional[str]:
+        """라이브 트레이딩 상태값 조회
+
+        Args:
+            key: 상태 키
+
+        Returns:
+            값 문자열 또는 None
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT value FROM live_trading_state WHERE key = ? LIMIT 1
+            """, (key,))
+            row = cursor.fetchone()
+
+        if row:
+            return row['value']
+        return None
+
+    def set_live_state(self, key: str, value: str):
+        """라이브 트레이딩 상태값 설정 (INSERT OR REPLACE)
+
+        Args:
+            key: 상태 키
+            value: 상태 값
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO live_trading_state (key, value, updated_at)
+                VALUES (?, ?, ?)
+            """, (key, value, datetime.now().isoformat()))
