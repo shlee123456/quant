@@ -127,8 +127,9 @@ class TestFetchMarketFlow:
         result2 = fetcher.fetch_market_flow()
 
         assert result1 is result2
-        # fetch is called once per proxy stock (5 stocks), not again on 2nd call
-        assert mock_kis.fetch.call_count == 5
+        # fetch is called once per proxy stock (20 stocks), not again on 2nd call
+        from trading_bot.market_intelligence.kr_flow_fetcher import _PROXY_STOCKS
+        assert mock_kis.fetch.call_count == len(_PROXY_STOCKS)
 
     def test_aggregates_across_proxy_stocks(self):
         """여러 종목의 데이터가 날짜별로 합산되는지 확인."""
