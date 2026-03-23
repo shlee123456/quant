@@ -1,80 +1,193 @@
 """KR 투자자 수급 데이터 수집기.
 
-pykrx를 사용하여 KOSPI 외국인/기관 순매수 데이터를 가져옵니다.
-pykrx 미설치 시 비활성화됩니다.
+KIS API (한국투자증권)를 사용하여 KOSPI 주요 종목의
+외국인/기관 순매수 데이터를 수집하고 시장 전체 수급을 추정합니다.
+KIS API 미사용 시 비활성화됩니다.
 """
 
 import logging
+import os
+import time
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 
-# pykrx optional import (bok_fetcher.py 패턴)
-try:
-    from pykrx import stock as _pykrx_stock
-    _has_pykrx = True
-except ImportError:
-    _pykrx_stock = None  # type: ignore
-    _has_pykrx = False
-
 logger = logging.getLogger(__name__)
+
+
+def _get_field(row, key: str, default=None):
+    """KisDynamicDict (속성 접근) 또는 dict (키 접근)에서 필드를 읽습니다."""
+    # dict-like 접근 시도
+    if isinstance(row, dict):
+        return row.get(key, default)
+    # KisDynamicDict는 속성 접근만 지원
+    return getattr(row, key, default)
+
+# 시장 대표 종목 (시가총액 상위, KOSPI 수급 프록시)
+_PROXY_STOCKS: List[str] = [
+    '005930',  # 삼성전자
+    '000660',  # SK하이닉스
+    '005380',  # 현대차
+    '035420',  # NAVER
+    '051910',  # LG화학
+]
+
+# KIS API 투자자별 매매동향 설정
+_TR_ID = 'FHKST01010900'
+_ENDPOINT = '/uapi/domestic-stock/v1/quotations/inquire-investor'
+
+
+def _create_kis_client():
+    """환경변수에서 KIS 클라이언트를 생성합니다.
+
+    Returns:
+        PyKis 인스턴스 또는 None
+    """
+    appkey = os.getenv('KIS_APPKEY')
+    appsecret = os.getenv('KIS_APPSECRET')
+    account = os.getenv('KIS_ACCOUNT')
+    user_id = os.getenv('KIS_ID', account)
+
+    if not all([appkey, appsecret, account]):
+        return None
+
+    try:
+        from pykis import PyKis
+        return PyKis(
+            id=user_id,
+            appkey=appkey,
+            secretkey=appsecret,
+            virtual_id=user_id,
+            virtual_appkey=appkey,
+            virtual_secretkey=appsecret,
+            account=account,
+        )
+    except Exception as e:
+        logger.warning(f"KIS 클라이언트 생성 실패: {e}")
+        return None
 
 
 class KRFlowFetcher:
     """KRX 투자자 수급 데이터 수집기.
 
-    pykrx를 사용하여 KOSPI 시장의 외국인/기관 순매수 데이터와
-    시장 전체 공매도 데이터를 수집합니다.
-    pykrx 미설치 시 is_available=False로 비활성화됩니다.
+    KIS API를 사용하여 KOSPI 주요 종목의 외국인/기관 순매수 데이터를
+    수집하고, 시장 전체 수급 방향을 추정합니다.
+    KIS API 미사용 시 is_available=False로 비활성화됩니다.
+
+    Args:
+        kis_client: PyKis 인스턴스 (None이면 환경변수에서 자동 생성)
     """
 
-    def __init__(self):
+    def __init__(self, kis_client=None):
         self._cached_flow: Optional[pd.DataFrame] = None
-        self._cached_short: Optional[pd.DataFrame] = None
+        self._kis = kis_client
 
-        if _has_pykrx:
-            logger.info("KRFlowFetcher 활성화 (pykrx 사용 가능)")
+        if self._kis is None:
+            self._kis = _create_kis_client()
+
+        if self._kis is not None:
+            logger.info("KRFlowFetcher 활성화 (KIS API 사용)")
         else:
-            logger.info("pykrx 미설치 — KRFlowFetcher 비활성화")
+            logger.info("KIS API 미설정 — KRFlowFetcher 비활성화")
 
     @property
     def is_available(self) -> bool:
-        """pykrx가 설치되어 사용 가능한지 여부."""
-        return _has_pykrx
+        """KIS API가 설정되어 사용 가능한지 여부."""
+        return self._kis is not None
+
+    def _fetch_stock_investor(
+        self, symbol: str, start_date: str, end_date: str,
+    ) -> Optional[List[Dict[str, str]]]:
+        """단일 종목의 투자자별 매매동향을 KIS API로 조회합니다.
+
+        Args:
+            symbol: 종목코드 (예: '005930')
+            start_date: 시작일 (YYYYMMDD)
+            end_date: 종료일 (YYYYMMDD)
+
+        Returns:
+            KIS API 응답 리스트 또는 실패 시 None
+        """
+        try:
+            result = self._kis.fetch(
+                _ENDPOINT,
+                method='GET',
+                params={
+                    'FID_COND_MRKT_DIV_CODE': 'J',
+                    'FID_INPUT_ISCD': symbol,
+                    'FID_INPUT_DATE_1': start_date,
+                    'FID_INPUT_DATE_2': end_date,
+                    'FID_PERIOD_DIV_CODE': 'D',
+                },
+                headers={'tr_id': _TR_ID},
+                domain='real',
+            )
+            return result.output
+        except Exception as e:
+            logger.warning(f"KIS 투자자 동향 조회 실패 ({symbol}): {e}")
+            return None
 
     def fetch_market_flow(self, days: int = 20) -> Optional[pd.DataFrame]:
-        """KOSPI 투자자별 순매수 데이터를 가져옵니다.
+        """KOSPI 주요 종목의 투자자별 순매수 데이터를 집계합니다.
+
+        KIS API로 대표 종목들의 외국인/기관 순매수 금액(백만원)을 조회하고,
+        날짜별로 합산하여 시장 전체 수급을 추정합니다.
 
         Args:
             days: 조회할 영업일 수 (기본: 20)
 
         Returns:
-            투자자별 순매수 DataFrame 또는 실패 시 None
+            투자자별 순매수 금액 DataFrame (컬럼: 외국인합계, 기관합계)
+            또는 실패 시 None
         """
-        if not _has_pykrx:
-            logger.warning("pykrx 미설치 — 수급 데이터 수집 불가")
+        if not self.is_available:
+            logger.warning("KIS API 미설정 — 수급 데이터 수집 불가")
             return None
 
         if self._cached_flow is not None:
             return self._cached_flow
 
-        # pykrx 날짜 형식: YYYYMMDD
         end_date = datetime.now().strftime('%Y%m%d')
         start_date = (datetime.now() - timedelta(days=days * 2)).strftime('%Y%m%d')
 
         try:
-            df = _pykrx_stock.get_market_trading_value_by_date(
-                start_date, end_date, 'KOSPI'
-            )
+            # 날짜별 합산 딕셔너리: {date: {foreign: 0, inst: 0}}
+            aggregated: Dict[str, Dict[str, int]] = {}
 
-            if df is None or df.empty:
-                logger.warning("KOSPI 수급 데이터 없음")
+            for i, symbol in enumerate(_PROXY_STOCKS):
+                if i > 0:
+                    time.sleep(0.1)  # Rate limiting (15 calls/sec)
+
+                rows = self._fetch_stock_investor(symbol, start_date, end_date)
+                if not rows:
+                    continue
+
+                for row in rows:
+                    date = _get_field(row, 'stck_bsop_date')
+                    if not date:
+                        continue
+                    frgn = int(_get_field(row, 'frgn_ntby_tr_pbmn', '0'))
+                    orgn = int(_get_field(row, 'orgn_ntby_tr_pbmn', '0'))
+
+                    if date not in aggregated:
+                        aggregated[date] = {'외국인합계': 0, '기관합계': 0}
+                    aggregated[date]['외국인합계'] += frgn
+                    aggregated[date]['기관합계'] += orgn
+
+            if not aggregated:
+                logger.warning("KOSPI 수급 데이터 없음 (KIS API)")
                 return None
 
+            df = pd.DataFrame.from_dict(aggregated, orient='index')
+            df.index = pd.to_datetime(df.index)
+            df = df.sort_index()
+
+            # 백만원 → 원 단위 변환
+            df = df * 1_000_000
+
             self._cached_flow = df
-            logger.debug(f"KOSPI 수급 데이터 로드: {len(df)}일")
+            logger.debug(f"KOSPI 수급 데이터 로드 (KIS API): {len(df)}일")
             return df
 
         except Exception as e:
@@ -95,22 +208,8 @@ class KRFlowFetcher:
             return None
 
         try:
-            # pykrx 컬럼: 기관합계, 기타법인, 개인, 외국인합계, 전체
-            # 컬럼명은 pykrx 버전에 따라 다를 수 있음
-            foreign_col = None
-            inst_col = None
-
-            for col in df.columns:
-                if '외국인' in str(col):
-                    foreign_col = col
-                if '기관' in str(col):
-                    inst_col = col
-
-            if foreign_col is None or inst_col is None:
-                logger.warning(
-                    f"수급 데이터 컬럼 매칭 실패. 컬럼: {list(df.columns)}"
-                )
-                return None
+            foreign_col = '외국인합계'
+            inst_col = '기관합계'
 
             # 최신 데이터
             foreign_net_today = int(df[foreign_col].iloc[-1])
@@ -133,7 +232,11 @@ class KRFlowFetcher:
             else:
                 consensus = 'divergent'
 
-            date_str = str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else str(df.index[-1])
+            date_str = (
+                str(df.index[-1].date())
+                if hasattr(df.index[-1], 'date')
+                else str(df.index[-1])
+            )
 
             return {
                 'date': date_str,
@@ -153,93 +256,24 @@ class KRFlowFetcher:
     def fetch_market_short_selling(self, days: int = 20) -> Optional[pd.DataFrame]:
         """시장 전체 공매도 데이터를 가져옵니다.
 
-        pykrx.stock.get_shorting_volume_by_date(start, end) — 시장 전체, ticker 없음.
+        KIS API에는 시장 전체 공매도 엔드포인트가 없으므로 None을 반환합니다.
+        호출자(KRMarketStructureLayer)는 None을 graceful하게 처리합니다.
 
         Args:
-            days: 조회할 영업일 수 (기본: 20)
+            days: 조회할 영업일 수 (미사용)
 
         Returns:
-            공매도 DataFrame 또는 실패 시 None
+            항상 None
         """
-        if not _has_pykrx:
-            logger.warning("pykrx 미설치 — 공매도 데이터 수집 불가")
-            return None
-
-        if self._cached_short is not None:
-            return self._cached_short
-
-        end_date = datetime.now().strftime('%Y%m%d')
-        start_date = (datetime.now() - timedelta(days=days * 2)).strftime('%Y%m%d')
-
-        try:
-            df = _pykrx_stock.get_shorting_volume_by_date(start_date, end_date)
-
-            if df is None or df.empty:
-                logger.warning("공매도 데이터 없음")
-                return None
-
-            self._cached_short = df
-            logger.debug(f"공매도 데이터 로드: {len(df)}일")
-            return df
-
-        except Exception as e:
-            logger.warning(f"공매도 데이터 수집 실패: {e}")
-            return None
+        logger.debug("KIS API에 시장 전체 공매도 엔드포인트 없음 — None 반환")
+        return None
 
     def get_short_selling_summary(self) -> Optional[Dict[str, Any]]:
         """최신 공매도 요약을 반환합니다.
 
+        KIS API에는 시장 전체 공매도 데이터가 없으므로 항상 None입니다.
+
         Returns:
-            Dict with keys: short_ratio_today, short_ratio_5d_avg, trend
-            또는 실패 시 None
+            항상 None
         """
-        df = self.fetch_market_short_selling()
-        if df is None or len(df) < 2:
-            return None
-
-        try:
-            # pykrx 공매도 컬럼: 공매도, 매수, 합계 등
-            short_col = None
-            total_col = None
-
-            for col in df.columns:
-                col_str = str(col)
-                if '공매도' in col_str and short_col is None:
-                    short_col = col
-                if '합계' in col_str or '거래량' in col_str:
-                    total_col = col
-
-            # 컬럼을 찾지 못하면 첫 번째/마지막 컬럼으로 시도
-            if short_col is None or total_col is None:
-                cols = list(df.columns)
-                if len(cols) >= 2:
-                    short_col = cols[0]
-                    total_col = cols[-1]
-                else:
-                    logger.warning(f"공매도 데이터 컬럼 매칭 실패: {list(df.columns)}")
-                    return None
-
-            # 공매도 비율 계산
-            total_values = df[total_col].replace(0, np.nan)
-            short_ratio = df[short_col] / total_values
-
-            short_ratio_today = float(short_ratio.iloc[-1]) if not np.isnan(short_ratio.iloc[-1]) else 0.0
-            short_ratio_5d = float(short_ratio.tail(5).mean()) if len(short_ratio) >= 5 else short_ratio_today
-
-            # 트렌드: 오늘 > 5일 평균이면 increasing
-            if short_ratio_today > short_ratio_5d * 1.02:
-                trend = 'increasing'
-            elif short_ratio_today < short_ratio_5d * 0.98:
-                trend = 'decreasing'
-            else:
-                trend = 'stable'
-
-            return {
-                'short_ratio_today': round(short_ratio_today, 4),
-                'short_ratio_5d_avg': round(short_ratio_5d, 4),
-                'trend': trend,
-            }
-
-        except Exception as e:
-            logger.warning(f"공매도 요약 생성 실패: {e}")
-            return None
+        return None
